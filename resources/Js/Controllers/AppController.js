@@ -621,6 +621,11 @@ const appController = (() => {
         body.scrollTop += targetRect.top - bodyRect.top - 12;
       });
     });
+    body.addEventListener('click', (e) => {
+      const btn = e.target.closest('.credit-link-btn[data-url]');
+      if (btn)
+        window.__TAURI__?.core?.invoke?.('open_external', { url: btn.dataset.url }).catch(() => {});
+    });
     if (_settingsNavInited) return;
     _settingsNavInited = true;
     const sections = [...document.querySelectorAll('.sp-section')];

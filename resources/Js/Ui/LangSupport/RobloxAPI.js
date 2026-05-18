@@ -1,10 +1,12 @@
 const RobloxAPI = (() => {
   let _ready = false;
+  let _initPromise = null;
   let _resolve;
   const _promise = new Promise((r) => (_resolve = r));
   let CLASSES = {};
   let ENUM_MAP = {};
   let SERVICE_MAP = {};
+  let RAW_API = null;
   const SERVICE_ALIASES = {
     Workspace: 'Workspace',
     Players: 'Players',
@@ -146,22 +148,30 @@ const RobloxAPI = (() => {
   }
   async function init() {
     if (_ready) return;
-    try {
-      const res = await fetch('Json/RobloxAPI.json');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const RAW = await res.json();
-      _build(RAW);
-    } catch (err) {
-      console.error('[RobloxAPI] Failed to load API dump:', err);
-    }
-    _ready = true;
-    _resolve();
+    if (_initPromise) return _initPromise;
+    _initPromise = (async () => {
+      try {
+        const res = await fetch('Json/RobloxAPI.json');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const RAW = await res.json();
+        RAW_API = RAW;
+        _build(RAW);
+      } catch (err) {
+        console.error('[RobloxAPI] Failed to load API dump:', err);
+      }
+      _ready = true;
+      _resolve();
+    })();
+    return _initPromise;
   }
   function ready() {
     return _promise;
   }
   function getClass(name) {
     return CLASSES[name] || null;
+  }
+  function raw() {
+    return RAW_API;
   }
   function resolveGlobal(name) {
     return GLOBAL_TYPES[name] || null;
@@ -173,6 +183,7 @@ const RobloxAPI = (() => {
     init,
     ready,
     getClass,
+    raw,
     resolveGlobal,
     resolveService,
     CLASSES,

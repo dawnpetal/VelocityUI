@@ -759,6 +759,13 @@
   line-height: 1.4;
 }
 
+.sp-row-hint--wrap {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 .about-update-group {
   display: flex;
   align-items: center;
@@ -850,6 +857,109 @@
   background: color-mix(in srgb, #5865f2 12%, transparent);
   border-color: #5865f2;
   color: #a5aeff;
+}
+
+.credit-link-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text2);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.credit-link-btn svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.credit-link-btn:hover {
+  background: var(--bg4);
+  border-color: var(--text2);
+  color: var(--text0);
+}
+
+.credit-link-btn:hover svg {
+  opacity: 1;
+}
+
+.credit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 10px;
+}
+
+.credit-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg1) 86%, transparent);
+}
+
+.credit-card-info {
+  min-width: 0;
+}
+
+.credit-thumb {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--text0) 12%, transparent);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--text0) 8%, transparent), transparent),
+    color-mix(in srgb, var(--bg3) 72%, transparent);
+  color: var(--text0);
+  font: 760 13px/1 var(--font-ui);
+  letter-spacing: -0.02em;
+}
+
+.credit-thumb img {
+  display: block;
+  width: 27px;
+  height: 27px;
+  object-fit: contain;
+}
+
+.credit-card .sp-row-label,
+.credit-card .sp-row-hint {
+  max-width: none;
+}
+
+.credit-card .sp-row-hint {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.credit-note {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text2);
+  background: color-mix(in srgb, var(--bg1) 74%, transparent);
+  font: 11.5px/1.5 var(--font-ui);
 }
 
 .sp-shortcut-grid {
@@ -2344,7 +2454,7 @@
 
 .dt-content {
   display: grid;
-  grid-template-columns: clamp(320px, 23vw, 410px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 23vw, 410px);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -2352,12 +2462,18 @@
 
 .dt-side {
   display: grid;
-  grid-template-rows: minmax(300px, 1fr) minmax(190px, 34%);
+  grid-template-rows: var(--dt-explorer-height, minmax(260px, 56%)) 5px minmax(190px, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   background: var(--bg1);
+}
+
+.dt-rail-splitter {
+  position: relative;
+  z-index: 6;
+  cursor: row-resize;
 }
 
 .dt-tree-pane,
@@ -2693,7 +2809,7 @@
 
 .dt-kv-row {
   display: grid;
-  grid-template-columns: minmax(92px, 0.4fr) minmax(0, 1fr);
+  grid-template-columns: minmax(92px, 0.4fr) minmax(0, 1fr) max-content;
   min-height: 28px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
 }
@@ -2708,14 +2824,30 @@
   white-space: nowrap;
 }
 
-.dt-kv-row code {
-  display: block;
+.dt-kv-value {
+  display: flex;
   min-width: 0;
-  overflow: hidden;
+  align-items: center;
+  gap: 7px;
   padding: 7px 12px;
   border-left: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.dt-kv-value img {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.dt-kv-value input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text0);
+  font: 11.5px var(--font-mono);
 }
 
 .dt-tags {
@@ -3025,7 +3157,7 @@
 
 @media (max-width: 1180px) {
   .dt-content {
-    grid-template-columns: minmax(306px, 34vw) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(306px, 34vw);
   }
 
   .dt-asset-card {

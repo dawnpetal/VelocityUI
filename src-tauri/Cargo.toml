@@ -1,6 +1,6 @@
 [package]
 name = "velocityui"
-version = "1.0.0"
+version = "1.2.1"
 edition = "2021"
 
 [build-dependencies]
@@ -20,7 +20,7 @@ async-trait = "0.1"
 notify = "6"
 ignore = "0.4"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "gzip", "json", "rustls-tls", "zstd"] }
 tokio = { version = "1", features = ["full"] }
 dirs = "5"
 base64 = "0.22"

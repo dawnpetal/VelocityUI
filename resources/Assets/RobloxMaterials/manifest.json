@@ -1,0 +1,324 @@
+{
+  "generatedAt": "2026-05-03T22:26:34.834Z",
+  "source": "/Applications/RobloxStudio.app/Contents/Resources",
+  "previews": {
+    "Asphalt": "Assets/RobloxMaterials/Previews/Asphalt.png",
+    "Basalt": "Assets/RobloxMaterials/Previews/Basalt.png",
+    "Brick": "Assets/RobloxMaterials/Previews/Brick.png",
+    "Cobblestone": "Assets/RobloxMaterials/Previews/Cobblestone.png",
+    "Concrete": "Assets/RobloxMaterials/Previews/Concrete.png",
+    "CorrodedMetal": "Assets/RobloxMaterials/Previews/CorrodedMetal.png",
+    "CrackedLava": "Assets/RobloxMaterials/Previews/CrackedLava.png",
+    "DiamondPlate": "Assets/RobloxMaterials/Previews/DiamondPlate.png",
+    "Fabric": "Assets/RobloxMaterials/Previews/Fabric.png",
+    "Foil": "Assets/RobloxMaterials/Previews/Foil.png",
+    "Glacier": "Assets/RobloxMaterials/Previews/Glacier.png",
+    "Granite": "Assets/RobloxMaterials/Previews/Granite.png",
+    "Grass": "Assets/RobloxMaterials/Previews/Grass.png",
+    "Ground": "Assets/RobloxMaterials/Previews/Ground.png",
+    "Ice": "Assets/RobloxMaterials/Previews/Ice.png",
+    "LeafyGrass": "Assets/RobloxMaterials/Previews/LeafyGrass.png",
+    "Limestone": "Assets/RobloxMaterials/Previews/Limestone.png",
+    "Marble": "Assets/RobloxMaterials/Previews/Marble.png",
+    "Metal": "Assets/RobloxMaterials/Previews/Metal.png",
+    "Mud": "Assets/RobloxMaterials/Previews/Mud.png",
+    "Pavement": "Assets/RobloxMaterials/Previews/Pavement.png",
+    "Pebble": "Assets/RobloxMaterials/Previews/Pebble.png",
+    "Plastic": "Assets/RobloxMaterials/Previews/Plastic.png",
+    "Rock": "Assets/RobloxMaterials/Previews/Rock.png",
+    "Salt": "Assets/RobloxMaterials/Previews/Salt.png",
+    "Sand": "Assets/RobloxMaterials/Previews/Sand.png",
+    "Sandstone": "Assets/RobloxMaterials/Previews/Sandstone.png",
+    "Slate": "Assets/RobloxMaterials/Previews/Slate.png",
+    "SmoothPlastic": "Assets/RobloxMaterials/Previews/SmoothPlastic.png",
+    "Snow": "Assets/RobloxMaterials/Previews/Snow.png",
+    "Wood": "Assets/RobloxMaterials/Previews/Wood.png",
+    "WoodPlanks": "Assets/RobloxMaterials/Previews/WoodPlanks.png"
+  },
+  "materials": [
+    {
+      "name": "Air",
+      "key": "air",
+      "preview": "",
+      "terrain2022": true,
+      "terrainLegacy": true
+    },
+    {
+      "name": "Asphalt",
+      "key": "asphalt",
+      "preview": "Assets/RobloxMaterials/Previews/Asphalt.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/asphalt.png"
+    },
+    {
+      "name": "Basalt",
+      "key": "basalt",
+      "preview": "Assets/RobloxMaterials/Previews/Basalt.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/basalt.png"
+    },
+    {
+      "name": "Brick",
+      "key": "brick",
+      "preview": "Assets/RobloxMaterials/Previews/Brick.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/brick.png"
+    },
+    {
+      "name": "Cobblestone",
+      "key": "cobblestone",
+      "preview": "Assets/RobloxMaterials/Previews/Cobblestone.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/cobblestone.png"
+    },
+    {
+      "name": "Concrete",
+      "key": "concrete",
+      "preview": "Assets/RobloxMaterials/Previews/Concrete.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/concrete.png"
+    },
+    {
+      "name": "CorrodedMetal",
+      "key": "corrodedmetal",
+      "preview": "Assets/RobloxMaterials/Previews/CorrodedMetal.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "CrackedLava",
+      "key": "crackedlava",
+      "preview": "Assets/RobloxMaterials/Previews/CrackedLava.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/crackedlava.png"
+    },
+    {
+      "name": "DiamondPlate",
+      "key": "diamondplate",
+      "preview": "Assets/RobloxMaterials/Previews/DiamondPlate.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Fabric",
+      "key": "fabric",
+      "preview": "Assets/RobloxMaterials/Previews/Fabric.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Foil",
+      "key": "foil",
+      "preview": "Assets/RobloxMaterials/Previews/Foil.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Glacier",
+      "key": "glacier",
+      "preview": "Assets/RobloxMaterials/Previews/Glacier.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/glacier.png"
+    },
+    {
+      "name": "Granite",
+      "key": "granite",
+      "preview": "Assets/RobloxMaterials/Previews/Granite.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Grass",
+      "key": "grass",
+      "preview": "Assets/RobloxMaterials/Previews/Grass.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/grass.png"
+    },
+    {
+      "name": "Ground",
+      "key": "ground",
+      "preview": "Assets/RobloxMaterials/Previews/Ground.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/ground.png"
+    },
+    {
+      "name": "Ice",
+      "key": "ice",
+      "preview": "Assets/RobloxMaterials/Previews/Ice.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/ice.png"
+    },
+    {
+      "name": "LeafyGrass",
+      "key": "leafygrass",
+      "preview": "Assets/RobloxMaterials/Previews/LeafyGrass.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/leafygrass.png"
+    },
+    {
+      "name": "Limestone",
+      "key": "limestone",
+      "preview": "Assets/RobloxMaterials/Previews/Limestone.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/limestone.png"
+    },
+    {
+      "name": "Marble",
+      "key": "marble",
+      "preview": "Assets/RobloxMaterials/Previews/Marble.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Metal",
+      "key": "metal",
+      "preview": "Assets/RobloxMaterials/Previews/Metal.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Mud",
+      "key": "mud",
+      "preview": "Assets/RobloxMaterials/Previews/Mud.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/mud.png"
+    },
+    {
+      "name": "Pavement",
+      "key": "pavement",
+      "preview": "Assets/RobloxMaterials/Previews/Pavement.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/pavement.png"
+    },
+    {
+      "name": "Pebble",
+      "key": "pebble",
+      "preview": "Assets/RobloxMaterials/Previews/Pebble.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Plastic",
+      "key": "plastic",
+      "preview": "Assets/RobloxMaterials/Previews/Plastic.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Rock",
+      "key": "rock",
+      "preview": "Assets/RobloxMaterials/Previews/Rock.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/rock.png"
+    },
+    {
+      "name": "Salt",
+      "key": "salt",
+      "preview": "Assets/RobloxMaterials/Previews/Salt.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/salt.png"
+    },
+    {
+      "name": "Sand",
+      "key": "sand",
+      "preview": "Assets/RobloxMaterials/Previews/Sand.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/sand.png"
+    },
+    {
+      "name": "Sandstone",
+      "key": "sandstone",
+      "preview": "Assets/RobloxMaterials/Previews/Sandstone.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/sandstone.png"
+    },
+    {
+      "name": "Slate",
+      "key": "slate",
+      "preview": "Assets/RobloxMaterials/Previews/Slate.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/slate.png"
+    },
+    {
+      "name": "SmoothPlastic",
+      "key": "smoothplastic",
+      "preview": "Assets/RobloxMaterials/Previews/SmoothPlastic.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "Snow",
+      "key": "snow",
+      "preview": "Assets/RobloxMaterials/Previews/Snow.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/snow.png"
+    },
+    {
+      "name": "Water",
+      "key": "water",
+      "preview": "",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/water.png"
+    },
+    {
+      "name": "Wood",
+      "key": "wood",
+      "preview": "Assets/RobloxMaterials/Previews/Wood.png",
+      "terrain2022": false,
+      "terrainLegacy": false
+    },
+    {
+      "name": "WoodPlanks",
+      "key": "woodplanks",
+      "preview": "Assets/RobloxMaterials/Previews/WoodPlanks.png",
+      "terrain2022": true,
+      "terrainLegacy": true,
+      "swatch": "Assets/RobloxMaterials/Swatches/woodplanks.png"
+    }
+  ],
+  "swatches": {
+    "Asphalt": "Assets/RobloxMaterials/Swatches/asphalt.png",
+    "Basalt": "Assets/RobloxMaterials/Swatches/basalt.png",
+    "Brick": "Assets/RobloxMaterials/Swatches/brick.png",
+    "Cobblestone": "Assets/RobloxMaterials/Swatches/cobblestone.png",
+    "Concrete": "Assets/RobloxMaterials/Swatches/concrete.png",
+    "CrackedLava": "Assets/RobloxMaterials/Swatches/crackedlava.png",
+    "Glacier": "Assets/RobloxMaterials/Swatches/glacier.png",
+    "Grass": "Assets/RobloxMaterials/Swatches/grass.png",
+    "Ground": "Assets/RobloxMaterials/Swatches/ground.png",
+    "Ice": "Assets/RobloxMaterials/Swatches/ice.png",
+    "LeafyGrass": "Assets/RobloxMaterials/Swatches/leafygrass.png",
+    "Limestone": "Assets/RobloxMaterials/Swatches/limestone.png",
+    "Mud": "Assets/RobloxMaterials/Swatches/mud.png",
+    "Pavement": "Assets/RobloxMaterials/Swatches/pavement.png",
+    "Rock": "Assets/RobloxMaterials/Swatches/rock.png",
+    "Salt": "Assets/RobloxMaterials/Swatches/salt.png",
+    "Sand": "Assets/RobloxMaterials/Swatches/sand.png",
+    "Sandstone": "Assets/RobloxMaterials/Swatches/sandstone.png",
+    "Slate": "Assets/RobloxMaterials/Swatches/slate.png",
+    "Snow": "Assets/RobloxMaterials/Swatches/snow.png",
+    "Water": "Assets/RobloxMaterials/Swatches/water.png",
+    "WoodPlanks": "Assets/RobloxMaterials/Swatches/woodplanks.png"
+  }
+}

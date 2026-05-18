@@ -9,6 +9,7 @@ const ExplorerOps = (() => {
       .querySelector(`.tree-row[data-id="${node.id}"]`);
     if (!row) return;
     const labelEl = row.querySelector('.tree-label');
+    const iconEl = row.querySelector('.tree-icon > span');
     const input = document.createElement('input');
     input.className = 'tree-rename-input';
     input.value = node.name;
@@ -16,6 +17,10 @@ const ExplorerOps = (() => {
     input.focus();
     const dotIdx = node.name.lastIndexOf('.');
     input.setSelectionRange(0, dotIdx > 0 ? dotIdx : node.name.length);
+    if (iconEl)
+      input.addEventListener('input', () =>
+        helpers.updateIconEl(iconEl, input.value.trim() || '.', false, false),
+      );
     const commit = async () => {
       const newName = input.value.trim();
       if (newName && newName !== node.name) {
@@ -38,6 +43,8 @@ const ExplorerOps = (() => {
     };
     input.addEventListener('blur', commit, { once: true });
     input.addEventListener('keydown', (e) => {
+      if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(e.key))
+        e.stopPropagation();
       if (e.key === 'Enter') {
         e.preventDefault();
         input.blur();

@@ -1,9 +1,44 @@
 const dataTree = (() => {
+  const {
+    cross: _cross,
+    dot: _dot,
+    mat4LookAt: _mat4LookAt,
+    mat4Multiply: _mat4Multiply,
+    mat4Perspective: _mat4Perspective,
+    norm: _norm,
+    sub: _sub,
+  } = DataTreeMath;
   const STORE_FILE = 'datatrees_index.json';
   const LEGACY_STORE_FILE = 'datatrees.json';
   const SNAPSHOT_DIR = 'datatree-snapshots';
+  const ASSET_CACHE_DIR = 'Cache/Assets';
   const MAX_RENDER_ROWS = 720;
   const SNAPSHOT_LIMIT = 6;
+  const ASSET_RATE_LIMIT_COUNT = 192;
+  const ASSET_RATE_LIMIT_WINDOW_MS = 3000;
+  const MAX_ASSET_BLOB_CACHE_BYTES = 64 * 1024 * 1024;
+  const MAX_ASSET_BLOB_CACHE_ENTRIES = 64;
+  const MAX_TERRAIN_CELL_CACHE_ENTRIES = 4;
+  const MAX_READY_MESH_CACHE_ENTRIES = 96;
+  const MAX_SCENE_LIGHTS = 192;
+  const VIEWPORT_PERFORMANCE_MODE = false;
+  const MAX_VIEWPORT_LIGHTS = 8;
+  const INTERACTIVE_VIEWPORT_LIGHTS = 4;
+  const MAX_VIEWPORT_DPR = 1.5;
+  const COMPLEX_VIEWPORT_DPR = 1.25;
+  const INTERACTIVE_VIEWPORT_DPR = 1;
+  const ROBLOX_DESKTOP_HEADERS = {
+    Accept: '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0',
+  };
+  const VIEWPORT_BACKDROP_SKY = {
+    cssTop: 'rgb(255 213 164)',
+    cssBottom: 'rgb(237 164 112)',
+  };
 
   const _log = {
     info: (...args) => console.log('[DataTree]', ...args),
@@ -18,20 +53,37 @@ const dataTree = (() => {
     activeNodeId: null,
     expanded: new Set(),
     query: '',
+    propertyQuery: '',
+    railExplorerHeight: null,
     previewTab: 'viewport',
     visibleOverflow: 0,
     scroll: { tree: 0, details: 0 },
-    meta: { orders: {}, icons: {}, iconHtml: new Map() },
+    meta: { orders: {}, icons: {}, iconHtml: new Map(), materials: null, robloxApi: null },
     meshAssets: new Map(),
+    assetBlobs: new Map(),
+    assetByteFetches: new Map(),
+    terrainCells: new Map(),
     sceneCache: new Map(),
     viewportCameras: new Map(),
-    viewportBuild: { key: '', token: 0, status: 'idle', progress: 0, message: '' },
+    viewportBuild: {
+      key: '',
+      token: 0,
+      status: 'idle',
+      progress: 0,
+      message: '',
+      scene: null,
+      renderSnapshot: null,
+      renderNodeId: null,
+      assetRetryTimer: null,
+      activeAssetKeys: new Set(),
+    },
     viewportSummary: new Map(),
     meshVersion: 0,
     viewportAutoLoad: false,
     viewportClickSelect: false,
     importing: false,
     treeLoading: false,
+    snapshotLoadToken: 0,
     previewReady: false,
     importProgress: {
       progress: 0,
@@ -47,6 +99,7 @@ const dataTree = (() => {
   let _saveTimer = null;
   let _previewWarmupTimer = null;
   let _activeRowEl = null;
+  const _assetFetchWindow = [];
   const ICON_ALIASES = {
     Instance: 'Class',
     NumberValue: 'Value',
@@ -65,6 +118,10 @@ const dataTree = (() => {
   const _container = () => document.getElementById('dataTreeView');
   const _storePath = () => `${paths.internals}/${STORE_FILE}`;
   const _legacyStorePath = () => `${paths.internals}/${LEGACY_STORE_FILE}`;
+  const _assetCachePath = (id) => {
+    const safeId = String(_extractAssetId(id) || id || '').replace(/[^a-z0-9_-]/gi, '_');
+    return `${paths.internals}/${ASSET_CACHE_DIR}/${safeId}.bin`;
+  };
   const _snapshotStoragePath = (id) => {
     const safeId = String(id || helpers.uid()).replace(/[^a-z0-9_-]/gi, '_');
     return `${paths.internals}/${SNAPSHOT_DIR}/${safeId}.json`;
@@ -88,16 +145,21 @@ const dataTree = (() => {
 
   async function _loadMeta() {
     _log.info('Loading icon manifest and explorer order');
-    const [orders, icons] = await Promise.allSettled([
+    const [orders, icons, materials, robloxApi] = await Promise.allSettled([
       fetch('Assets/RobloxExplorerOrder.json').then((res) => (res.ok ? res.json() : null)),
       fetch('Assets/RobloxStudioIconManifest.json').then((res) => (res.ok ? res.json() : null)),
+      fetch('Assets/RobloxMaterials/manifest.json').then((res) => (res.ok ? res.json() : null)),
+      RobloxAPI.init().then(() => RobloxAPI.raw?.() || null),
     ]);
     const meta = orders.status === 'fulfilled' ? orders.value : null;
     state_.meta.orders = meta?.orders || {};
     state_.meta.icons = icons.status === 'fulfilled' ? icons.value || {} : {};
+    state_.meta.materials = materials.status === 'fulfilled' ? materials.value || null : null;
+    state_.meta.robloxApi = robloxApi.status === 'fulfilled' ? robloxApi.value || null : null;
+    if (state_.meta.robloxApi) DataTreeStudioProperties.build(state_.meta.robloxApi);
     state_.meta.iconHtml = new Map();
     _log.info(
-      `Meta loaded: ${Object.keys(state_.meta.orders).length} orders, ${Object.keys(state_.meta.icons).length} icons`,
+      `Meta loaded: ${Object.keys(state_.meta.orders).length} orders, ${Object.keys(state_.meta.icons).length} icons, ${state_.meta.materials?.materials?.length || 0} materials, ${state_.meta.robloxApi?.Classes?.length || 0} API classes`,
     );
   }
 
@@ -208,6 +270,9 @@ const dataTree = (() => {
     renderSnapshot.sourceSize = snapshot.sourceSize || renderSnapshot.sourceSize || 0;
     renderSnapshot.heavyLoaded = true;
     await _hydrateAsync(renderSnapshot, { chunkMs: 4 });
+    if (snapshot.materialVariants?.size && !renderSnapshot.materialVariants?.size) {
+      renderSnapshot.materialVariants = snapshot.materialVariants;
+    }
     return renderSnapshot;
   }
 
@@ -215,20 +280,37 @@ const dataTree = (() => {
     const snapshot = activeSnapshot();
     if (!snapshot?.storagePath || snapshot.byId || snapshot.nodes?.length || state_.treeLoading)
       return;
+    const token = (state_.snapshotLoadToken || 0) + 1;
+    const snapshotId = snapshot.id;
+    state_.snapshotLoadToken = token;
     state_.treeLoading = true;
     state_.previewReady = false;
     render();
     _ensureSnapshotLoaded(snapshot, { light: true })
       .then(() => {
+        if (!_isActiveSnapshotLoad(token, snapshotId)) return;
         _restoreSnapshotState(snapshot);
         state_.previewTab = 'raw';
       })
-      .catch((err) => toast.show(err?.message || 'DataTree failed to load', 'fail', 3200))
+      .catch((err) => {
+        if (_isActiveSnapshotLoad(token, snapshotId))
+          toast.show(err?.message || 'DataTree failed to load', 'fail', 3200);
+      })
       .finally(() => {
+        if (!_isActiveSnapshotLoad(token, snapshotId)) return;
         state_.treeLoading = false;
         render();
         _schedulePreviewWarmup();
       });
+  }
+
+  function _isActiveSnapshotLoad(token, snapshotId) {
+    return state_.snapshotLoadToken === token && state_.activeSnapshotId === snapshotId;
+  }
+
+  function _cancelSnapshotLoad() {
+    state_.snapshotLoadToken = (state_.snapshotLoadToken || 0) + 1;
+    state_.treeLoading = false;
   }
 
   function _schedulePreviewWarmup() {
@@ -354,10 +436,13 @@ const dataTree = (() => {
     _log.info(
       `Activating snapshot id=${snapshot?.id} name="${snapshot?.name}" nodes=${snapshot?.nodeCount}`,
     );
+    _cancelSnapshotLoad();
+    clearTimeout(_previewWarmupTimer);
+    _cancelViewportBuild();
     state_.activeSnapshotId = snapshot?.id ?? null;
     state_.previewReady = false;
     state_.previewTab = 'raw';
-    state_.sceneCache.clear();
+    _clearSceneCache();
     if (snapshot?.byId || snapshot?.nodes?.length) _restoreSnapshotState(snapshot);
     else {
       state_.activeNodeId = snapshot?.activeNodeId || snapshot?.rootId || null;
@@ -398,6 +483,7 @@ const dataTree = (() => {
     delete snapshot.searchIndex;
     snapshot.rootId = children.get(0)?.[0]?.id ?? snapshot.nodes?.[0]?.id ?? null;
     snapshot.nodeCount = snapshot.nodes?.length || 0;
+    _hydrateMaterialRegistry(snapshot);
     _ensureDepths(snapshot);
   }
 
@@ -435,7 +521,36 @@ const dataTree = (() => {
     delete snapshot.searchIndex;
     snapshot.rootId = children.get(0)?.[0]?.id ?? snapshot.nodes?.[0]?.id ?? null;
     snapshot.nodeCount = nodes.length || 0;
+    _hydrateMaterialRegistry(snapshot);
     await _ensureDepthsAsync(snapshot, chunkMs);
+  }
+
+  function _hydrateMaterialRegistry(snapshot) {
+    const variants = new Map();
+    for (const node of snapshot?.nodes || []) {
+      if (!/^materialvariant$/i.test(String(node.className || ''))) continue;
+      const props = node.properties || {};
+      const name = String(node.name || props.Name || '').trim();
+      if (!name) continue;
+      const maps = {};
+      for (const key of ['ColorMap', 'NormalMap', 'RoughnessMap', 'MetalnessMap', 'TexturePack']) {
+        const value = _firstProp(props, [key]);
+        if (!value) continue;
+        maps[key] = {
+          value,
+          id: _assetId(value),
+          kind: key === 'TexturePack' ? 'Asset' : 'Image',
+        };
+      }
+      variants.set(_materialVariantKey(name), {
+        name,
+        baseMaterial: _firstProp(props, ['BaseMaterial']),
+        studPattern: _firstProp(props, ['StudsPerTile', 'studsPerTile']),
+        maps,
+        nodeId: node.id,
+      });
+    }
+    snapshot.materialVariants = variants;
   }
 
   function _ensureDepths(snapshot) {
@@ -506,7 +621,7 @@ const dataTree = (() => {
   function _shellSkeleton(message = 'Loading DataTree') {
     const shell = document.createElement('div');
     shell.className = 'dt-shell';
-    shell.innerHTML = `<header class="dt-topbar"><div class="dt-title-block"><h2>DataTree</h2><p>RBXLX Explorer</p></div><div class="dt-actions"><button class="dt-btn dt-btn-primary" disabled>Import RBXLX</button></div></header><div class="dt-content"><section class="dt-side dt-side--loading"><main class="dt-tree-pane"><div class="dt-tree-toolbar"><div><span class="dt-tree-title">Data Model Explorer</span><small>${_escape(message)}</small></div><label class="dt-search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input placeholder="Search" disabled></label></div><div class="dt-tree-list"><div class="dt-stage-card"><span class="dt-stage-pill">Explorer first</span><strong>Loading saved imports</strong><p>The side tree and inspector are loading before the preview wakes up.</p><div class="dt-stage-line"><span></span></div></div></div></main><aside class="dt-details"><div class="dt-empty">Inspector will appear after the tree loads.</div></aside></section><main class="dt-preview-pane"><div class="dt-preview-empty dt-preview-empty--deferred"><span>${_escape(message)}</span><p>Preview is intentionally asleep while the explorer becomes interactive.</p></div></main></div>`;
+    shell.innerHTML = `<header class="dt-topbar"><div class="dt-title-block"><h2>DataTree</h2><p>RBXLX Explorer</p></div><div class="dt-actions"><button class="dt-btn dt-btn-primary" disabled>Import RBXLX</button></div></header><div class="dt-content"><main class="dt-preview-pane"><div class="dt-preview-empty dt-preview-empty--deferred"><span>${_escape(message)}</span><p>Preview is intentionally asleep while the explorer becomes interactive.</p></div></main><section class="dt-side dt-side--loading"><main class="dt-tree-pane"><div class="dt-tree-toolbar"><div><span class="dt-tree-title">Data Model Explorer</span><small>${_escape(message)}</small></div><label class="dt-search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input placeholder="Search" disabled></label></div><div class="dt-tree-list"><div class="dt-stage-card"><span class="dt-stage-pill">Explorer first</span><strong>Loading saved imports</strong><p>The side tree and inspector are loading before the preview wakes up.</p><div class="dt-stage-line"><span></span></div></div></div></main><aside class="dt-details"><div class="dt-empty">Inspector will appear after the tree loads.</div></aside></section></div>`;
     return shell;
   }
 
@@ -592,9 +707,55 @@ const dataTree = (() => {
     wrap.className = 'dt-content';
     const side = document.createElement('section');
     side.className = `dt-side${state_.treeLoading ? ' dt-side--loading' : ''}`;
-    side.append(_treePane(), _detailsPane());
-    wrap.append(side, state_.previewReady ? _previewPane() : _previewDormantPane());
+    if (state_.railExplorerHeight) {
+      side.style.setProperty('--dt-explorer-height', `${state_.railExplorerHeight}px`);
+    }
+    side.append(_treePane(), _railSplitter(side), _detailsPane());
+    wrap.append(state_.previewReady ? _previewPane() : _previewDormantPane(), side);
     return wrap;
+  }
+
+  function _railSplitter(side) {
+    const handle = document.createElement('div');
+    handle.className = 'dt-rail-splitter';
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'horizontal');
+    handle.title = 'Drag to resize Explorer and Properties';
+    let dragging = false;
+    let pointerId = null;
+    const minExplorer = 180;
+    const minDetails = 170;
+    const move = (event) => {
+      if (!dragging) return;
+      const rect = side.getBoundingClientRect();
+      const maxExplorer = Math.max(minExplorer, rect.height - minDetails - handle.offsetHeight);
+      const next = Math.max(minExplorer, Math.min(maxExplorer, event.clientY - rect.top));
+      state_.railExplorerHeight = Math.round(next);
+      side.style.setProperty('--dt-explorer-height', `${state_.railExplorerHeight}px`);
+    };
+    const stop = () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      if (pointerId != null) handle.releasePointerCapture?.(pointerId);
+      pointerId = null;
+    };
+    handle.addEventListener('pointerdown', (event) => {
+      dragging = true;
+      pointerId = event.pointerId;
+      handle.classList.add('dragging');
+      handle.setPointerCapture?.(pointerId);
+      move(event);
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('dblclick', () => {
+      state_.railExplorerHeight = null;
+      side.style.removeProperty('--dt-explorer-height');
+    });
+    return handle;
   }
 
   function renameSnapshot() {
@@ -794,6 +955,10 @@ const dataTree = (() => {
     _releaseSceneCpuMesh(activeBuildScene);
     state_.sceneCache.clear();
     state_.meshAssets.clear();
+    for (const entry of state_.assetBlobs.values()) URL.revokeObjectURL(entry.url || entry);
+    state_.assetBlobs.clear();
+    state_.assetByteFetches.clear();
+    state_.terrainCells.clear();
     state_.viewportCameras.clear();
     state_.viewportSummary.clear();
     state_.meshVersion += 1;
@@ -1021,19 +1186,21 @@ const dataTree = (() => {
       requestAnimationFrame(() => _ensureViewportBuild(snapshot, node, buildKey));
       return wrap;
     }
-    if (!(scene.partCount || scene.parts.length) || !scene.mesh.vertexCount) {
+    if (!(scene.partCount || scene.parts.length) || !scene.mesh.visualVertexCount) {
       wrap.innerHTML = `<section class="dt-render-frame"><div class="dt-render-grid"></div><div class="dt-preview-copy"><span>${_escape(previewKind.title)}</span><p>${_escape(previewKind.body)}</p></div></section>`;
       return wrap;
     }
     const assetStats = scene.assetCount
-      ? `<span>${scene.assetReady.toLocaleString()}/${scene.assetCount.toLocaleString()} embedded meshes</span>${scene.assetFailed ? `<span>${scene.assetFailed.toLocaleString()} unavailable</span>` : ''}`
+      ? `<span>${scene.assetReady.toLocaleString()}/${scene.assetCount.toLocaleString()} meshes</span>${scene.assetFailed ? `<span>${scene.assetFailed.toLocaleString()} unavailable</span>` : ''}`
       : '';
     const omittedStats = scene.omittedParts
       ? `<span>${scene.omittedParts.toLocaleString()} deferred</span>`
       : '';
     const assetProgress = _viewportProgressMarkup(job || state_.viewportBuild, buildKey, 'asset');
-    const skyStyle = `--dt-sky-top:${scene.sky?.cssTop || 'rgb(24 28 34)'};--dt-sky-bottom:${scene.sky?.cssBottom || 'rgb(12 14 18)'}`;
-    wrap.innerHTML = `<section class="dt-render-frame dt-render-frame--canvas" style="${skyStyle}"><canvas class="dt-viewport-canvas" data-build-key="${_escape(buildKey)}" aria-label="3D preview"></canvas><div class="dt-render-stats" data-render-stats="${_escape(buildKey)}"><span>${(scene.partCount || scene.parts.length).toLocaleString()} parts</span><span>${scene.mesh.triangleCount.toLocaleString()} tris</span>${assetStats}${omittedStats}</div>${assetProgress}<div class="dt-render-hint">Drag/right-drag look · WASD fly · Q/E up/down · Shift fast · Scroll forward · F focus · Dbl-click reset<button type="button" class="dt-click-select-toggle${state_.viewportClickSelect ? ' active' : ''}" title="Click parts in viewport to select them in the tree">Click Select</button></div></section>`;
+    const skyTop = scene.sky?.cssTop || VIEWPORT_BACKDROP_SKY.cssTop;
+    const skyBottom = scene.sky?.cssBottom || VIEWPORT_BACKDROP_SKY.cssBottom;
+    const skyStyle = `--dt-sky-top:${skyTop};--dt-sky-bottom:${skyBottom}`;
+    wrap.innerHTML = `<section class="dt-render-frame dt-render-frame--canvas" style="${skyStyle}"><canvas class="dt-viewport-canvas" data-build-key="${_escape(buildKey)}" aria-label="3D preview"></canvas><div class="dt-render-stats" data-render-stats="${_escape(buildKey)}"><span>${(scene.partCount || scene.parts.length).toLocaleString()} parts</span><span>${(scene.mesh.visualTriangleCount || scene.mesh.triangleCount).toLocaleString()} tris</span>${assetStats}${omittedStats}</div>${assetProgress}<div class="dt-render-hint">Drag/right-drag look · WASD fly · Q/E up/down · Shift fast · Scroll forward · F focus · Dbl-click reset<button type="button" class="dt-click-select-toggle${state_.viewportClickSelect ? ' active' : ''}" title="Click parts in viewport to select them in the tree">Click Select</button></div></section>`;
     wrap.querySelector('.dt-click-select-toggle')?.addEventListener('click', () => {
       state_.viewportClickSelect = !state_.viewportClickSelect;
       wrap
@@ -1046,9 +1213,11 @@ const dataTree = (() => {
         scene,
         _viewportCameraKey(snapshot, node),
       );
-      _loadViewportAssets(scene.assets, node.id, buildKey);
+      _loadViewportAssets(scene.assets, node.id, buildKey, state_.viewportBuild.token);
+      // Release CPU mesh only AFTER _mountViewport has uploaded it to the GPU.
       _releaseSceneCpuMesh(scene);
       state_.sceneCache.delete(buildKey);
+      state_.viewportBuild.activeAssetKeys = _sceneAssetKeys(scene);
       if (state_.viewportBuild.scene === scene) state_.viewportBuild.scene = null;
     });
     return wrap;
@@ -1115,12 +1284,19 @@ const dataTree = (() => {
   }
 
   function _cancelViewportBuild() {
+    if (state_.viewportBuild.assetRetryTimer) clearTimeout(state_.viewportBuild.assetRetryTimer);
     state_.viewportBuild.token = (state_.viewportBuild.token || 0) + 1;
     state_.viewportBuild.status = 'idle';
     state_.viewportBuild.key = '';
     state_.viewportBuild.scene = null;
     state_.viewportBuild.renderSnapshot = null;
     state_.viewportBuild.renderNodeId = null;
+    state_.viewportBuild.assetRetryTimer = null;
+    state_.viewportBuild.activeAssetKeys = new Set();
+  }
+
+  function _isViewportBuildActive(key, token) {
+    return !!key && state_.viewportBuild.key === key && state_.viewportBuild.token === token;
   }
 
   function _updateViewportBuild(key, patch) {
@@ -1142,8 +1318,7 @@ const dataTree = (() => {
     const pct = Math.round(progress * 100);
     const message = job?.message || 'Preparing 3D preview';
     const cls = `dt-viewport-loading${mode === 'asset' ? ' dt-viewport-loading--asset' : ''}`;
-    const hidden = mode === 'asset' && job?.status !== 'assets' ? ' hidden' : '';
-    return `<div class="${cls}" data-build-key="${_escape(key)}"${hidden}><strong>${_escape(message)}</strong><p>${_escape(_etaText(job?.startedAt, progress))}</p><div class="dt-progress-track"><span style="width:${pct}%"></span></div><small>${pct}%</small></div>`;
+    return `<div class="${cls}" data-build-key="${_escape(key)}"><strong>${_escape(message)}</strong><p>${_escape(_etaText(job?.startedAt, progress))}</p><div class="dt-progress-track"><span style="width:${pct}%"></span></div><small>${pct}%</small></div>`;
   }
 
   function _paintViewportProgress(key) {
@@ -1163,7 +1338,8 @@ const dataTree = (() => {
     if (p) p.textContent = _etaText(job.startedAt, progress);
     if (bar) bar.style.width = `${pct}%`;
     if (small) small.textContent = `${pct}%`;
-    el.hidden = job.status !== 'assets' && el.classList.contains('dt-viewport-loading--asset');
+    const isAssetPill = el.classList.contains('dt-viewport-loading--asset');
+    el.hidden = isAssetPill && (job.status === 'ready' || job.progress >= 1);
   }
 
   async function _ensureViewportSummary(snapshot, node, key) {
@@ -1212,6 +1388,8 @@ const dataTree = (() => {
         message: '3D preview ready',
         startedAt: performance.now(),
         scene: cached,
+        assetRetryTimer: null,
+        activeAssetKeys: _sceneAssetKeys(cached),
       };
       return;
     }
@@ -1226,6 +1404,8 @@ const dataTree = (() => {
       scene: null,
       renderSnapshot: null,
       renderNodeId: node.id,
+      assetRetryTimer: null,
+      activeAssetKeys: new Set(),
     };
     _buildViewportSceneProgressive(snapshot, node, key, token).catch((err) => {
       if (state_.viewportBuild.key !== key || state_.viewportBuild.token !== token) return;
@@ -1265,10 +1445,16 @@ const dataTree = (() => {
         scanned += 1;
         const children = renderSnapshot.children.get(current.id) || [];
         if (/^terrain$/i.test(String(current.className || ''))) {
-          const terrainParts = _terrainToParts(current);
+          const terrainParts = await _terrainToPartsAsync(current);
           for (const tp of terrainParts) parts.push(tp);
         } else if (_isRenderablePart(current.className)) {
-          const part = _nodePart(current, _meshChildFor(children));
+          const part = _nodePart(
+            current,
+            _meshChildFor(children),
+            renderSnapshot,
+            _surfaceTextureFor(children),
+            _surfaceAppearanceFor(children),
+          );
           if (part) parts.push(part);
         }
         for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
@@ -1315,14 +1501,14 @@ const dataTree = (() => {
     const guide = _lineBuilder();
     const points = _pointCollector();
     const assetMap = new Map();
+    const readyAssets = new Set();
+    const failedAssets = new Set();
     const aabbs = [];
-    let assetReady = 0;
-    let assetFailed = 0;
     let omittedParts = 0;
     for (let i = 0; i < parts.length; i += 1) {
       if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== key)
         return _emptyScene();
-      if (mesh.vertexCount() >= budget.maxVertices) {
+      if (mesh.visualVertexCount() >= budget.maxVertices) {
         omittedParts = parts.length - i;
         break;
       }
@@ -1331,11 +1517,15 @@ const dataTree = (() => {
       if (assetKey) {
         assetMap.set(assetKey, part.mesh);
         const cached = state_.meshAssets.get(assetKey);
-        if (cached?.status === 'ready') assetReady += 1;
-        if (cached?.status === 'failed') assetFailed += 1;
+        if (cached?.status === 'ready') {
+          cached.lastUsed = Date.now();
+          readyAssets.add(assetKey);
+        }
+        if (cached?.status === 'failed') failedAssets.add(assetKey);
       }
 
       mesh.setFlag(part.matFlag || 0);
+      mesh.setMatId(part.matId || 0);
       const before = points.length;
       points.beginPart();
       _emitPart(part, mesh, points, budget);
@@ -1355,29 +1545,34 @@ const dataTree = (() => {
         await _yieldFrame();
       }
     }
-    if (!points.length)
+    if (!points.length) {
+      const lights = _sceneLights(snapshot, parts);
       return {
         ..._emptyScene(),
         partCount: parts.length,
         assets: [...assetMap.values()],
         assetCount: assetMap.size,
-        assetReady,
-        assetFailed,
+        assetReady: readyAssets.size,
+        assetFailed: failedAssets.size,
         omittedParts,
         aabbs,
+        lights,
+        lightProfile: _sceneLightProfile(lights),
         sky: _sceneSky(snapshot),
       };
+    }
     const bounds = _bounds(points);
     const center = bounds.min.map((item, index) => (item + bounds.max[index]) / 2);
     const extent = Math.max(...bounds.max.map((item, index) => item - bounds.min[index]), 1);
+    const lights = _sceneLights(snapshot, parts);
     _emitGuides(guide, bounds, center, extent);
     return {
       parts: [],
       partCount: parts.length,
       assets: [...assetMap.values()],
       assetCount: assetMap.size,
-      assetReady,
-      assetFailed,
+      assetReady: readyAssets.size,
+      assetFailed: failedAssets.size,
       omittedParts,
       mesh: mesh.finish(),
       guide: guide.finish(),
@@ -1385,6 +1580,8 @@ const dataTree = (() => {
       extent,
       bounds,
       aabbs,
+      lights,
+      lightProfile: _sceneLightProfile(lights, bounds),
       sky: _sceneSky(snapshot),
     };
   }
@@ -1409,14 +1606,14 @@ const dataTree = (() => {
     );
     const scene = _buildScene(parts);
     _log.info(
-      `Scene built: ${scene.mesh.vertexCount} verts, ${scene.mesh.triangleCount} tris, ${scene.assetCount} asset(s) (${scene.assetReady} ready, ${scene.assetFailed} failed), ${scene.omittedParts} deferred`,
+      `Scene built: ${scene.mesh.visualVertexCount || scene.mesh.vertexCount} verts, ${scene.mesh.visualTriangleCount || scene.mesh.triangleCount} tris, ${scene.assetCount} asset(s) (${scene.assetReady} ready, ${scene.assetFailed} failed), ${scene.omittedParts} deferred`,
     );
     state_.sceneCache.set(key, scene);
     _trimSceneCache();
     return scene;
   }
 
-  function _viewportSummary(snapshot, node) {
+  function _computeViewportSummary(snapshot, node) {
     if (!snapshot || !node) return { parts: 0, assets: 0 };
     let parts = 0;
     let assets = 0;
@@ -1444,7 +1641,13 @@ const dataTree = (() => {
         const terrainParts = _terrainToParts(current);
         for (const tp of terrainParts) parts.push(tp);
       } else if (_isRenderablePart(current.className)) {
-        const part = _nodePart(current, _meshChildFor(children));
+        const part = _nodePart(
+          current,
+          _meshChildFor(children),
+          snapshot,
+          _surfaceTextureFor(children),
+          _surfaceAppearanceFor(children),
+        );
         if (part) parts.push(part);
       }
       for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
@@ -1479,8 +1682,22 @@ const dataTree = (() => {
       mesh.normals = new Float32Array(0);
       mesh.colors = new Float32Array(0);
       mesh.flags = new Float32Array(0);
+      mesh.matIds = new Float32Array(0);
+      for (const group of mesh.textured || []) {
+        group.positions = new Float32Array(0);
+        group.normals = new Float32Array(0);
+        group.colors = new Float32Array(0);
+        group.uvs = new Float32Array(0);
+        group.flags = new Float32Array(0);
+      }
+      mesh.textured = [];
     }
     scene.parts = [];
+  }
+
+  function _clearSceneCache() {
+    for (const scene of state_.sceneCache.values()) _releaseSceneCpuMesh(scene);
+    state_.sceneCache.clear();
   }
 
   function _emptyScene() {
@@ -1491,41 +1708,238 @@ const dataTree = (() => {
       assetReady: 0,
       assetFailed: 0,
       omittedParts: 0,
-      mesh: { vertexCount: 0, triangleCount: 0 },
+      mesh: {
+        vertexCount: 0,
+        triangleCount: 0,
+        visualVertexCount: 0,
+        visualTriangleCount: 0,
+        textured: [],
+      },
       guide: { vertexCount: 0 },
+      textured: [],
       center: [0, 0, 0],
       extent: 1,
       aabbs: [],
+      lights: [],
+      lightProfile: { indirect: [0, 0, 0], energy: 0 },
       sky: _sceneSky(activeSnapshot()),
     };
   }
 
   function _sceneSky(snapshot) {
-    const nodes = snapshot?.nodes || [];
-    const lighting = nodes.find((node) =>
+    let nodes = snapshot?.nodes || [];
+    let lighting = nodes.find((node) =>
       /^lighting$/i.test(String(node.className || node.name || '')),
     );
-    const atmosphere = nodes.find((node) =>
-      /^atmosphere$/i.test(String(node.className || node.name || '')),
+    if (!lighting && activeSnapshot()?.id !== snapshot?.id) {
+      nodes = activeSnapshot()?.nodes || nodes;
+      lighting = nodes.find((node) =>
+        /^lighting$/i.test(String(node.className || node.name || '')),
+      );
+    }
+    const colorCorrection = nodes.find((node) =>
+      /^colorcorrectioneffect$/i.test(String(node.className || '')),
     );
+    const bloom = nodes.find((node) => /^bloomeffect$/i.test(String(node.className || '')));
+    const atmosphere = nodes.find((node) => /^atmosphere$/i.test(String(node.className || '')));
     const props = lighting?.properties || {};
-    const atmoProps = atmosphere?.properties || {};
+    const ccProps = colorCorrection?.properties || {};
+    const bloomProps = bloom?.properties || {};
+    const atmosphereProps = atmosphere?.properties || {};
     const ambient = _parseColor(_firstProp(props, ['OutdoorAmbient', 'Ambient', 'ColorShift_Top']));
-    const fog = _parseColor(_firstProp(props, ['FogColor', 'Color']));
-    const decay = _parseColor(_firstProp(atmoProps, ['Decay', 'Color']));
-    const density = Math.max(0, Math.min(1, Number(_firstProp(atmoProps, ['Density'])) || 0.2));
     const brightness = Math.max(
-      0.35,
-      Math.min(1.35, Number(_firstProp(props, ['Brightness'])) || 1),
+      0,
+      Math.min(1.4, (Number(_firstProp(props, ['Brightness'])) || 1) * 0.38),
     );
-    const top = _mixRgb(_boostRgb(ambient, brightness), decay, density * 0.35);
-    const bottom = _mixRgb(_boostRgb(fog, brightness * 0.88), top, 0.28);
+    const skyShift = _parseColor(_firstProp(props, ['ColorShift_Top']) || ambient.join(' '));
+    const groundShift = _parseColor(_firstProp(props, ['ColorShift_Bottom']) || ambient.join(' '));
+    const atmosphereColor = _parseColor(_firstProp(atmosphereProps, ['Color']) || '199 199 199');
+    const atmosphereDecay = _parseColor(
+      _firstProp(atmosphereProps, ['Decay']) || atmosphereColor.join(' '),
+    );
+    const density = Math.max(0, Math.min(1, Number(_firstProp(atmosphereProps, ['Density'])) || 0));
+    const haze = Math.max(0, Math.min(10, Number(_firstProp(atmosphereProps, ['Haze'])) || 0));
+    const glare = Math.max(0, Math.min(10, Number(_firstProp(atmosphereProps, ['Glare'])) || 0));
+    const rainRate = Math.max(
+      0,
+      Math.min(1, Number(_firstProp(atmosphereProps, ['RainRate'])) || 0),
+    );
+    const windSpeed = Math.max(
+      0,
+      Math.min(100, Number(_firstProp(atmosphereProps, ['WindSpeed'])) || 0),
+    );
+    const atmosphereMix = Math.min(0.72, density * 0.62 + haze * 0.035);
+    const horizonMix = Math.min(0.8, density * 0.72 + haze * 0.055);
+    const topBase = _mixRgb(_boostRgb(ambient, brightness), _boostRgb(skyShift, brightness), 0.34);
+    const bottomBase = _mixRgb(_boostRgb(groundShift, brightness * 0.78), topBase, 0.32);
+    const ambientSkyBase = _mixRgb(
+      _boostRgb(ambient, brightness * 0.92),
+      _boostRgb(skyShift, brightness * 0.92),
+      0.12,
+    );
+    const ambientGroundBase = _mixRgb(
+      _boostRgb(ambient, brightness * 0.72),
+      _boostRgb(groundShift, brightness * 0.72),
+      0.16,
+    );
+    const ambientSky = _neutralizeRgb(ambientSkyBase, 0.86);
+    const ambientGround = _neutralizeRgb(ambientGroundBase, 0.9);
+
+    const top = _mixRgb(topBase, _boostRgb(atmosphereColor, 1 + glare * 0.025), atmosphereMix);
+    const bottom = _mixRgb(bottomBase, atmosphereDecay, horizonMix);
+    const contrast = Math.max(-0.6, Math.min(0.8, Number(_firstProp(ccProps, ['Contrast'])) || 0));
+    const saturation = Math.max(
+      -0.8,
+      Math.min(1.2, Number(_firstProp(ccProps, ['Saturation'])) || 0),
+    );
+    const exposure = Math.max(
+      0,
+      Math.min(2, 1 + (Number(_firstProp(ccProps, ['Brightness'])) || 0)),
+    );
+    const tint = _parseColor(_firstProp(ccProps, ['TintColor', 'Tint']) || '255 255 255');
+    const bloomIntensity = Math.max(
+      0,
+      Math.min(1.5, Number(_firstProp(bloomProps, ['Intensity'])) || 0),
+    );
+    const sun = _sceneSun(props, top);
     return {
       top,
       bottom,
       cssTop: _rgbCss(top),
       cssBottom: _rgbCss(bottom),
+      rain: rainRate,
+      wind: windSpeed,
+      effects: {
+        exposure: Math.max(1.08, exposure),
+        contrast,
+        saturation,
+        tint,
+        ambientLift: 0,
+        shadowLift: 0,
+        bloom: bloomIntensity,
+      },
+      ambient: {
+        sky: ambientSky,
+        ground: ambientGround,
+      },
+      sun,
     };
+  }
+
+  function _neutralizeRgb(rgb, amount = 0.85) {
+    const lum = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    return _mixRgb(rgb, [lum, lum, lum], Math.max(0, Math.min(1, amount)));
+  }
+
+  function _sceneSun(props, skyColor = [126, 151, 178]) {
+    const clockRaw = _firstProp(props, ['ClockTime']);
+    let clock = Number(clockRaw);
+    if (!Number.isFinite(clock)) {
+      const tod = String(_firstProp(props, ['TimeOfDay']) || '').match(/(\d+):(\d+):?(\d+)?/);
+      clock = tod ? Number(tod[1]) + Number(tod[2] || 0) / 60 + Number(tod[3] || 0) / 3600 : 14;
+    }
+    clock = ((clock % 24) + 24) % 24;
+    const daylight = Math.max(0, Math.sin(((clock - 6) / 12) * Math.PI));
+    const azimuth = (clock / 24) * Math.PI * 2 - Math.PI * 0.5;
+    const elevation = Math.max(-0.12, Math.sin(((clock - 6) / 12) * Math.PI));
+    const horizontal = Math.sqrt(Math.max(0, 1 - elevation * elevation));
+    const dir = _norm([Math.cos(azimuth) * horizontal, elevation, Math.sin(azimuth) * horizontal]);
+    const warm = [255, 204, 150];
+    const noon = _mixRgb(skyColor, [255, 248, 236], 0.82);
+    const warmth = 1 - Math.pow(daylight, 0.42);
+    return {
+      direction: dir,
+      color: _mixRgb(noon, warm, Math.min(0.78, warmth)),
+      strength: 0.34 + daylight * 0.94,
+    };
+  }
+
+  function _sceneLights(snapshot, parts = []) {
+    const nodes = snapshot?.nodes || [];
+    if (!nodes.length || !parts.length) return [];
+    const partById = new Map(parts.map((part) => [part.id, part]));
+    const lights = [];
+    for (const node of nodes) {
+      const className = String(node.className || '').toLowerCase();
+      if (!/^(pointlight|spotlight|surfacelight)$/.test(className)) continue;
+      const host = partById.get(node.parentId);
+      if (!host?.center) continue;
+      const props = node.properties || {};
+      const enabled = String(_firstProp(props, ['Enabled']) ?? 'true').toLowerCase();
+      if (enabled === 'false' || enabled === '0') continue;
+      const brightness = Math.max(0, Math.min(10, Number(_firstProp(props, ['Brightness'])) || 1));
+      const range = Math.max(4, Math.min(220, Number(_firstProp(props, ['Range'])) || 16));
+      const color = _parseColor(_firstProp(props, ['Color']) || '255 244 214');
+      const face = _firstProp(props, ['Face']) || 'Front';
+      const angle = Math.max(1, Math.min(180, Number(_firstProp(props, ['Angle'])) || 45));
+      const kind = className === 'spotlight' ? 1 : className === 'surfacelight' ? 2 : 0;
+      const direction = kind ? _partFaceDirection(host, face) : [0, 0, 0];
+      const position = kind ? _partFacePosition(host, face) : host.center.slice();
+      const intensity = Math.min(2.5, 0.48 + brightness * 0.42);
+      lights.push({
+        position,
+        direction,
+        kind,
+        coneCos: kind === 1 ? Math.cos((angle * Math.PI) / 360) : 0,
+        color: color.map((item) => (item / 255) * intensity),
+        intensity,
+        range,
+      });
+    }
+    lights.sort((a, b) => b.intensity * Math.sqrt(b.range) - a.intensity * Math.sqrt(a.range));
+    return lights.slice(0, MAX_SCENE_LIGHTS);
+  }
+
+  function _sceneLightProfile(lights = [], bounds = null) {
+    if (!lights.length) return { indirect: [0, 0, 0], energy: 0 };
+    const diagonal = bounds
+      ? Math.max(
+          1,
+          Math.hypot(
+            bounds.max[0] - bounds.min[0],
+            bounds.max[1] - bounds.min[1],
+            bounds.max[2] - bounds.min[2],
+          ),
+        )
+      : 48;
+    let total = 0;
+    const weighted = [0, 0, 0];
+    for (const light of lights) {
+      const weight = (light.intensity || 1) * Math.sqrt(Math.max(light.range || 1, 1));
+      total += weight;
+      weighted[0] += (light.color?.[0] || 0) * weight;
+      weighted[1] += (light.color?.[1] || 0) * weight;
+      weighted[2] += (light.color?.[2] || 0) * weight;
+    }
+    const average = total ? weighted.map((item) => item / total) : [0, 0, 0];
+    const density = Math.min(1, total / Math.max(18, diagonal * 0.72));
+    const indirectStrength = Math.min(0.56, 0.08 + density * 0.48);
+    return {
+      indirect: average.map((item) => item * indirectStrength),
+      energy: density,
+    };
+  }
+
+  function _lightFaceLocal(face) {
+    const key = String(face || '')
+      .trim()
+      .toLowerCase();
+    if (key === 'right' || key === '0') return [1, 0, 0];
+    if (key === 'top' || key === '1') return [0, 1, 0];
+    if (key === 'back' || key === '2') return [0, 0, 1];
+    if (key === 'left' || key === '3') return [-1, 0, 0];
+    if (key === 'bottom' || key === '4') return [0, -1, 0];
+    return [0, 0, -1];
+  }
+
+  function _partFaceDirection(part, face) {
+    const local = _lightFaceLocal(face);
+    return _partNormal(part, local);
+  }
+
+  function _partFacePosition(part, face) {
+    const local = _lightFaceLocal(face);
+    return _partPoint(part, [local[0] * 0.5, local[1] * 0.5, local[2] * 0.5]);
   }
 
   function _mixRgb(a, b, t) {
@@ -1579,6 +1993,17 @@ const dataTree = (() => {
     const props = terrainNode.properties || {};
 
     const cells = _decodeTerrainGrid(props.SmoothGrid || props.Voxels || '');
+    return _terrainCellsToParts(terrainNode, props, cells);
+  }
+
+  async function _terrainToPartsAsync(terrainNode) {
+    const props = terrainNode.properties || {};
+    const raw = props.SmoothGrid || props.Voxels || '';
+    const cells = await _decodeTerrainGridNative(raw);
+    return _terrainCellsToParts(terrainNode, props, cells);
+  }
+
+  function _terrainCellsToParts(terrainNode, props, cells) {
     if (!cells.length) {
       return _terrainFallbackSlab(props);
     }
@@ -1604,11 +2029,91 @@ const dataTree = (() => {
         color,
         alpha: cell.material === 14 ? 0.62 : 1.0,
         mesh: { id: '', embedded: null },
-        matFlag: 0,
+        matFlag: cell.material === 14 ? 2 : cell.material === 18 || cell.material === 21 ? 3 : 0,
+        material: {
+          key: _terrainMaterialKey(cell.material),
+          preview: _materialPreviewUrl(_terrainMaterialKey(cell.material)),
+          maps: {},
+        },
         isTerrain: true,
       });
     }
     return parts;
+  }
+
+  async function _decodeTerrainGridNative(raw) {
+    if (!raw || typeof raw !== 'string') return [];
+    const cacheKey = _compactCacheKey(raw);
+    const cached = state_.terrainCells.get(cacheKey);
+    if (cached) {
+      cached.lastUsed = Date.now();
+      return cached.cells;
+    }
+    try {
+      const cells = await window.__TAURI__.core.invoke('datatree_decode_terrain_grid', { raw });
+      _cacheTerrainCells(cacheKey, Array.isArray(cells) ? cells : []);
+      return state_.terrainCells.get(cacheKey)?.cells || [];
+    } catch (err) {
+      _log.warn(`Native terrain decode failed; falling back to JS (${err?.message || err})`);
+      const cells = _decodeTerrainGrid(raw);
+      _cacheTerrainCells(cacheKey, cells);
+      return cells;
+    }
+  }
+
+  function _compactCacheKey(value) {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i += 1) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${value.length}:${hash >>> 0}`;
+  }
+
+  function _cacheTerrainCells(key, cells) {
+    state_.terrainCells.set(key, { cells, lastUsed: Date.now() });
+    while (state_.terrainCells.size > MAX_TERRAIN_CELL_CACHE_ENTRIES) {
+      let oldestKey = null;
+      let oldest = Infinity;
+      for (const [cacheKey, entry] of state_.terrainCells) {
+        if ((entry.lastUsed || 0) < oldest) {
+          oldest = entry.lastUsed || 0;
+          oldestKey = cacheKey;
+        }
+      }
+      if (!oldestKey) break;
+      state_.terrainCells.delete(oldestKey);
+    }
+  }
+
+  function _terrainMaterialKey(materialId) {
+    const keys = {
+      1: 'grass',
+      2: 'sand',
+      3: 'rock',
+      4: 'ground',
+      5: 'slate',
+      6: 'leafygrass',
+      7: 'grass',
+      8: 'snow',
+      9: 'sandstone',
+      10: 'mud',
+      11: 'concrete',
+      12: 'limestone',
+      13: 'ground',
+      14: 'water',
+      15: 'snow',
+      16: 'ice',
+      17: 'woodplanks',
+      18: 'metal',
+      19: 'ice',
+      20: 'crackedlava',
+      21: 'basalt',
+      22: 'asphalt',
+      23: 'salt',
+      24: 'pavement',
+    };
+    return keys[materialId] || 'ground';
   }
 
   function _decodeTerrainGrid(raw) {
@@ -1679,7 +2184,13 @@ const dataTree = (() => {
     ];
   }
 
-  function _nodePart(node, meshNode = null) {
+  function _nodePart(
+    node,
+    meshNode = null,
+    snapshot = activeSnapshot(),
+    surfaceTexture = null,
+    surfaceAppearance = null,
+  ) {
     const props = node.properties || {};
     const cframe = _parseCFrame(
       _firstProp(props, ['CFrame', 'CoordinateFrame', 'Position', 'PivotOffset']),
@@ -1687,18 +2198,26 @@ const dataTree = (() => {
     const mesh = _meshDescriptor(node, meshNode);
     const size = _partSize(node.className, props, mesh);
     const material = _firstProp(props, ['Material', 'material']);
+    const materialVariantName = _firstProp(props, [
+      'MaterialVariantSerialized',
+      'MaterialVariant',
+      'materialVariantSerialized',
+    ]);
+    const materialVariant = _resolveMaterialVariant(snapshot, materialVariantName);
+    const resolvedMaterial = materialVariant?.baseMaterial || material;
     const reflectance = Math.max(0, Math.min(1, Number(_firstProp(props, ['Reflectance'])) || 0));
     const color = _materialColor(
       _parseColor(
         _firstProp(props, ['Color', 'Color3', 'Color3uint8', 'BrickColor', 'BrickColorValue']),
       ),
-      material,
+      resolvedMaterial,
       reflectance,
+      materialVariant,
     );
     const transparency = Math.max(0, Math.min(1, Number(_firstProp(props, ['Transparency'])) || 0));
     if (transparency >= 0.995) return null;
     const center = mesh.offset ? _offsetCenter(cframe, mesh.offset) : cframe.center;
-    const matKey = _materialKey(material);
+    const matKey = _materialKey(resolvedMaterial);
     const matFlag = matKey.includes('neon')
       ? 1
       : matKey.includes('glass') || matKey.includes('forcefield')
@@ -1714,9 +2233,18 @@ const dataTree = (() => {
       matrix: cframe.matrix,
       size,
       color,
-      alpha: _materialAlpha(Math.max(0.08, 1 - transparency), material),
+      alpha: _materialAlpha(Math.max(0.08, 1 - transparency), resolvedMaterial),
       mesh,
       matFlag,
+      matId: _materialId(matKey),
+      surfaceTexture,
+      material: {
+        value: material,
+        key: matKey,
+        variant: materialVariant?.name || materialVariantName || '',
+        preview: _materialPreviewUrl(materialVariant?.name || matKey),
+        maps: { ...(materialVariant?.maps || {}), ...(surfaceAppearance?.maps || {}) },
+      },
     };
   }
 
@@ -1726,6 +2254,46 @@ const dataTree = (() => {
         /^(specialmesh|filemesh|blockmesh|cylindermesh)$/i.test(String(child.className || '')),
       ) || null
     );
+  }
+
+  function _surfaceTextureFor(children = []) {
+    for (const child of children) {
+      if (!/^(texture|decal)$/i.test(String(child.className || ''))) continue;
+      const props = child.properties || {};
+      const raw = _firstProp(props, ['Texture', 'TextureId', 'TextureID', 'TextureContent']);
+      const id = _assetId(raw);
+      if (!raw && !id) continue;
+      const studsPerTileU = Math.max(0.25, Number(_firstProp(props, ['StudsPerTileU'])) || 4);
+      const studsPerTileV = Math.max(0.25, Number(_firstProp(props, ['StudsPerTileV'])) || 4);
+      return {
+        id,
+        raw,
+        key: id ? `asset:${id}` : `texture:${String(raw).slice(0, 80)}`,
+        source: child.className || 'Texture',
+        studsPerTileU,
+        studsPerTileV,
+      };
+    }
+    return null;
+  }
+
+  function _surfaceAppearanceFor(children = []) {
+    const child = children.find((item) =>
+      /^surfaceappearance$/i.test(String(item.className || '')),
+    );
+    if (!child) return null;
+    const props = child.properties || {};
+    const maps = {};
+    for (const key of ['ColorMap', 'NormalMap', 'RoughnessMap', 'MetalnessMap']) {
+      const value = _firstProp(props, [key]);
+      if (!value) continue;
+      maps[key] = {
+        value,
+        id: _assetId(value),
+        kind: 'Image',
+      };
+    }
+    return Object.keys(maps).length ? { maps } : null;
   }
 
   function _meshDescriptor(node, meshNode) {
@@ -1916,9 +2484,7 @@ const dataTree = (() => {
         ?.map(Number)
         .filter(Number.isFinite) || [];
     if (nums.length >= 3)
-      return nums
-        .slice(0, 3)
-        .map((item, index) => Math.max(Math.abs(item), index === 1 ? 0.06 : 0.08));
+      return nums.slice(0, 3).map((item, index) => Math.max(Math.abs(item), 0.01));
     return fallback;
   }
 
@@ -1960,84 +2526,69 @@ const dataTree = (() => {
         .filter(Number.isFinite) || [];
     if (nums.length >= 3) {
       const rgb = nums.slice(0, 3).map((item) => Math.round(item <= 1 ? item * 255 : item));
-      return rgb.map((item) => Math.max(28, Math.min(245, item)));
+      return rgb.map((item) => Math.max(0, Math.min(255, item)));
     }
     if (nums.length === 1) {
       const brick = _brickColor(String(nums[0]));
       if (brick) return brick;
       if (nums[0] > 255) {
         const packed = nums[0] >>> 0;
-        return [(packed >> 16) & 255, (packed >> 8) & 255, packed & 255].map((item) =>
-          Math.max(28, Math.min(245, item)),
-        );
+        return [(packed >> 16) & 255, (packed >> 8) & 255, packed & 255];
       }
     }
     return [126, 151, 178];
   }
 
-  function _materialColor(color, material = '', reflectance = 0) {
+  function _materialColor(color, material = '', reflectance = 0, variant = null) {
     const key = _materialKey(material);
     let out = color.slice();
-    if (key.includes('neon')) out = out.map((item) => Math.min(255, item * 1.25 + 18));
-    else if (key.includes('metal') || key.includes('diamond'))
-      out = out.map((item) => item * 0.86 + 32);
-    else if (key.includes('glass') || key.includes('forcefield'))
-      out = out.map((item) => item * 0.76 + 54);
-    else if (key.includes('wood'))
-      out = [out[0] * 0.92 + 24, out[1] * 0.82 + 18, out[2] * 0.72 + 10];
-    else if (key.includes('grass') || key.includes('leafy'))
-      out = [out[0] * 0.72, out[1] * 1.08 + 14, out[2] * 0.76];
+
+    const tint = _materialTint(variant?.name || key);
+    const isTerrain =
+      key.includes('grass') ||
+      key.includes('ground') ||
+      key.includes('mud') ||
+      key.includes('sand') ||
+      key.includes('snow') ||
+      key.includes('rock') ||
+      key.includes('slate');
+    if (tint && isTerrain) out = _mixRgb(out, tint, 0.3);
+    else if (tint && variant) out = _mixRgb(out, tint, 0.18);
+
+    if (key.includes('neon')) out = out.map((item) => Math.min(255, item * 1.2 + 12));
+
     if (reflectance > 0)
-      out = out.map((item) => item + (255 - item) * Math.min(0.45, reflectance * 0.5));
-    return out.map((item) => Math.max(18, Math.min(255, Math.round(item))));
+      out = out.map((item) => item + (255 - item) * Math.min(0.35, reflectance * 0.4));
+    return out.map((item) => Math.max(0, Math.min(255, Math.round(item))));
+  }
+
+  function _materialVariantKey(value = '') {
+    return DataTreeMaterials.variantKey(value);
+  }
+
+  function _resolveMaterialVariant(snapshot, name) {
+    if (!name) return null;
+    return snapshot?.materialVariants?.get(_materialVariantKey(name)) || null;
+  }
+
+  function _materialPreviewUrl(name) {
+    return DataTreeMaterials.previewUrl(state_.meta.materials, name);
+  }
+
+  function _materialTint(name = '') {
+    return DataTreeMaterials.tint(name);
   }
 
   function _materialAlpha(alpha, material = '') {
-    const key = _materialKey(material);
-    if (key.includes('glass') || key.includes('forcefield')) return Math.min(alpha, 0.62);
-    return alpha;
+    return DataTreeMaterials.alpha(alpha, material);
   }
 
   function _materialKey(material = '') {
-    const text = String(material || '').toLowerCase();
-    const numeric = Number(text);
-    if (!Number.isFinite(numeric)) return text;
-    const names = {
-      256: 'plastic',
-      272: 'smoothplastic',
-      288: 'neon',
-      512: 'wood',
-      528: 'woodplanks',
-      768: 'marble',
-      784: 'basalt',
-      800: 'slate',
-      804: 'crackedlava',
-      816: 'concrete',
-      820: 'limestone',
-      832: 'granite',
-      836: 'pavement',
-      848: 'brick',
-      864: 'pebble',
-      880: 'cobblestone',
-      896: 'rock',
-      912: 'sandstone',
-      1040: 'corrodedmetal',
-      1056: 'diamondplate',
-      1072: 'foil',
-      1088: 'metal',
-      1280: 'grass',
-      1284: 'leafygrass',
-      1296: 'sand',
-      1312: 'fabric',
-      1328: 'snow',
-      1344: 'mud',
-      1360: 'ground',
-      1376: 'asphalt',
-      1392: 'salt',
-      1536: 'glass',
-      1584: 'forcefield',
-    };
-    return names[numeric] || text;
+    return DataTreeMaterials.key(material);
+  }
+
+  function _materialId(matKey) {
+    return DataTreeMaterials.id(matKey);
   }
 
   function _brickColor(text) {
@@ -2116,12 +2667,12 @@ const dataTree = (() => {
     const guide = _lineBuilder();
     const points = _pointCollector();
     const assetMap = new Map();
+    const readyAssets = new Set();
+    const failedAssets = new Set();
     const aabbs = [];
-    let assetReady = 0;
-    let assetFailed = 0;
     let omittedParts = 0;
     for (let i = 0; i < parts.length; i += 1) {
-      if (mesh.vertexCount() >= budget.maxVertices) {
+      if (mesh.visualVertexCount() >= budget.maxVertices) {
         omittedParts = parts.length - i;
         break;
       }
@@ -2130,11 +2681,15 @@ const dataTree = (() => {
       if (assetKey) {
         assetMap.set(assetKey, part.mesh);
         const cached = state_.meshAssets.get(assetKey);
-        if (cached?.status === 'ready') assetReady += 1;
-        if (cached?.status === 'failed') assetFailed += 1;
+        if (cached?.status === 'ready') {
+          cached.lastUsed = Date.now();
+          readyAssets.add(assetKey);
+        }
+        if (cached?.status === 'failed') failedAssets.add(assetKey);
       }
 
       mesh.setFlag(part.matFlag || 0);
+      mesh.setMatId(part.matId || 0);
       const before = points.length;
       points.beginPart();
       _emitPart(part, mesh, points, budget);
@@ -2145,28 +2700,33 @@ const dataTree = (() => {
         points.endPart();
       }
     }
-    if (!points.length)
+    if (!points.length) {
+      const lights = _sceneLights(activeSnapshot(), parts);
       return {
         ..._emptyScene(),
         parts,
         assets: [...assetMap.values()],
         assetCount: assetMap.size,
-        assetReady,
-        assetFailed,
+        assetReady: readyAssets.size,
+        assetFailed: failedAssets.size,
         omittedParts,
         aabbs,
+        lights,
+        lightProfile: _sceneLightProfile(lights),
         sky: _sceneSky(activeSnapshot()),
       };
+    }
     const bounds = _bounds(points);
     const center = bounds.min.map((item, index) => (item + bounds.max[index]) / 2);
     const extent = Math.max(...bounds.max.map((item, index) => item - bounds.min[index]), 1);
+    const lights = _sceneLights(activeSnapshot(), parts);
     _emitGuides(guide, bounds, center, extent);
     return {
       parts,
       assets: [...assetMap.values()],
       assetCount: assetMap.size,
-      assetReady,
-      assetFailed,
+      assetReady: readyAssets.size,
+      assetFailed: failedAssets.size,
       omittedParts,
       mesh: mesh.finish(),
       guide: guide.finish(),
@@ -2174,6 +2734,8 @@ const dataTree = (() => {
       extent,
       bounds,
       aabbs,
+      lights,
+      lightProfile: _sceneLightProfile(lights, bounds),
       sky: _sceneSky(activeSnapshot()),
     };
   }
@@ -2192,10 +2754,47 @@ const dataTree = (() => {
     const normals = [];
     const colors = [];
     const flags = [];
+    const matIds = [];
+    const textured = new Map();
     let _currentFlag = 0;
+    let _currentMatId = 0;
+    const textureGroup = (texture) => {
+      const key = texture?.key || '';
+      if (!key) return null;
+      if (!textured.has(key)) {
+        textured.set(key, {
+          texture,
+          positions: [],
+          normals: [],
+          colors: [],
+          uvs: [],
+          flags: [],
+        });
+      }
+      return textured.get(key);
+    };
+    const pushTexturedVertex = (group, point, normal, uv, color, alpha) => {
+      const n = _norm(normal);
+      group.positions.push(point[0], point[1], point[2]);
+      group.normals.push(n[0], n[1], n[2]);
+      group.colors.push(color[0] / 255, color[1] / 255, color[2] / 255, alpha);
+      group.uvs.push(uv?.[0] || 0, uv?.[1] || 0);
+      group.flags.push(_currentFlag);
+    };
     return {
       setFlag(f) {
         _currentFlag = f || 0;
+      },
+      setMatId(id) {
+        _currentMatId = id || 0;
+      },
+      texturedTriNormal(texture, a, b, c, na, nb, nc, uva, uvb, uvc, color, alpha = 1) {
+        const group = textureGroup(texture);
+        if (!group) return false;
+        pushTexturedVertex(group, a, na, uva, color, alpha);
+        pushTexturedVertex(group, b, nb, uvb, color, alpha);
+        pushTexturedVertex(group, c, nc, uvc, color, alpha);
+        return true;
       },
       tri(a, b, c, color, alpha = 1) {
         const normal = _norm(_cross(_sub(b, a), _sub(c, a)));
@@ -2212,6 +2811,7 @@ const dataTree = (() => {
           normals.push(n[0], n[1], n[2]);
           colors.push(color[0] / 255, color[1] / 255, color[2] / 255, alpha);
           flags.push(_currentFlag);
+          matIds.push(_currentMatId);
         }
       },
       quad(a, b, c, d, color, alpha = 1) {
@@ -2221,14 +2821,43 @@ const dataTree = (() => {
       vertexCount() {
         return positions.length / 3;
       },
+      visualVertexCount() {
+        let texturedVertices = 0;
+        for (const group of textured.values()) texturedVertices += group.positions.length / 3;
+        return positions.length / 3 + texturedVertices;
+      },
       finish() {
+        const texturedGroups = [...textured.values()].map((group) => ({
+          texture: group.texture,
+          positions: new Float32Array(group.positions),
+          normals: new Float32Array(group.normals),
+          colors: new Float32Array(group.colors),
+          uvs: new Float32Array(group.uvs),
+          flags: new Float32Array(group.flags),
+          vertexCount: group.positions.length / 3,
+          triangleCount: group.positions.length / 9,
+        }));
+        const texturedVertexCount = texturedGroups.reduce(
+          (sum, group) => sum + group.vertexCount,
+          0,
+        );
+        const texturedTriangleCount = texturedGroups.reduce(
+          (sum, group) => sum + group.triangleCount,
+          0,
+        );
         return {
           positions: new Float32Array(positions),
           normals: new Float32Array(normals),
           colors: new Float32Array(colors),
           flags: new Float32Array(flags),
+          matIds: new Float32Array(matIds),
           vertexCount: positions.length / 3,
           triangleCount: positions.length / 9,
+          texturedVertexCount,
+          texturedTriangleCount,
+          visualVertexCount: positions.length / 3 + texturedVertexCount,
+          visualTriangleCount: positions.length / 9 + texturedTriangleCount,
+          textured: texturedGroups,
         };
       },
     };
@@ -2298,7 +2927,8 @@ const dataTree = (() => {
       const asset = state_.meshAssets.get(_meshAssetKey(part.mesh));
       if (asset?.status === 'ready' && asset.mesh)
         return _emitAssetMesh(part, asset.mesh, mesh, points);
-      return _emitMeshProxy(part, mesh, points, budget);
+
+      return;
     }
     if (part.shape === 'sphere') return _emitSphere(part, mesh, points, budget);
     if (part.shape === 'cylinder') return _emitCylinder(part, mesh, points, budget);
@@ -2353,6 +2983,8 @@ const dataTree = (() => {
     const size = asset.size || [1, 1, 1];
     const center = asset.center || [0, 0, 0];
     const normals = asset.normals;
+    const uvs = asset.uvs;
+    const texture = _partTextureSource(part);
     const localPoint = (index) => {
       const offset = index * 3;
       return [
@@ -2371,6 +3003,30 @@ const dataTree = (() => {
           const offset = index * 3;
           return _partNormal(part, [normals[offset], normals[offset + 1], normals[offset + 2]]);
         };
+        const uvPoint = (index) => {
+          const offset = index * 2;
+          return uvs?.length ? [uvs[offset] || 0, uvs[offset + 1] || 0] : [0, 0];
+        };
+        if (
+          texture &&
+          uvs?.length &&
+          mesh.texturedTriNormal(
+            texture,
+            a,
+            b,
+            c,
+            normalPoint(indices[i]),
+            normalPoint(indices[i + 1]),
+            normalPoint(indices[i + 2]),
+            uvPoint(indices[i]),
+            uvPoint(indices[i + 1]),
+            uvPoint(indices[i + 2]),
+            part.color,
+            part.alpha,
+          )
+        ) {
+          continue;
+        }
         mesh.triNormal(
           a,
           b,
@@ -2387,10 +3043,22 @@ const dataTree = (() => {
     }
   }
 
+  function _partTextureSource(part) {
+    if (part.surfaceTexture?.id || part.surfaceTexture?.localUrl) return part.surfaceTexture;
+    const colorMap = part.material?.maps?.ColorMap;
+    if (colorMap?.id) return { key: `asset:${colorMap.id}`, id: colorMap.id, source: 'ColorMap' };
+    if (part.mesh?.textureId)
+      return { key: `asset:${part.mesh.textureId}`, id: part.mesh.textureId, source: 'TextureID' };
+    return null;
+  }
+
   function _emitPoly(part, mesh, points, primitive) {
     const vertices = primitive.vertices.map((point) => _partPoint(part, point));
     points.push(...vertices);
+    const texture = _partTextureSource(part);
     for (const face of primitive.faces) {
+      if (texture && _emitTexturedPolyFace(part, mesh, primitive.vertices, vertices, face, texture))
+        continue;
       if (face.length === 3)
         mesh.tri(vertices[face[0]], vertices[face[1]], vertices[face[2]], part.color, part.alpha);
       else if (face.length === 4)
@@ -2413,6 +3081,48 @@ const dataTree = (() => {
           );
       }
     }
+  }
+
+  function _emitTexturedPolyFace(part, mesh, localVertices, worldVertices, face, texture) {
+    if (face.length < 3) return false;
+    const localFace = face.map((idx) => localVertices[idx]);
+    const normalLocal = _norm(
+      _cross(_sub(localFace[1], localFace[0]), _sub(localFace[2], localFace[0])),
+    );
+    const normalWorld = _partNormal(part, normalLocal);
+    const uvs = localFace.map((point) => _primitiveUv(part, point, normalLocal, texture));
+    for (let i = 1; i < face.length - 1; i += 1) {
+      const ok = mesh.texturedTriNormal(
+        texture,
+        worldVertices[face[0]],
+        worldVertices[face[i]],
+        worldVertices[face[i + 1]],
+        normalWorld,
+        normalWorld,
+        normalWorld,
+        uvs[0],
+        uvs[i],
+        uvs[i + 1],
+        part.color,
+        part.alpha,
+      );
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  function _primitiveUv(part, localPoint, normal, texture) {
+    const ax = Math.abs(normal[0]);
+    const ay = Math.abs(normal[1]);
+    const az = Math.abs(normal[2]);
+    const sx = Math.max(0.001, part.size?.[0] || 1);
+    const sy = Math.max(0.001, part.size?.[1] || 1);
+    const sz = Math.max(0.001, part.size?.[2] || 1);
+    const tileU = Math.max(0.25, Number(texture?.studsPerTileU) || 4);
+    const tileV = Math.max(0.25, Number(texture?.studsPerTileV) || 4);
+    if (ay >= ax && ay >= az) return [(localPoint[0] * sx) / tileU, (localPoint[2] * sz) / tileV];
+    if (ax >= ay && ax >= az) return [(localPoint[2] * sz) / tileU, (localPoint[1] * sy) / tileV];
+    return [(localPoint[0] * sx) / tileU, (localPoint[1] * sy) / tileV];
   }
 
   function _boxPrimitive(bevel = 0) {
@@ -2800,10 +3510,16 @@ const dataTree = (() => {
 
   function _partNormal(part, normal) {
     const m = part.matrix;
+    const sx = Math.max(1e-8, part.size?.[0] || 1);
+    const sy = Math.max(1e-8, part.size?.[1] || 1);
+    const sz = Math.max(1e-8, part.size?.[2] || 1);
+    const nx = normal[0] / sx;
+    const ny = normal[1] / sy;
+    const nz = normal[2] / sz;
     return _norm([
-      m[0][0] * normal[0] + m[0][1] * normal[1] + m[0][2] * normal[2],
-      m[1][0] * normal[0] + m[1][1] * normal[1] + m[1][2] * normal[2],
-      m[2][0] * normal[0] + m[2][1] * normal[1] + m[2][2] * normal[2],
+      m[0][0] * nx + m[0][1] * ny + m[0][2] * nz,
+      m[1][0] * nx + m[1][1] * ny + m[1][2] * nz,
+      m[2][0] * nx + m[2][1] * ny + m[2][2] * nz,
     ]);
   }
 
@@ -2830,8 +3546,93 @@ const dataTree = (() => {
     guide.line(root, [root[0], root[1], root[2] + axis], [0.36, 0.66, 1, 0.82]);
   }
 
+  function _createSsaoProgram(gl) {
+    const vertex = _compileShader(
+      gl,
+      gl.VERTEX_SHADER,
+      `
+      precision highp float;
+      attribute vec2 aPos;
+      varying vec2 vUv;
+      void main() {
+        vUv = aPos * 0.5 + 0.5;
+        gl_Position = vec4(aPos, 0.0, 1.0);
+      }
+    `,
+    );
+    const fragment = _compileShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      `
+      precision highp float;
+      uniform sampler2D uColor;
+      uniform sampler2D uDepth;
+      uniform vec2 uTexelSize;
+      uniform float uNear;
+      uniform float uFar;
+      varying vec2 vUv;
+      float linearizeDepth(float d) {
+        return (2.0 * uNear) / (uFar + uNear - d * (uFar - uNear));
+      }
+      void main() {
+        float depth = texture2D(uDepth, vUv).r;
+        if (depth >= 0.9999) { gl_FragColor = texture2D(uColor, vUv); return; }
+        float linD = linearizeDepth(depth);
+        float radius = 0.003 + linD * 0.004;
+        float occ = 0.0;
+        float sd, diff;
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(0.0, 1.0) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(1.0, 0.0) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(0.0, -1.0) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(-1.0, 0.0) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(0.71, 0.71) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(0.71, -0.71) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(-0.71, 0.71) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        sd = linearizeDepth(texture2D(uDepth, vUv + vec2(-0.71, -0.71) * radius).r);
+        diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
+        occ = clamp(occ / 8.0, 0.0, 1.0);
+        vec4 color = texture2D(uColor, vUv);
+        color.rgb *= (1.0 - occ * 0.76);
+        gl_FragColor = color;
+      }
+    `,
+    );
+    if (!vertex || !fragment) return null;
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vertex);
+    gl.attachShader(prog, fragment);
+    gl.linkProgram(prog);
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      gl.deleteProgram(prog);
+      return null;
+    }
+    const triData = new Float32Array([-1, -1, 3, -1, -1, 3]);
+    const triBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, triBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, triData, gl.STATIC_DRAW);
+    return {
+      program: prog,
+      aPos: gl.getAttribLocation(prog, 'aPos'),
+      uColor: gl.getUniformLocation(prog, 'uColor'),
+      uDepth: gl.getUniformLocation(prog, 'uDepth'),
+      uTexelSize: gl.getUniformLocation(prog, 'uTexelSize'),
+      uNear: gl.getUniformLocation(prog, 'uNear'),
+      uFar: gl.getUniformLocation(prog, 'uFar'),
+      triBuf,
+    };
+  }
+
   function _mountViewport(canvas, scene, cameraKey = '') {
-    if (!canvas || !scene?.mesh?.vertexCount) return;
+    if (!canvas || !scene?.mesh?.visualVertexCount) return;
     const gl =
       canvas.getContext('webgl2', {
         antialias: true,
@@ -2848,7 +3649,76 @@ const dataTree = (() => {
     if (!gl) return _mountViewport2dFallback(canvas, scene);
     const program = _createViewportProgram(gl);
     if (!program) return;
-    let buffers = _createViewportBuffers(gl, scene, program);
+    const textureProgram = _createTextureViewportProgram(gl);
+
+    const isWebGL2 =
+      typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
+    const depthTexExt = isWebGL2
+      ? true
+      : gl.getExtension('WEBGL_depth_texture') || gl.getExtension('WEBKIT_WEBGL_depth_texture');
+
+    const ssaoEnabled = false && !!depthTexExt;
+    let fboColor = null,
+      fboDepth = null,
+      fbo = null,
+      ssaoProgram = null;
+
+    if (ssaoEnabled) {
+      fboColor = gl.createTexture();
+      fboDepth = gl.createTexture();
+      fbo = gl.createFramebuffer();
+      ssaoProgram = _createSsaoProgram(gl);
+      if (!ssaoProgram) {
+        fboColor = fboDepth = fbo = null;
+      }
+    }
+
+    const resizeFbo = (w, h) => {
+      if (!fbo) return;
+      gl.bindTexture(gl.TEXTURE_2D, fboColor);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture(gl.TEXTURE_2D, fboDepth);
+      if (isWebGL2) {
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.DEPTH_COMPONENT24,
+          w,
+          h,
+          0,
+          gl.DEPTH_COMPONENT,
+          gl.UNSIGNED_INT,
+          null,
+        );
+      } else {
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.DEPTH_COMPONENT,
+          w,
+          h,
+          0,
+          gl.DEPTH_COMPONENT,
+          gl.UNSIGNED_SHORT,
+          null,
+        );
+      }
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboColor, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, fboDepth, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    };
+
+    let buffers = null;
     const savedCamera = cameraKey ? state_.viewportCameras.get(cameraKey) : null;
     const camera = savedCamera ? { ...savedCamera } : _defaultViewportCamera(scene);
     if (!savedCamera && cameraKey) _saveViewportCamera(cameraKey, camera);
@@ -2860,10 +3730,12 @@ const dataTree = (() => {
     let lastTime = 0;
     let disposed = false;
     let animating = false;
+    let fboWidth = 0,
+      fboHeight = 0;
 
     const moveSpeed = () => {
-      const base = Math.max(4, scene.extent * 0.055);
-      return keys.has('ShiftLeft') || keys.has('ShiftRight') ? base * 6 : base;
+      const base = Math.max(1.15, Math.min(22, scene.extent * 0.012));
+      return keys.has('ShiftLeft') || keys.has('ShiftRight') ? base * 5.2 : base;
     };
 
     const clampPitch = (p) => Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, p));
@@ -2885,20 +3757,41 @@ const dataTree = (() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(draw);
     };
+    buffers = _createViewportBuffers(gl, scene, program, () => schedule());
 
     const resize = new ResizeObserver(() => schedule());
     const deleteBuffers = () => {
-      for (const buf of Object.values(buffers)) if (buf?.buffer) gl.deleteBuffer(buf.buffer);
+      if (!buffers) return;
+      for (const buf of [buffers.mesh, buffers.guide]) if (buf?.buffer) gl.deleteBuffer(buf.buffer);
+      for (const group of buffers.textured || []) {
+        if (group?.buffer) gl.deleteBuffer(group.buffer);
+        if (group?.texture) gl.deleteTexture(group.texture);
+      }
     };
     canvas.__dtUpdateScene = (nextScene) => {
-      if (disposed || !nextScene?.mesh?.vertexCount) return;
+      if (disposed || !nextScene?.mesh?.visualVertexCount) return;
+      const oldCenter = scene.center || [0, 0, 0];
+      const newCenter = nextScene.center || oldCenter;
+      const delta = [
+        newCenter[0] - oldCenter[0],
+        newCenter[1] - oldCenter[1],
+        newCenter[2] - oldCenter[2],
+      ];
       deleteBuffers();
       scene = nextScene;
-      buffers = _createViewportBuffers(gl, scene, program);
+      if (delta.every(Number.isFinite) && Math.hypot(delta[0], delta[1], delta[2]) > 0.001) {
+        camera.x += delta[0];
+        camera.y += delta[1];
+        camera.z += delta[2];
+        _saveViewportCamera(cameraKey, camera);
+      }
+      buffers = _createViewportBuffers(gl, scene, program, () => schedule());
       const frame = canvas.closest('.dt-render-frame--canvas');
       if (frame) {
-        frame.style.setProperty('--dt-sky-top', scene.sky?.cssTop || 'rgb(24 28 34)');
-        frame.style.setProperty('--dt-sky-bottom', scene.sky?.cssBottom || 'rgb(12 14 18)');
+        const skyTop = nextScene.sky?.cssTop || VIEWPORT_BACKDROP_SKY.cssTop;
+        const skyBottom = nextScene.sky?.cssBottom || VIEWPORT_BACKDROP_SKY.cssBottom;
+        frame.style.setProperty('--dt-sky-top', skyTop);
+        frame.style.setProperty('--dt-sky-bottom', skyBottom);
       }
       schedule();
     };
@@ -2913,6 +3806,14 @@ const dataTree = (() => {
       if (document.pointerLockElement === canvas) document.exitPointerLock();
       deleteBuffers();
       gl.deleteProgram(program.program);
+      if (textureProgram?.program) gl.deleteProgram(textureProgram.program);
+      if (fbo) gl.deleteFramebuffer(fbo);
+      if (fboColor) gl.deleteTexture(fboColor);
+      if (fboDepth) gl.deleteTexture(fboDepth);
+      if (ssaoProgram) {
+        gl.deleteProgram(ssaoProgram.program);
+        gl.deleteBuffer(ssaoProgram.triBuf);
+      }
       gl.getExtension('WEBGL_lose_context')?.loseContext?.();
       canvas.width = 0;
       canvas.height = 0;
@@ -2926,6 +3827,109 @@ const dataTree = (() => {
         canvas.style.opacity = '1';
       }),
     );
+
+    let rainCanvas = null;
+    let rainCtx = null;
+    let rainDrops = [];
+    let rainFrame = 0;
+    let rainLastTime = 0;
+
+    const initRain = () => {
+      if (rainCanvas) return;
+      rainCanvas = document.createElement('canvas');
+      rainCanvas.style.cssText =
+        'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0.55;';
+      const parent = canvas.parentElement;
+      if (parent) {
+        const pos = getComputedStyle(parent).position;
+        if (pos === 'static') parent.style.position = 'relative';
+        parent.appendChild(rainCanvas);
+      }
+    };
+    const destroyRain = () => {
+      cancelAnimationFrame(rainFrame);
+      rainCanvas?.remove();
+      rainCanvas = null;
+      rainCtx = null;
+      rainDrops = [];
+    };
+    const tickRain = (now) => {
+      if (disposed) {
+        destroyRain();
+        return;
+      }
+      const rainRate = scene.sky?.rain || 0;
+      if (rainRate < 0.01) {
+        destroyRain();
+        return;
+      }
+      initRain();
+      const W = rainCanvas.offsetWidth;
+      const H = rainCanvas.offsetHeight;
+      if (rainCanvas.width !== W || rainCanvas.height !== H) {
+        rainCanvas.width = W;
+        rainCanvas.height = H;
+        rainDrops = [];
+      }
+      if (!rainCtx) rainCtx = rainCanvas.getContext('2d');
+      const ctx = rainCtx;
+      const dt = Math.min((now - (rainLastTime || now)) / 1000, 0.05);
+      rainLastTime = now;
+
+      const wind = (scene.sky?.wind || 0) * 0.012;
+      const speed = 320 + rainRate * 480;
+      const len = 10 + rainRate * 22;
+      const maxDrops = Math.floor(rainRate * 280);
+
+      while (rainDrops.length < maxDrops)
+        rainDrops.push({
+          x: Math.random() * W,
+          y: Math.random() * H,
+          opacity: 0.25 + Math.random() * 0.45,
+        });
+
+      ctx.clearRect(0, 0, W, H);
+      const dx = wind * speed;
+      ctx.strokeStyle = 'rgba(168,210,255,1)';
+      ctx.lineWidth = 0.8;
+      for (const drop of rainDrops) {
+        drop.x += dx * dt;
+        drop.y += speed * dt;
+        if (drop.y > H) {
+          drop.y = -len;
+          drop.x = Math.random() * W;
+        }
+        if (drop.x > W) drop.x -= W;
+        if (drop.x < 0) drop.x += W;
+        ctx.globalAlpha = drop.opacity;
+        ctx.beginPath();
+        ctx.moveTo(drop.x, drop.y);
+        ctx.lineTo(drop.x + dx * (len / speed), drop.y + len);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      rainFrame = requestAnimationFrame(tickRain);
+    };
+
+    if ((scene.sky?.rain || 0) > 0.01) rainFrame = requestAnimationFrame(tickRain);
+
+    const _origDispose = canvas.__dtDispose;
+    canvas.__dtDispose = () => {
+      destroyRain();
+      _origDispose?.();
+    };
+
+    const _origUpdateScene = canvas.__dtUpdateScene;
+    canvas.__dtUpdateScene = (nextScene) => {
+      _origUpdateScene?.(nextScene);
+      cancelAnimationFrame(rainFrame);
+      if ((nextScene?.sky?.rain || 0) > 0.01) {
+        rainLastTime = 0;
+        rainFrame = requestAnimationFrame(tickRain);
+      } else {
+        destroyRain();
+      }
+    };
 
     if (!savedCamera) {
       const d = scene.extent * 1.4;
@@ -2968,7 +3972,10 @@ const dataTree = (() => {
     };
     const onKeyUp = (e) => {
       keys.delete(e.code);
-      if (keys.size === 0) animating = false;
+      if (keys.size === 0) {
+        animating = false;
+        schedule();
+      }
     };
     const onPointerLockChange = () => {
       if (document.pointerLockElement !== canvas) looking = false;
@@ -3040,10 +4047,12 @@ const dataTree = (() => {
     canvas.addEventListener('pointerup', (e) => {
       looking = false;
       lastPointer = null;
+      schedule();
     });
     canvas.addEventListener('pointercancel', () => {
       looking = false;
       lastPointer = null;
+      schedule();
     });
 
     canvas.addEventListener(
@@ -3051,7 +4060,7 @@ const dataTree = (() => {
       (e) => {
         e.preventDefault();
         const { fwd } = camVectors();
-        const speed = Math.max(2, scene.extent * 0.12);
+        const speed = Math.max(1.5, Math.min(85, scene.extent * 0.045));
         const delta = -e.deltaY * 0.005 * speed;
         camera.x += fwd[0] * delta;
         camera.y += fwd[1] * delta;
@@ -3067,6 +4076,44 @@ const dataTree = (() => {
       _saveViewportCamera(cameraKey, camera);
       schedule();
     });
+
+    function drawScene(width, height, matrices) {
+      gl.clearColor(0, 0, 0, 0);
+      gl.clearDepth(1);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(program.program);
+
+      gl.uniformMatrix4fv(program.uMvp, false, matrices.mvp);
+      gl.uniform1f(program.uUnlit, 0);
+      _setViewportPostUniforms(gl, program, scene, camera);
+
+      _bindViewportBuffer(gl, program, buffers.mesh);
+      gl.drawArrays(gl.TRIANGLES, 0, scene.mesh.vertexCount);
+
+      if (textureProgram && buffers.textured?.length) {
+        gl.useProgram(textureProgram.program);
+        gl.uniformMatrix4fv(textureProgram.uMvp, false, matrices.mvp);
+        _setViewportPostUniforms(gl, textureProgram, scene, camera);
+        for (const group of buffers.textured) {
+          _bindTexturedViewportBuffer(gl, textureProgram, group);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, group.texture);
+          gl.uniform1i(textureProgram.uTexture, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, group.vertexCount);
+        }
+        gl.useProgram(program.program);
+      }
+
+      gl.uniform1f(program.uUnlit, 1);
+      gl.disable(gl.DEPTH_TEST);
+      _bindViewportBuffer(gl, program, buffers.guide);
+      gl.drawArrays(gl.LINES, 0, scene.guide.vertexCount);
+      gl.enable(gl.DEPTH_TEST);
+    }
 
     function draw(now) {
       if (disposed || !canvas.isConnected) {
@@ -3107,7 +4154,8 @@ const dataTree = (() => {
       }
 
       const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const interactive = animating || keys.size > 0 || looking;
+      const dpr = _viewportDpr(scene, interactive);
       const width = Math.max(1, Math.floor(rect.width * dpr));
       const height = Math.max(1, Math.floor(rect.height * dpr));
       if (canvas.width !== width || canvas.height !== height) {
@@ -3115,33 +4163,165 @@ const dataTree = (() => {
         canvas.height = height;
       }
 
-      gl.viewport(0, 0, width, height);
-      const sky = scene.sky?.bottom || [0, 0, 0];
-      gl.clearColor(sky[0] / 255, sky[1] / 255, sky[2] / 255, 1);
-      gl.clearDepth(1);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LEQUAL);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.useProgram(program.program);
-
       const matrices = _viewportMatrices(scene, camera, width / height);
-      gl.uniformMatrix4fv(program.uMvp, false, matrices.mvp);
-      gl.uniform1f(program.uUnlit, 0);
 
-      _bindViewportBuffer(gl, program, buffers.mesh);
-      gl.drawArrays(gl.TRIANGLES, 0, scene.mesh.vertexCount);
+      if (fbo && ssaoProgram) {
+        if (fboWidth !== width || fboHeight !== height) {
+          resizeFbo(width, height);
+          fboWidth = width;
+          fboHeight = height;
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.viewport(0, 0, width, height);
+        drawScene(width, height, matrices, interactive);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-      gl.uniform1f(program.uUnlit, 1);
-      gl.disable(gl.DEPTH_TEST);
-      _bindViewportBuffer(gl, program, buffers.guide);
-      gl.drawArrays(gl.LINES, 0, scene.guide.vertexCount);
-      gl.enable(gl.DEPTH_TEST);
+        gl.viewport(0, 0, width, height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.disable(gl.DEPTH_TEST);
+        gl.useProgram(ssaoProgram.program);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, fboColor);
+        gl.uniform1i(ssaoProgram.uColor, 0);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, fboDepth);
+        gl.uniform1i(ssaoProgram.uDepth, 1);
+        gl.uniform2f(ssaoProgram.uTexelSize, 1.0 / width, 1.0 / height);
+        gl.uniform1f(ssaoProgram.uNear, matrices.near);
+        gl.uniform1f(ssaoProgram.uFar, matrices.far);
+        gl.bindBuffer(gl.ARRAY_BUFFER, ssaoProgram.triBuf);
+        gl.enableVertexAttribArray(ssaoProgram.aPos);
+        gl.vertexAttribPointer(ssaoProgram.aPos, 2, gl.FLOAT, false, 8, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.enable(gl.DEPTH_TEST);
+        gl.activeTexture(gl.TEXTURE0);
+      } else {
+        gl.viewport(0, 0, width, height);
+        drawScene(width, height, matrices, interactive);
+      }
 
       if (animating || keys.size > 0) schedule(true);
     }
     schedule();
+  }
+
+  function _viewportDpr(scene, interactive = false) {
+    const nativeDpr = window.devicePixelRatio || 1;
+    if (interactive) return Math.min(nativeDpr, INTERACTIVE_VIEWPORT_DPR);
+    const tris = scene.mesh?.visualTriangleCount || scene.mesh?.triangleCount || 0;
+    const texturedGroups = scene.mesh?.textured?.length || 0;
+    const complex = tris > 220000 || texturedGroups > 72;
+    return Math.min(nativeDpr, complex ? COMPLEX_VIEWPORT_DPR : MAX_VIEWPORT_DPR);
+  }
+
+  function _setViewportPostUniforms(gl, program, scene, camera, options = {}) {
+    const effects = scene.sky?.effects || {};
+    const tint = effects.tint || [255, 255, 255];
+    if (program.uCameraPos) gl.uniform3f(program.uCameraPos, camera.x, camera.y, camera.z);
+    if (program.uCamOffset) gl.uniform3f(program.uCamOffset, camera.x, camera.y, camera.z);
+    if (program.uTint) gl.uniform3f(program.uTint, tint[0] / 255, tint[1] / 255, tint[2] / 255);
+    if (program.uExposure) gl.uniform1f(program.uExposure, effects.exposure ?? 1);
+    if (program.uContrast) gl.uniform1f(program.uContrast, effects.contrast ?? 0);
+    if (program.uSaturation) gl.uniform1f(program.uSaturation, effects.saturation ?? 0);
+    if (program.uAmbientLift) gl.uniform1f(program.uAmbientLift, effects.ambientLift ?? 0);
+    if (program.uShadowLift) gl.uniform1f(program.uShadowLift, effects.shadowLift ?? 0);
+    if (program.uDetailQuality) gl.uniform1f(program.uDetailQuality, 0);
+    if (program.uPerformanceMode) gl.uniform1f(program.uPerformanceMode, 0);
+    const lightProfile = scene.lightProfile || {};
+    if (program.uBloom)
+      gl.uniform1f(program.uBloom, Math.max(effects.bloom ?? 0, (lightProfile.energy || 0) * 0.34));
+    const ambient = scene.sky?.ambient || {};
+    const skyRaw = ambient.sky || [107, 122, 148];
+    const groundRaw = ambient.ground || [82, 71, 61];
+    const _ambientProbe = (rgb, hueMix) => {
+      const lum = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+      const clampedLum = Math.min(lum, 160);
+      const r = clampedLum * (1 - hueMix) + Math.min(rgb[0], 180) * hueMix;
+      const g = clampedLum * (1 - hueMix) + Math.min(rgb[1], 180) * hueMix;
+      const b = clampedLum * (1 - hueMix) + Math.min(rgb[2], 180) * hueMix;
+      return [r, g, b];
+    };
+    const sky = _ambientProbe(skyRaw, 0.01);
+    const ground = _ambientProbe(groundRaw, 0.015);
+    if (program.uSkyColor)
+      gl.uniform3f(program.uSkyColor, sky[0] / 255, sky[1] / 255, sky[2] / 255);
+    if (program.uGroundColor)
+      gl.uniform3f(program.uGroundColor, ground[0] / 255, ground[1] / 255, ground[2] / 255);
+    const indirect = lightProfile.indirect || [0, 0, 0];
+    if (program.uLocalAmbient)
+      gl.uniform3f(program.uLocalAmbient, indirect[0], indirect[1], indirect[2]);
+    const sun = scene.sky?.sun || {};
+    const sunDir = sun.direction || [0.55, 0.82, 0.45];
+    const sunColor = sun.color || [255, 248, 236];
+    if (program.uSunDir) gl.uniform3f(program.uSunDir, sunDir[0], sunDir[1], sunDir[2]);
+    if (program.uSunColor)
+      gl.uniform3f(program.uSunColor, sunColor[0] / 255, sunColor[1] / 255, sunColor[2] / 255);
+    if (program.uSunStrength) gl.uniform1f(program.uSunStrength, sun.strength ?? 1);
+    if (program.uLightCount) {
+      const lightCapacity = Math.max(
+        1,
+        Math.min(
+          program.lightCapacity || MAX_VIEWPORT_LIGHTS,
+          options.maxLights || MAX_VIEWPORT_LIGHTS,
+        ),
+      );
+      const lights = _selectViewportLights(scene.lights || [], camera, lightCapacity);
+      const positions = new Float32Array(lightCapacity * 3);
+      const colors = new Float32Array(lightCapacity * 3);
+      const ranges = new Float32Array(lightCapacity);
+      const directions = new Float32Array(lightCapacity * 3);
+      const kinds = new Float32Array(lightCapacity);
+      const coneCos = new Float32Array(lightCapacity);
+      lights.forEach((light, index) => {
+        positions.set(light.position || [0, 0, 0], index * 3);
+        colors.set(light.color || [0, 0, 0], index * 3);
+        ranges[index] = light.range || 1;
+        directions.set(light.direction || [0, 0, 0], index * 3);
+        kinds[index] = light.kind || 0;
+        coneCos[index] = light.coneCos || 0;
+      });
+      gl.uniform1i(program.uLightCount, lights.length);
+      if (program.uLightPos) gl.uniform3fv(program.uLightPos, positions);
+      if (program.uLightColor) gl.uniform3fv(program.uLightColor, colors);
+      if (program.uLightRange) gl.uniform1fv(program.uLightRange, ranges);
+      if (program.uLightDir) gl.uniform3fv(program.uLightDir, directions);
+      if (program.uLightKind) gl.uniform1fv(program.uLightKind, kinds);
+      if (program.uLightConeCos) gl.uniform1fv(program.uLightConeCos, coneCos);
+    }
+  }
+
+  function _selectViewportLights(lights = [], camera = null, limit = MAX_VIEWPORT_LIGHTS) {
+    if (lights.length <= limit) return lights.slice(0, limit);
+    const cx = camera?.x || 0;
+    const cy = camera?.y || 0;
+    const cz = camera?.z || 0;
+    const cacheKey = `${limit}:${Math.round(cx / 6)}:${Math.round(cy / 6)}:${Math.round(cz / 6)}`;
+    if (lights._viewportSelectionCache?.key === cacheKey)
+      return lights._viewportSelectionCache.value;
+    const selected = lights
+      .map((light) => {
+        const dx = (light.position?.[0] || 0) - cx;
+        const dy = (light.position?.[1] || 0) - cy;
+        const dz = (light.position?.[2] || 0) - cz;
+        const distance = Math.hypot(dx, dy, dz);
+        const range = Math.max(light.range || 1, 1);
+        const reach = Math.max(0, 1 - distance / Math.max(range * 2.25, 1));
+        const score =
+          (light.intensity || 1) *
+          Math.sqrt(range) *
+          (0.22 + reach * 1.78) *
+          (light.kind === 0 ? 1 : 1.08);
+        return { light, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((entry) => entry.light);
+    Object.defineProperty(lights, '_viewportSelectionCache', {
+      configurable: true,
+      writable: true,
+      value: { key: cacheKey, value: selected },
+    });
+    return selected;
   }
 
   function _mountViewport2dFallback(canvas, scene) {
@@ -3229,69 +4409,162 @@ const dataTree = (() => {
     return tmin >= 0 ? tmin : tmax >= 0 ? tmax : null;
   }
 
-  const MESH_CONCURRENCY = 2;
+  const MESH_CONCURRENCY = 20;
+  const MESH_FETCH_TIMEOUT_MS = 5800;
+  const ASSET_FETCH_TIMEOUT_MS = 5800;
+  const MAX_VIEWPORT_REMOTE_MESH_FETCHES = 768;
+  const VIEWPORT_REFRESH_BATCH = 32;
 
-  async function _loadViewportAssets(assets = [], nodeId, buildKey = '') {
+  async function _loadViewportAssets(assets = [], nodeId, buildKey = '', token = null) {
+    const isActive = () => token == null || _isViewportBuildActive(buildKey, token);
+    if (!isActive()) return;
     const pending = [];
     for (const asset of assets) {
       const key = _meshAssetKey(asset);
       const cached = state_.meshAssets.get(key);
-      if (
-        key &&
-        (!cached || (cached.status === 'failed' && Date.now() - (cached.failedAt || 0) > 120000))
-      )
+      if (key && (!cached || (cached.status === 'failed' && Date.now() >= (cached.retryAt || 0))))
         pending.push(asset);
     }
-    if (!pending.length) return;
+    if (!pending.length) {
+      _scheduleViewportAssetRetry(assets, nodeId, buildKey, token);
+      return;
+    }
+
+    const embedded = pending.filter((asset) => asset.embedded);
+    const remote = pending.filter((asset) => !asset.embedded);
+    const limitedRemote = remote.slice(0, MAX_VIEWPORT_REMOTE_MESH_FETCHES);
+    const skippedRemote = remote.slice(MAX_VIEWPORT_REMOTE_MESH_FETCHES);
+    for (const asset of skippedRemote) {
+      if (!isActive()) return;
+      const key = _meshAssetKey(asset);
+      state_.meshAssets.set(key, {
+        status: 'failed',
+        failedAt: Date.now(),
+        message: 'Deferred to keep the viewport responsive',
+      });
+    }
+    const work = [...embedded, ...limitedRemote];
+    if (!work.length) {
+      _scheduleViewportAssetRetry(assets, nodeId, buildKey, token);
+      return;
+    }
 
     _log.info(
-      `Loading ${pending.length} mesh asset(s) for node ${nodeId} (parallel, concurrency=${MESH_CONCURRENCY})`,
+      `Loading ${work.length}/${pending.length} mesh asset(s) for node ${nodeId} (parallel, concurrency=${MESH_CONCURRENCY})`,
     );
-    for (const asset of pending) {
-      state_.meshAssets.set(_meshAssetKey(asset), { status: 'loading' });
+    for (const asset of work) {
+      if (!isActive()) return;
+      const key = _meshAssetKey(asset);
+      const previous = state_.meshAssets.get(key);
+      state_.meshAssets.set(key, { status: 'loading', attempts: previous?.attempts || 0 });
     }
     const startedAt = performance.now();
     if (buildKey && state_.viewportBuild.key === buildKey) {
       _updateViewportBuild(buildKey, {
         status: 'assets',
         progress: 0.92,
-        message: `Loading mesh assets · 0/${pending.length}`,
+        message: `Loading mesh assets · 0/${work.length}`,
         startedAt,
       });
     }
 
     let completed = 0;
-    await _parallelMap(pending, MESH_CONCURRENCY, async (asset) => {
-      const key = _meshAssetKey(asset);
-      try {
-        _log.fetch(`Fetching mesh asset key=${key} id=${asset.id}`);
-        const bytes = asset.embedded
-          ? _decodeMeshBlob(asset.embedded)
-          : await _fetchMeshAssetBytes(asset.id);
-        const mesh = await _parseRobloxMesh(bytes);
-        state_.meshAssets.set(key, { status: 'ready', mesh });
-        _log.info(`Mesh ready: ${key} (${mesh.vertexCount} verts, ${mesh.triangleCount} tris)`);
-      } catch (err) {
-        const msg = err?.message || String(err || 'Mesh unavailable');
-        _log.error(`Mesh failed: ${key} — ${msg}`);
-        state_.meshAssets.set(key, { status: 'failed', failedAt: Date.now(), message: msg });
-      } finally {
-        completed += 1;
-        if (buildKey && state_.viewportBuild.key === buildKey) {
-          _updateViewportBuild(buildKey, {
-            status: 'assets',
-            progress: 0.92 + (completed / pending.length) * 0.07,
-            message: `Loading mesh assets · ${completed}/${pending.length}`,
-          });
+    let refreshQueue = Promise.resolve();
+    let lastRefreshAt = performance.now();
+    const refreshBatch = VIEWPORT_PERFORMANCE_MODE
+      ? Math.max(VIEWPORT_REFRESH_BATCH * 4, 128)
+      : 9999;
+    const refreshIntervalMs = VIEWPORT_PERFORMANCE_MODE ? 5000 : 99999;
+    const scheduleRefresh = () => {
+      if (!isActive()) return;
+      refreshQueue = refreshQueue
+        .then(() => _refreshViewportSceneLive(buildKey, nodeId, { quiet: true }))
+        .catch((err) => _log.warn(`Live mesh refresh failed: ${_errMsg(err)}`));
+    };
+    await _parallelMap(
+      work,
+      MESH_CONCURRENCY,
+      async (asset) => {
+        if (!isActive()) return;
+        const key = _meshAssetKey(asset);
+        try {
+          _log.fetch(`Fetching mesh asset key=${key} id=${asset.id}`);
+          const bytes = asset.embedded
+            ? _decodeMeshBlob(asset.embedded)
+            : await _fetchMeshAssetBytes(asset.id);
+          const mesh = await _parseRobloxMesh(bytes);
+          if (!isActive()) return;
+          state_.meshAssets.set(key, { status: 'ready', mesh, lastUsed: Date.now() });
+          _log.info(`Mesh ready: ${key} (${mesh.vertexCount} verts, ${mesh.triangleCount} tris)`);
+        } catch (err) {
+          if (!isActive()) return;
+          const msg = err?.message || String(err || 'Mesh unavailable');
+          _log.error(`Mesh failed: ${key} — ${msg}`);
+          state_.meshAssets.set(key, _meshFailureState(msg, state_.meshAssets.get(key)));
+        } finally {
+          if (!isActive()) return;
+          completed += 1;
+          if (buildKey && state_.viewportBuild.key === buildKey) {
+            _updateViewportBuild(buildKey, {
+              status: 'assets',
+              progress: 0.92 + (completed / work.length) * 0.07,
+              message: `Loading mesh assets · ${completed}/${work.length}`,
+            });
+          }
+          if (
+            completed % refreshBatch === 0 ||
+            performance.now() - lastRefreshAt > refreshIntervalMs
+          ) {
+            lastRefreshAt = performance.now();
+            scheduleRefresh();
+          }
         }
-      }
-    });
+      },
+      isActive,
+    );
 
+    if (!isActive()) return;
+    await refreshQueue;
+    if (!isActive()) return;
     _trimMeshAssets();
     await _refreshViewportSceneLive(buildKey, nodeId);
+    _scheduleViewportAssetRetry(assets, nodeId, buildKey, token);
   }
 
-  async function _refreshViewportSceneLive(buildKey, nodeId) {
+  function _scheduleViewportAssetRetry(assets = [], nodeId, buildKey = '', token = null) {
+    if (!_isViewportBuildActive(buildKey, token)) return;
+    const job = state_.viewportBuild;
+    if (job.assetRetryTimer) {
+      clearTimeout(job.assetRetryTimer);
+      job.assetRetryTimer = null;
+    }
+    const retryable = assets
+      .map((asset) => state_.meshAssets.get(_meshAssetKey(asset)))
+      .filter((entry) => entry?.status === 'failed' && entry.transient && entry.attempts < 4);
+    if (!retryable.length) return;
+    const now = Date.now();
+    const retryAt = Math.min(...retryable.map((entry) => entry.retryAt || now));
+    const delay = Math.max(250, retryAt - now);
+    _updateViewportBuild(buildKey, {
+      status: 'assets',
+      progress: 0.99,
+      message: `Waiting to retry ${retryable.length.toLocaleString()} transient mesh${retryable.length === 1 ? '' : 'es'}`,
+    });
+    job.assetRetryTimer = setTimeout(() => {
+      if (!_isViewportBuildActive(buildKey, token)) return;
+      job.assetRetryTimer = null;
+      _updateViewportBuild(buildKey, {
+        status: 'assets',
+        progress: Math.min(job.progress || 0.92, 0.99),
+        message: `Retrying ${retryable.length.toLocaleString()} transient mesh${retryable.length === 1 ? '' : 'es'}`,
+      });
+      _loadViewportAssets(assets, nodeId, buildKey, token).catch((err) =>
+        _log.warn(`Mesh retry pass failed: ${_errMsg(err)}`),
+      );
+    }, delay);
+  }
+
+  async function _refreshViewportSceneLive(buildKey, nodeId, opts = {}) {
     const job = state_.viewportBuild;
     if (!buildKey || job.key !== buildKey || !job.renderSnapshot) return;
     const snapshot = job.renderSnapshot;
@@ -3301,24 +4574,20 @@ const dataTree = (() => {
     );
     if (!node || !canvas?.__dtUpdateScene) return;
     const token = job.token;
-    _updateViewportBuild(buildKey, {
-      status: 'assets',
-      progress: 0.995,
-      message: 'Applying meshes live',
-    });
     const parts = await _collectRenderablePartsProgressive(snapshot, node, token, buildKey);
     if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== buildKey) return;
     const scene = await _buildSceneProgressive(parts, buildKey, token, snapshot);
     if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== buildKey) return;
-    scene.assetReady = scene.assetCount;
-    state_.viewportBuild.scene = scene;
+
     state_.viewportBuild.status = 'ready';
     state_.viewportBuild.progress = 1;
     state_.viewportBuild.message = '3D preview ready';
+    state_.viewportBuild.scene = scene;
+    state_.viewportBuild.activeAssetKeys = _sceneAssetKeys(scene);
     canvas.__dtUpdateScene(scene);
     _updateRenderStats(buildKey, scene);
     _paintViewportProgress(buildKey);
-    _releaseSceneCpuMesh(scene);
+    if (state_.viewportBuild.scene !== scene) _releaseSceneCpuMesh(state_.viewportBuild.scene);
     if (state_.viewportBuild.scene === scene) state_.viewportBuild.scene = null;
   }
 
@@ -3335,7 +4604,13 @@ const dataTree = (() => {
           const terrainParts = _terrainToParts(current);
           for (const tp of terrainParts) parts.push(tp);
         } else if (_isRenderablePart(current.className)) {
-          const part = _nodePart(current, _meshChildFor(children));
+          const part = _nodePart(
+            current,
+            _meshChildFor(children),
+            snapshot,
+            _surfaceTextureFor(children),
+            _surfaceAppearanceFor(children),
+          );
           if (part) parts.push(part);
         }
         for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
@@ -3348,14 +4623,14 @@ const dataTree = (() => {
   function _updateRenderStats(buildKey, scene) {
     const stats = _container()?.querySelector(`[data-render-stats="${_cssEscape(buildKey)}"]`);
     if (!stats) return;
-    stats.innerHTML = `<span>${(scene.partCount || scene.parts.length).toLocaleString()} parts</span><span>${scene.mesh.triangleCount.toLocaleString()} tris</span>${scene.assetCount ? `<span>${scene.assetReady.toLocaleString()}/${scene.assetCount.toLocaleString()} embedded meshes</span>` : ''}${scene.assetFailed ? `<span>${scene.assetFailed.toLocaleString()} unavailable</span>` : ''}`;
+    stats.innerHTML = `<span>${(scene.partCount || scene.parts.length).toLocaleString()} parts</span><span>${(scene.mesh.visualTriangleCount || scene.mesh.triangleCount).toLocaleString()} tris</span>${scene.assetCount ? `<span>${scene.assetReady.toLocaleString()}/${scene.assetCount.toLocaleString()} meshes</span>` : ''}${scene.assetFailed ? `<span>${scene.assetFailed.toLocaleString()} unavailable</span>` : ''}`;
   }
 
-  async function _parallelMap(items, concurrency, fn) {
+  async function _parallelMap(items, concurrency, fn, shouldContinue = null) {
     const results = [];
     let index = 0;
     const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (index < items.length) {
+      while (index < items.length && (!shouldContinue || shouldContinue())) {
         const i = index++;
         results[i] = await fn(items[i]).catch((err) => err);
       }
@@ -3371,19 +4646,21 @@ const dataTree = (() => {
         ? _decodeMeshBlob(asset.embedded)
         : await _fetchMeshAssetBytes(asset.id);
       const mesh = await _parseRobloxMesh(bytes);
-      state_.meshAssets.set(key, { status: 'ready', mesh });
+      state_.meshAssets.set(key, { status: 'ready', mesh, lastUsed: Date.now() });
       state_.meshVersion += 1;
       _trimMeshAssets();
-      state_.sceneCache.clear();
+      _clearSceneCache();
     } catch (err) {
-      state_.meshAssets.set(key, {
-        status: 'failed',
-        failedAt: Date.now(),
-        message: err?.message || String(err || 'Mesh unavailable'),
-      });
+      state_.meshAssets.set(
+        key,
+        _meshFailureState(
+          err?.message || String(err || 'Mesh unavailable'),
+          state_.meshAssets.get(key),
+        ),
+      );
       state_.meshVersion += 1;
       _trimMeshAssets();
-      state_.sceneCache.clear();
+      _clearSceneCache();
     }
   }
 
@@ -3404,8 +4681,18 @@ const dataTree = (() => {
     return '';
   }
 
-  function _assetDeliveryUrl(id) {
-    return `https://assetdelivery.roblox.com/v1/asset/?id=${encodeURIComponent(id)}`;
+  function _meshFailureState(message, previous = null) {
+    const failedAt = Date.now();
+    const transient = /429|timed out|timeout|network|fetch|5\\d\\d/i.test(String(message || ''));
+    const attempts = (previous?.attempts || 0) + 1;
+    return {
+      status: 'failed',
+      failedAt,
+      retryAt: failedAt + (transient ? Math.min(30000, 4000 * attempts) : 120000),
+      transient,
+      attempts,
+      message,
+    };
   }
 
   function _errMsg(err) {
@@ -3422,179 +4709,357 @@ const dataTree = (() => {
   function _sniffPayloadType(bytes) {
     if (!bytes?.length) return 'empty';
     const h = bytes;
-    if (h[0] === 0x76 && h[1] === 0x65) return 'mesh(text/v1)';
-    if (h[0] === 0x76 && h[1] === 0x65 && h[2] === 0x72) return 'mesh';
     const hdr = new TextDecoder().decode(h.slice(0, Math.min(16, h.length)));
+    if (/^version 1\.0/.test(hdr)) return 'mesh(text/v1)';
     if (/^version \d/.test(hdr)) return 'mesh';
     if (h[0] === 0xff && h[1] === 0xd8) return 'jpeg';
     if (h[0] === 0x89 && h[1] === 0x50) return 'png';
     if (h[0] === 0x47 && h[1] === 0x49) return 'gif';
+    if (h[0] === 0x52 && h[1] === 0x49 && h[8] === 0x57) return 'wav';
     if (h[0] === 0x3c) return 'html/xml';
     if (h[0] === 0x7b) return 'json';
     if (h[0] === 0x1f && h[1] === 0x8b) return 'gzip';
     if (h[0] === 0x4f && h[1] === 0x67) return 'ogg';
+    if (h[0] === 0xff && (h[1] & 0xe0) === 0xe0) return 'mp3';
+    if (h[0] === 0x66 && h[1] === 0x74 && h[2] === 0x79) return 'mp4';
     return `unknown(0x${h[0].toString(16).padStart(2, '0')}${h[1]?.toString(16).padStart(2, '0') ?? ''})`;
   }
 
   async function _fetchMeshAssetBytes(id) {
     if (!id) throw new Error('Missing mesh asset id');
     const numericId = _extractAssetId(id) || id;
-    _log.fetch(`Fetching mesh id=${numericId}`);
-    const encoded = encodeURIComponent(numericId);
-    const headers = {
-      Accept: 'application/octet-stream,*/*',
-      AssetType: 'Mesh',
-      AssetFormat: 'Mesh',
-      'Roblox-AssetFormat': 'Mesh',
-    };
+    return _fetchAssetBytesById(numericId, {
+      hint: 'mesh',
+      label: `mesh ${numericId}`,
+      timeoutMs: MESH_FETCH_TIMEOUT_MS,
+      headers: {
+        ...ROBLOX_DESKTOP_HEADERS,
+        Accept: 'application/octet-stream,*/*',
+      },
+      validate: _isMeshPayload,
+    });
+  }
+
+  function _invokeWithTimeout(command, args, timeoutMs, label) {
     const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) throw new Error('Tauri not available');
+    if (!invoke) return Promise.reject(new Error('Tauri not available'));
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label || command} timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    });
+    return Promise.race([invoke(command, args), timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
 
-    let lastError = null;
+  async function _rateLimitedInvoke(command, args, timeoutMs, label) {
+    await _waitForAssetBudget();
+    return _invokeWithTimeout(command, args, timeoutMs, label);
+  }
 
-    const _on429 = async (msg) => {
-      if (/429/.test(msg)) {
-        _log.warn(`  rate-limited (429), backing off 1.5s`);
-        await new Promise((res) => setTimeout(res, 1500));
+  async function _waitForAssetBudget() {
+    while (true) {
+      const now = performance.now();
+      while (_assetFetchWindow.length && now - _assetFetchWindow[0] > ASSET_RATE_LIMIT_WINDOW_MS) {
+        _assetFetchWindow.shift();
       }
-    };
-
-    for (const url of [
-      `https://assetdelivery.roblox.com/v1/asset/?id=${encoded}`,
-      `https://www.roblox.com/asset/?id=${encoded}`,
-    ]) {
-      try {
-        const bytes = _base64ToBytes(await invoke('http_fetch_binary', { url, headers }));
-        if (_isMeshPayload(bytes)) {
-          _log.fetch(`  ✓ direct (${bytes.length}B)`);
-          return bytes;
-        }
-        lastError = new Error(`Not mesh data (${_sniffPayloadType(bytes)}) from direct URL`);
-        _log.warn(`  direct non-mesh: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
-      } catch (err) {
-        lastError = new Error(_errMsg(err));
-        _log.warn(`  direct failed: ${_errMsg(err)}`);
-        await _on429(_errMsg(err));
+      if (_assetFetchWindow.length < ASSET_RATE_LIMIT_COUNT) {
+        _assetFetchWindow.push(now);
+        return;
       }
+      const waitMs = Math.max(12, ASSET_RATE_LIMIT_WINDOW_MS - (now - _assetFetchWindow[0]) + 8);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
-
-    for (const apiUrl of [
-      `https://assetdelivery.roblox.com/v1/assetId/${encoded}`,
-      `https://assetdelivery.roblox.com/v2/assetId/${encoded}`,
-    ]) {
-      try {
-        const raw = await invoke('http_fetch', {
-          url: apiUrl,
-          headers: { Accept: 'application/json,*/*' },
-        });
-        const data = JSON.parse(raw);
-
-        const apiErr = data?.errors?.[0]?.message || data?.error || data?.message;
-        if (apiErr && !data?.location && !data?.locations?.length) {
-          lastError = new Error(apiErr);
-          _log.warn(`  delivery API error: ${apiErr}`);
-          continue;
-        }
-        const location = data?.location || data?.locations?.find((l) => l?.location)?.location;
-        if (!location) {
-          lastError = new Error('No delivery location');
-          continue;
-        }
-        _log.fetch(`  CDN: ${location.split('?')[0]}`);
-        const bytes = _base64ToBytes(await invoke('http_fetch_binary', { url: location, headers }));
-        if (_isMeshPayload(bytes)) {
-          _log.fetch(`  ✓ CDN redirect (${bytes.length}B)`);
-          return bytes;
-        }
-        lastError = new Error(`Not mesh data (${_sniffPayloadType(bytes)}) from CDN`);
-        _log.warn(`  CDN non-mesh: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
-      } catch (err) {
-        lastError = new Error(_errMsg(err));
-        _log.warn(
-          `  delivery API failed [${apiUrl.includes('v2') ? 'v2' : 'v1'}]: ${_errMsg(err)}`,
-        );
-        await _on429(_errMsg(err));
-      }
-    }
-
-    const msg = lastError?.message || 'Mesh unavailable';
-    _log.error(`✗ mesh id=${numericId}: ${msg}`);
-    throw new Error(msg);
   }
 
   function _trimMeshAssets() {
+    const protectedKeys = new Set([
+      ...(state_.viewportBuild.activeAssetKeys || []),
+      ...(state_.viewportBuild.scene?.assets || []).map(_meshAssetKey),
+    ]);
     for (const [key, val] of state_.meshAssets) {
       if (val.status === 'failed' && Date.now() - (val.failedAt || 0) > 300000) {
         state_.meshAssets.delete(key);
       }
     }
+    const ready = [...state_.meshAssets.entries()]
+      .filter(([key, val]) => val.status === 'ready' && !protectedKeys.has(key))
+      .sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
+    while (ready.length > MAX_READY_MESH_CACHE_ENTRIES) {
+      const [key] = ready.shift();
+      state_.meshAssets.delete(key);
+    }
+  }
+
+  function _sceneAssetKeys(scene) {
+    return new Set((scene?.assets || []).map(_meshAssetKey).filter(Boolean));
   }
 
   async function _fetchAssetBlob(id, hint) {
     if (!id) return null;
     const numericId = _extractAssetId(String(id)) || String(id);
-    _log.fetch(`Fetching asset blob id=${numericId} hint=${hint}`);
-    const encoded = encodeURIComponent(numericId);
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) {
-      _log.error('Tauri not available');
+    const cacheKey = `${hint || 'asset'}:${numericId}`;
+    const cached = state_.assetBlobs.get(cacheKey);
+    if (cached) {
+      cached.lastUsed = Date.now();
+      return cached.url;
+    }
+    try {
+      const bytes = await _fetchAssetBytesById(numericId, {
+        hint: hint || 'asset',
+        label: `${hint || 'asset'} ${numericId}`,
+        timeoutMs: ASSET_FETCH_TIMEOUT_MS,
+        headers: ROBLOX_DESKTOP_HEADERS,
+        validate: (candidate) => _isBlobPayloadForHint(candidate, hint),
+      });
+      const mime = _sniffBlobMime(bytes, hint);
+      const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      _cacheAssetBlob(cacheKey, blobUrl, bytes.length);
+      return blobUrl;
+    } catch (err) {
+      _log.error(`All fetches failed for id=${numericId}: ${_errMsg(err)}`);
       return null;
     }
+  }
 
-    const sniffMime = (bytes) => {
-      if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
-      if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
-      if (bytes[0] === 0x47 && bytes[1] === 0x49) return 'image/gif';
-      if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) return 'audio/wav';
-      if (bytes[0] === 0x4f && bytes[1] === 0x67) return 'audio/ogg';
-      if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return 'audio/mpeg';
-      if (bytes[0] === 0x66 && bytes[1] === 0x74 && bytes[2] === 0x79) return 'audio/mp4';
-      return hint === 'audio' ? 'audio/mpeg' : 'image/png';
-    };
+  async function _fetchAssetBytesById(
+    id,
+    { hint = 'asset', label = hint, timeoutMs = ASSET_FETCH_TIMEOUT_MS, headers, validate } = {},
+  ) {
+    if (!id) throw new Error('Missing asset id');
+    const numericId = _extractAssetId(String(id)) || String(id);
+    const fetchKey = `${hint}:${numericId}`;
+    const existing = state_.assetByteFetches.get(fetchKey);
+    if (existing) return existing;
 
-    for (const url of [
+    const task = (async () => {
+      const verifier = typeof validate === 'function' ? validate : _isUsableAssetPayload;
+      const cached = await _readCachedAssetBytes(numericId, verifier);
+      if (cached) return cached;
+
+      _log.fetch(`Fetching ${hint} id=${numericId}`);
+      let lastError = null;
+      let deliveryDenial = null;
+      let deliveryDenialCount = 0;
+      const requestHeaders = headers || ROBLOX_DESKTOP_HEADERS;
+      const deliveryHeaders = { ...ROBLOX_DESKTOP_HEADERS, Accept: 'application/json,*/*' };
+
+      for (const apiUrl of _assetDeliveryApiUrls(numericId)) {
+        try {
+          _log.fetch(`  delivery API: ${apiUrl}`);
+          const raw = await _rateLimitedInvoke(
+            'http_fetch',
+            { url: apiUrl, headers: deliveryHeaders },
+            ASSET_FETCH_TIMEOUT_MS,
+            `asset delivery ${numericId}`,
+          );
+          const data = JSON.parse(raw);
+          const apiErr = data?.errors?.[0]?.message || data?.error || data?.message;
+          const location =
+            data?.location || data?.locations?.find((entry) => entry?.location)?.location;
+          if (!location) {
+            lastError = new Error(apiErr || 'No delivery location');
+            if (_isHardAssetDenial(apiErr)) {
+              deliveryDenial = apiErr;
+              deliveryDenialCount += 1;
+            }
+            _log.warn(`  delivery API had no location: ${lastError.message}`);
+            continue;
+          }
+          _log.fetch(`  CDN: ${location.split('?')[0]}`);
+          const bytes = _base64ToBytes(
+            await _rateLimitedInvoke(
+              'http_fetch_binary',
+              { url: location, headers: requestHeaders },
+              timeoutMs,
+              `${label} CDN`,
+            ),
+          );
+          if (!verifier(bytes)) {
+            lastError = new Error(`Rejected ${_sniffPayloadType(bytes)} payload from CDN`);
+            _log.warn(`  CDN rejected: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
+            continue;
+          }
+          await _writeCachedAssetBytes(numericId, bytes);
+          _log.fetch(`  ✓ CDN (${bytes.length}B)`);
+          return bytes;
+        } catch (err) {
+          lastError = new Error(_errMsg(err));
+          _log.warn(`  delivery failed: ${_errMsg(err)}`);
+          await _backoffIfRateLimited(err);
+        }
+      }
+
+      if (deliveryDenial && deliveryDenialCount >= _assetDeliveryApiUrls(numericId).length) {
+        throw new Error(deliveryDenial);
+      }
+
+      for (const url of _assetDirectUrls(numericId)) {
+        try {
+          _log.fetch(`  direct: ${url}`);
+          const bytes = _base64ToBytes(
+            await _rateLimitedInvoke(
+              'http_fetch_binary',
+              { url, headers: requestHeaders },
+              timeoutMs,
+              label,
+            ),
+          );
+          if (!verifier(bytes)) {
+            lastError = new Error(`Rejected ${_sniffPayloadType(bytes)} payload from direct URL`);
+            _log.warn(`  direct rejected: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
+            continue;
+          }
+          await _writeCachedAssetBytes(numericId, bytes);
+          _log.fetch(`  ✓ direct (${bytes.length}B)`);
+          return bytes;
+        } catch (err) {
+          lastError = new Error(_errMsg(err));
+          _log.warn(`  direct failed: ${_errMsg(err)}`);
+          await _backoffIfRateLimited(err);
+        }
+      }
+
+      const msg = lastError?.message || `${label} unavailable`;
+      throw new Error(msg);
+    })();
+
+    state_.assetByteFetches.set(fetchKey, task);
+    try {
+      return await task;
+    } finally {
+      state_.assetByteFetches.delete(fetchKey);
+    }
+  }
+
+  function _assetDeliveryApiUrls(id) {
+    const encoded = encodeURIComponent(id);
+    return [
+      `https://assetdelivery.roblox.com/v2/assetId/${encoded}`,
+      `https://assetdelivery.roblox.com/v1/assetId/${encoded}`,
+    ];
+  }
+
+  function _assetDirectUrls(id) {
+    const encoded = encodeURIComponent(id);
+    return [
       `https://assetdelivery.roblox.com/v1/asset/?id=${encoded}`,
       `https://www.roblox.com/asset/?id=${encoded}`,
-    ]) {
-      try {
-        _log.fetch(`  direct: ${url}`);
-        const bytes = _base64ToBytes(
-          await invoke('http_fetch_binary', { url, headers: { Accept: '*/*' } }),
-        );
-        if (!bytes.length) continue;
-        const mime = sniffMime(bytes);
-        _log.fetch(`  OK ${mime} (${bytes.length}B)`);
-        return URL.createObjectURL(new Blob([bytes], { type: mime }));
-      } catch (err) {
-        _log.warn(`  direct failed: ${_errMsg(err)}`);
-      }
-    }
+    ];
+  }
 
-    for (const url of [
-      `https://assetdelivery.roblox.com/v1/assetId/${encoded}`,
-      `https://assetdelivery.roblox.com/v2/assetId/${encoded}`,
-    ]) {
-      try {
-        _log.fetch(`  delivery API: ${url}`);
-        const data = JSON.parse(
-          await invoke('http_fetch', { url, headers: { Accept: 'application/json,*/*' } }),
-        );
-        const location = data?.location || data?.locations?.find((l) => l?.location)?.location;
-        if (!location) continue;
-        const bytes = _base64ToBytes(
-          await invoke('http_fetch_binary', { url: location, headers: { Accept: '*/*' } }),
-        );
-        if (!bytes.length) continue;
-        const mime = sniffMime(bytes);
-        _log.fetch(`  OK ${mime} via redirect (${bytes.length}B)`);
-        return URL.createObjectURL(new Blob([bytes], { type: mime }));
-      } catch (err) {
-        _log.warn(`  delivery API failed: ${_errMsg(err)}`);
-      }
-    }
+  async function _backoffIfRateLimited(err) {
+    const msg = _errMsg(err);
+    if (!/429/.test(msg)) return;
+    _log.warn(`  rate-limited (429), backing off 1.5s`);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
 
-    _log.error(`All fetches failed for id=${numericId}`);
-    return null;
+  async function _readCachedAssetBytes(id, validate) {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) return null;
+    try {
+      const bytes = _base64ToBytes(
+        await invoke('read_binary_file', {
+          path: _assetCachePath(id),
+        }),
+      );
+      if (!validate(bytes)) {
+        _log.warn(`  disk cache rejected id=${id}: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
+        invoke('remove_path', { path: _assetCachePath(id) }).catch(() => {});
+        return null;
+      }
+      _log.fetch(`  ✓ disk cache id=${id} (${bytes.length}B)`);
+      return bytes;
+    } catch {
+      return null;
+    }
+  }
+
+  async function _writeCachedAssetBytes(id, bytes) {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke || !bytes?.length) return;
+    try {
+      await invoke('write_binary_file', {
+        path: _assetCachePath(id),
+        contentBase64: _bytesToBase64(bytes),
+      });
+    } catch (err) {
+      _log.warn(`  disk cache write failed id=${id}: ${_errMsg(err)}`);
+    }
+  }
+
+  function _isUsableAssetPayload(bytes) {
+    return !!bytes?.length && !_isRejectedAssetPayload(bytes);
+  }
+
+  function _isHardAssetDenial(message) {
+    return /authentication required|not approved for the requester/i.test(String(message || ''));
+  }
+
+  function _isRejectedAssetPayload(bytes) {
+    const type = _sniffPayloadType(bytes);
+    return type === 'empty' || type === 'html/xml' || type === 'json';
+  }
+
+  function _isBlobPayloadForHint(bytes, hint) {
+    if (!_isUsableAssetPayload(bytes)) return false;
+    if (hint === 'image') return _isImagePayload(bytes);
+    if (hint === 'audio') return _isAudioPayload(bytes);
+    return true;
+  }
+
+  function _isImagePayload(bytes) {
+    return (
+      (bytes[0] === 0xff && bytes[1] === 0xd8) ||
+      (bytes[0] === 0x89 && bytes[1] === 0x50) ||
+      (bytes[0] === 0x47 && bytes[1] === 0x49)
+    );
+  }
+
+  function _isAudioPayload(bytes) {
+    return (
+      (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) ||
+      (bytes[0] === 0x4f && bytes[1] === 0x67) ||
+      (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) ||
+      (bytes[0] === 0x66 && bytes[1] === 0x74 && bytes[2] === 0x79)
+    );
+  }
+
+  function _sniffBlobMime(bytes, hint) {
+    if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
+    if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
+    if (bytes[0] === 0x47 && bytes[1] === 0x49) return 'image/gif';
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) return 'audio/wav';
+    if (bytes[0] === 0x4f && bytes[1] === 0x67) return 'audio/ogg';
+    if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return 'audio/mpeg';
+    if (bytes[0] === 0x66 && bytes[1] === 0x74 && bytes[2] === 0x79) return 'audio/mp4';
+    return hint === 'audio' ? 'audio/mpeg' : 'application/octet-stream';
+  }
+
+  function _cacheAssetBlob(key, url, bytes = 0) {
+    state_.assetBlobs.set(key, { url, bytes, lastUsed: Date.now() });
+    _trimAssetBlobs();
+  }
+
+  function _trimAssetBlobs() {
+    const entries = [...state_.assetBlobs.entries()].sort(
+      (a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0),
+    );
+    let totalBytes = entries.reduce((sum, [, entry]) => sum + (entry.bytes || 0), 0);
+    while (
+      entries.length > MAX_ASSET_BLOB_CACHE_ENTRIES ||
+      totalBytes > MAX_ASSET_BLOB_CACHE_BYTES
+    ) {
+      const [key, entry] = entries.shift() || [];
+      if (!key || !entry) break;
+      URL.revokeObjectURL(entry.url);
+      state_.assetBlobs.delete(key);
+      totalBytes -= entry.bytes || 0;
+    }
   }
 
   function _meshAssetKey(asset) {
@@ -3611,6 +5076,15 @@ const dataTree = (() => {
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return bytes;
+  }
+
+  function _bytesToBase64(bytes) {
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
   }
 
   function _decodeMeshBlob(value) {
@@ -3631,6 +5105,10 @@ const dataTree = (() => {
     if (/version 2\.00/.test(header)) return _parseMeshV2(bytes, header.length + 1);
     if (/version 3\.0[01]/.test(header)) return _parseMeshV3(bytes, header.length + 1);
     if (/version [45]\.0[01]/.test(header)) return _parseMeshV4(bytes, header.length + 1);
+    if (/version 7\.00/.test(header) && DataTreeMeshCodec.canParseCompressedCoreMesh(bytes)) {
+      const mesh = await DataTreeMeshCodec.parseCompressedCoreMesh(bytes);
+      return _finishParsedMesh(mesh.positions, mesh.indices, mesh.normals, mesh.uvs);
+    }
     throw new Error(
       `${header} needs embedded compressed mesh data that is not present in RBXLX-native mode`,
     );
@@ -3772,10 +5250,30 @@ const dataTree = (() => {
       );
       if (lods[1] > lods[0] && lods[1] <= endFace) endFace = lods[1];
     }
-    return _finishParsedMesh(positions, rawFaces.slice(0, endFace * 3));
+    const normals = new Float32Array(numVerts * 3);
+    const uvs = new Float32Array(numVerts * 2);
+    cursor = offset;
+    for (let i = 0; i < numVerts; i += 1) {
+      if (vertexSize >= 24) {
+        normals[i * 3] = view.getFloat32(cursor + 12, true);
+        normals[i * 3 + 1] = view.getFloat32(cursor + 16, true);
+        normals[i * 3 + 2] = view.getFloat32(cursor + 20, true);
+      }
+      if (vertexSize >= 32) {
+        uvs[i * 2] = view.getFloat32(cursor + 24, true);
+        uvs[i * 2 + 1] = 1 - view.getFloat32(cursor + 28, true);
+      }
+      cursor += vertexSize;
+    }
+    return _finishParsedMesh(
+      positions,
+      rawFaces.slice(0, endFace * 3),
+      normals,
+      vertexSize >= 32 ? uvs : null,
+    );
   }
 
-  function _finishParsedMesh(positionsInput, indicesInput, normalsInput = null) {
+  function _finishParsedMesh(positionsInput, indicesInput, normalsInput = null, uvsInput = null) {
     const positions =
       positionsInput instanceof Float32Array ? positionsInput : new Float32Array(positionsInput);
     const indices =
@@ -3786,6 +5284,8 @@ const dataTree = (() => {
         : normalsInput
           ? new Float32Array(normalsInput)
           : null;
+    const uvs =
+      uvsInput instanceof Float32Array ? uvsInput : uvsInput ? new Float32Array(uvsInput) : null;
     const min = [Infinity, Infinity, Infinity];
     const max = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < positions.length; i += 3) {
@@ -3806,6 +5306,7 @@ const dataTree = (() => {
       positions,
       indices,
       normals,
+      uvs,
       center,
       size,
       vertexCount: positions.length / 3,
@@ -3813,7 +5314,17 @@ const dataTree = (() => {
     };
   }
 
+  function _viewportLightCapacity(gl) {
+    const vectors = Number(gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS)) || 128;
+    if (VIEWPORT_PERFORMANCE_MODE) return MAX_VIEWPORT_LIGHTS;
+    if (vectors >= 160) return MAX_VIEWPORT_LIGHTS;
+    if (vectors >= 112) return 16;
+    if (vectors >= 88) return 12;
+    return 8;
+  }
+
   function _createViewportProgram(gl) {
+    const lightCapacity = _viewportLightCapacity(gl);
     const vertex = _compileShader(
       gl,
       gl.VERTEX_SHADER,
@@ -3822,17 +5333,25 @@ const dataTree = (() => {
       attribute vec3 aNormal;
       attribute vec4 aColor;
       attribute float aFlag;
+      attribute float aMatId;
       uniform mat4 uMvp;
       uniform float uUnlit;
+      uniform vec3 uCamOffset;
       varying vec4  vColor;
       varying vec3  vNormal;
+      varying vec3  vWorld;
+      varying vec3  vPosition;
       varying float vUnlit;
       varying float vFlag;
+      varying float vMatId;
       void main() {
-        vColor  = aColor;
-        vNormal = aNormal;
-        vUnlit  = uUnlit;
-        vFlag   = aFlag;
+        vColor    = aColor;
+        vNormal   = aNormal;
+        vWorld    = aPosition - uCamOffset;
+        vPosition = aPosition;
+        vUnlit    = uUnlit;
+        vFlag     = aFlag;
+        vMatId    = aMatId;
         gl_Position = uMvp * vec4(aPosition, 1.0);
       }
     `,
@@ -3841,60 +5360,460 @@ const dataTree = (() => {
       gl,
       gl.FRAGMENT_SHADER,
       `
-      precision mediump float;
+      precision highp float;
       varying vec4  vColor;
       varying vec3  vNormal;
+      varying vec3  vWorld;
+      varying vec3  vPosition;
       varying float vUnlit;
       varying float vFlag;
-      void main() {
-        if (vUnlit > 0.5) {
-          gl_FragColor = vColor;
-          return;
-        }
-        vec3 n = normalize(vNormal);
+      varying float vMatId;
+      uniform vec3  uCameraPos;
+      uniform vec3  uTint;
+      uniform float uExposure;
+      uniform float uContrast;
+      uniform float uSaturation;
+      uniform float uAmbientLift;
+      uniform float uShadowLift;
+      uniform float uBloom;
+      uniform float uDetailQuality;
+      uniform float uPerformanceMode;
+      uniform vec3  uSkyColor;
+      uniform vec3  uGroundColor;
+      uniform vec3  uLocalAmbient;
+      uniform vec3  uSunDir;
+      uniform vec3  uSunColor;
+      uniform float uSunStrength;
+      uniform int   uLightCount;
+      uniform vec3  uLightPos[${lightCapacity}];
+      uniform vec3  uLightColor[${lightCapacity}];
+      uniform float uLightRange[${lightCapacity}];
+      uniform vec3  uLightDir[${lightCapacity}];
+      uniform float uLightKind[${lightCapacity}];
+      uniform float uLightConeCos[${lightCapacity}];
 
-        // Key light  — warm sun from upper-right-front
-        vec3 keyDir  = normalize(vec3(0.55, 0.82, 0.45));
-        float key    = max(dot(n, keyDir), 0.0);
+      const float PI = 3.14159265359;
 
-        // Fill light — cool bounce from lower-left-back
-        vec3 fillDir = normalize(vec3(-0.6, -0.18, -0.5));
-        float fill   = max(dot(n, fillDir), 0.0) * 0.28;
+      // ── Hash / noise ────────────────────────────────────────────────────────
+      float hash21(vec2 p) {
+        p = fract(p * vec2(127.1, 311.7));
+        p += dot(p, p + 17.5);
+        return fract(p.x * p.y);
+      }
+      float hash31(vec3 p) {
+        p = fract(p * vec3(127.1, 311.7, 74.7));
+        p += dot(p, p + 19.19);
+        return fract(p.x * p.y * p.z);
+      }
+      float valueNoise2(vec2 p) {
+        vec2 i = floor(p); vec2 f = fract(p);
+        f = f*f*(3.0-2.0*f);
+        return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),
+                   mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);
+      }
+      // 4-octave FBM
+      float fbm(vec2 p) {
+        float v=0.0, a=0.5;
+        for(int i=0;i<4;i++){v+=a*valueNoise2(p);p*=2.1;a*=0.5;}
+        return v;
+      }
+      // 3-D value noise for volume texturing
+      float valueNoise3(vec3 p) {
+        vec3 i = floor(p); vec3 f = fract(p);
+        f = f*f*(3.0-2.0*f);
+        return mix(
+          mix(mix(hash31(i),hash31(i+vec3(1,0,0)),f.x),
+              mix(hash31(i+vec3(0,1,0)),hash31(i+vec3(1,1,0)),f.x),f.y),
+          mix(mix(hash31(i+vec3(0,0,1)),hash31(i+vec3(1,0,1)),f.x),
+              mix(hash31(i+vec3(0,1,1)),hash31(i+vec3(1,1,1)),f.x),f.y),f.z);
+      }
 
-        // Hemisphere ambient — sky slightly blue, ground slightly warm
-        float hemi   = n.y * 0.5 + 0.5;
-        vec3 sky     = vec3(0.42, 0.48, 0.58);
-        vec3 ground  = vec3(0.32, 0.28, 0.24);
-        vec3 ambient = mix(ground, sky, hemi) * 0.55;
+      // ── Tangent frame ────────────────────────────────────────────────────────
+      void tangentFrame(vec3 n, out vec3 t, out vec3 b) {
+        t = abs(n.y) < 0.85 ? vec3(0,1,0) : vec3(1,0,0);
+        t = normalize(cross(t, n));
+        b = cross(n, t);
+      }
 
-        vec3 baseRgb = vColor.rgb;
-        float alpha  = vColor.a;
-        int flag = int(vFlag + 0.5);
+      // ── Per-material PBR params: rough, metallic, f0, sssStrength ───────────
+      // matId: 0=plastic 1=wood 2=metal 3=concrete 4=brick 5=cobble
+      //        6=rock   7=fabric 8=diamondplate 9=limestone 10=asphalt 11=tiles
+      vec4 matParams(int id) {
+        // rough, metallic, f0, sss
+        if (id ==  1) return vec4(0.78, 0.00, 0.04, 0.06); // wood
+        if (id ==  2) return vec4(0.22, 1.00, 0.72, 0.00); // metal
+        if (id ==  3) return vec4(0.90, 0.00, 0.03, 0.00); // concrete
+        if (id ==  4) return vec4(0.84, 0.00, 0.04, 0.02); // brick
+        if (id ==  5) return vec4(0.88, 0.00, 0.04, 0.00); // cobble
+        if (id ==  6) return vec4(0.91, 0.00, 0.03, 0.00); // rock
+        if (id ==  7) return vec4(0.97, 0.00, 0.02, 0.12); // fabric/cloth
+        if (id ==  8) return vec4(0.14, 1.00, 0.86, 0.00); // diamondplate
+        if (id ==  9) return vec4(0.82, 0.00, 0.05, 0.01); // limestone
+        if (id == 10) return vec4(0.96, 0.00, 0.02, 0.00); // asphalt
+        if (id == 11) return vec4(0.48, 0.00, 0.18, 0.00); // ceramic tiles
+        return vec4(0.68, 0.00, 0.05, 0.04);               // plastic
+      }
 
-        vec3 lit;
-        if (flag == 1) {
-          // Neon: emissive, barely affected by lighting, bright boost
-          vec3 emissive = baseRgb * 1.6;
-          float rim = pow(1.0 - abs(dot(n, keyDir)), 2.0) * 0.5;
-          lit = clamp(emissive + vec3(rim), 0.0, 1.0);
-        } else if (flag == 2) {
-          // Glass: diffuse lighting, slight env reflection on facing-away faces
-          vec3 diffuse = baseRgb * (ambient + vec3(key * 0.5 + fill));
-          float fresnel = pow(1.0 - max(dot(n, normalize(vec3(0.55,0.82,0.45))), 0.0), 3.0);
-          lit = mix(diffuse, vec3(0.82, 0.88, 0.95), fresnel * 0.35);
-          alpha = min(alpha, 0.62);
-        } else if (flag == 3) {
-          // Metal/DiamondPlate: stronger specular, slight environment tint
-          vec3 diffuse = baseRgb * (ambient * 0.7 + vec3(key * 0.9 + fill));
-          float spec = pow(max(dot(n, keyDir), 0.0), 18.0) * 0.55;
-          lit = diffuse + vec3(spec);
+      // ── Cook-Torrance BRDF helpers ───────────────────────────────────────────
+      // GGX NDF
+      float D_GGX(float ndh, float a2) {
+        float d = ndh*ndh*(a2-1.0)+1.0;
+        return a2 / (PI*d*d + 1e-5);
+      }
+      // Smith G1 Schlick-GGX
+      float G1_Schlick(float ndx, float k) {
+        return ndx / (ndx*(1.0-k)+k + 1e-5);
+      }
+      // Smith G correlated
+      float G_Smith(float ndv, float ndl, float rough) {
+        float k = (rough+1.0)*(rough+1.0)*0.125;
+        return G1_Schlick(ndv,k)*G1_Schlick(ndl,k);
+      }
+      // Schlick fresnel
+      vec3 F_Schlick(vec3 f0, float vdh) {
+        return f0 + (1.0-f0)*pow(1.0-vdh, 5.0);
+      }
+      // Full specular lobe
+      vec3 specularBRDF(float ndh, float ndl, float ndv, float vdh, float rough, vec3 f0) {
+        float a  = rough*rough;
+        float a2 = a*a;
+        float D  = D_GGX(ndh, a2);
+        float G  = G_Smith(ndv, ndl, rough);
+        vec3  F  = F_Schlick(f0, vdh);
+        return (D*G*F) / (4.0*ndv*ndl + 1e-5);
+      }
+
+      // ── IBL split-sum approximation ─────────────────────────────────────────
+      // Cheap env BRDF fit (Karis 2013)
+      vec2 envBRDF(float ndv, float rough) {
+        vec4 c0 = vec4(-1.0,-0.0275,-0.572, 0.022);
+        vec4 c1 = vec4( 1.0, 0.0425, 1.040,-0.040);
+        vec4 r  = rough*c0+c1;
+        float a004 = min(r.x*r.x, exp2(-9.28*ndv))*r.x+r.y;
+        return vec2(-1.04,1.04)*a004 + r.zw;
+      }
+      vec3 iblSpecular(vec3 f0, float rough, float ndv, vec3 envRef) {
+        vec2 brdf = envBRDF(ndv, rough);
+        return envRef * (f0*brdf.x + brdf.y);
+      }
+
+      // ── Procedural bump (FBM-based, per material) ───────────────────────────
+      // worldPos is in Roblox studs — normalize to ~1-unit scale before sampling.
+      // 1 stud ≈ 0.28m, typical part is 4 studs wide → use 0.25 as base scale.
+      vec3 proceduralBump(int matId, vec3 worldPos, vec3 baseNormal) {
+        if (uDetailQuality < 0.5) return baseNormal;
+        if (matId == 0) return baseNormal;
+        vec3 t, b;
+        tangentFrame(baseNormal, t, b);
+        // Scale world position to ~1 unit per stud for noise sampling
+        vec3 sp = worldPos * 0.25;
+        vec2 uv = vec2(dot(sp,t), dot(sp,b));
+        float h, h1, h2, eps, strength;
+
+        if (matId == 1) {
+          // Wood — plank grain
+          vec2 uvw = vec2(uv.x*0.7, uv.y*6.0);
+          float grain = valueNoise2(uvw)*0.6 + valueNoise2(uvw*2.1+3.3)*0.4;
+          float plank = smoothstep(0.90,1.0, abs(fract(uv.x*1.1+0.5)*2.0-1.0));
+          h = grain*0.7+plank*0.3; eps=0.06; strength=0.55;
+          h1 = valueNoise2(uvw+vec2(eps,0))*0.6+valueNoise2((uvw+vec2(eps,0))*2.1+3.3)*0.4 + smoothstep(0.90,1.0,abs(fract((uv.x+eps)*1.1+0.5)*2.0-1.0))*0.3;
+          h2 = valueNoise2(uvw+vec2(0,eps))*0.6+valueNoise2((uvw+vec2(0,eps))*2.1+3.3)*0.4 + plank*0.3;
+        } else if (matId == 2) {
+          // Metal — fine brushed scratch
+          vec2 uvw = uv * 8.0;
+          float scratch = valueNoise2(vec2(uvw.x*4.0,uvw.y*0.3))*0.7 + valueNoise2(uvw*1.5)*0.3;
+          h = scratch; eps=0.04; strength=0.18;
+          h1 = valueNoise2(vec2((uvw.x+eps)*4.0,uvw.y*0.3))*0.7+valueNoise2((uvw+vec2(eps,0))*1.5)*0.3;
+          h2 = valueNoise2(vec2(uvw.x*4.0,(uvw.y+eps)*0.3))*0.7+valueNoise2((uvw+vec2(0,eps))*1.5)*0.3;
+        } else if (matId == 3) {
+          // Concrete — coarse aggregate only (no cracks at stud scale)
+          vec2 uvw = uv * 1.8;
+          h = valueNoise2(uvw)*0.6+valueNoise2(uvw*2.8+1.3)*0.4; eps=0.05; strength=0.45;
+          h1 = valueNoise2(uvw+vec2(eps,0))*0.6+valueNoise2((uvw+vec2(eps,0))*2.8+1.3)*0.4;
+          h2 = valueNoise2(uvw+vec2(0,eps))*0.6+valueNoise2((uvw+vec2(0,eps))*2.8+1.3)*0.4;
+        } else if (matId == 4) {
+          // Brick — mortar joints
+          vec2 uvw = uv * 2.0;
+          float row = floor(uvw.y);
+          vec2 bk = vec2(fract(uvw.x+mod(row,2.0)*0.5), fract(uvw.y));
+          float mx = smoothstep(0.0,0.07,bk.x)*smoothstep(0.0,0.07,1.0-bk.x);
+          float my = smoothstep(0.0,0.06,bk.y)*smoothstep(0.0,0.06,1.0-bk.y);
+          float face = valueNoise2(bk*4.0+row)*0.28;
+          h = mx*my*(0.65+face); eps=0.04; strength=0.9;
+          float bx2=fract(uvw.x+mod(row,2.0)*0.5+eps);
+          float mx2=smoothstep(0.0,0.07,bx2)*smoothstep(0.0,0.07,1.0-bx2);
+          float by2=fract(uvw.y+eps);
+          float my2=smoothstep(0.0,0.06,by2)*smoothstep(0.0,0.06,1.0-by2);
+          h1=mx2*my*(0.65+face); h2=mx*my2*(0.65+face);
+        } else if (matId == 5) {
+          // Cobblestone — voronoi, smaller scale
+          vec2 uvw = uv * 1.4;
+          vec2 cell=floor(uvw); vec2 frc=fract(uvw);
+          float md=1.0;
+          for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){
+            vec2 nb=vec2(float(dx),float(dy));
+            vec2 jit=vec2(hash21(cell+nb),hash21(cell+nb+13.7));
+            md=min(md,length(frc-nb-jit));
+          }
+          h=1.0-smoothstep(0.0,0.42,md); eps=0.04; strength=0.75;
+          h1=1.0-smoothstep(0.0,0.42,md+valueNoise2((uvw+vec2(eps,0))*2.0)*0.06-0.03);
+          h2=1.0-smoothstep(0.0,0.42,md+valueNoise2((uvw+vec2(0,eps))*2.0)*0.06-0.03);
+        } else if (matId == 6) {
+          // Rock — 2-octave fracture
+          vec2 uvw = uv * 2.8;
+          h = valueNoise2(uvw)*0.55+valueNoise2(uvw*2.9+1.8)*0.45; eps=0.05; strength=0.7;
+          h1=valueNoise2(uvw+vec2(eps,0))*0.55+valueNoise2((uvw+vec2(eps,0))*2.9+1.8)*0.45;
+          h2=valueNoise2(uvw+vec2(0,eps))*0.55+valueNoise2((uvw+vec2(0,eps))*2.9+1.8)*0.45;
+        } else if (matId == 7) {
+          // Fabric — woven weave
+          vec2 uvw = uv * 10.0;
+          float wx=abs(sin(uvw.x*PI*4.0))*0.5; float wy=abs(sin(uvw.y*PI*4.0))*0.5;
+          h=wx*0.5+wy*0.5+valueNoise2(uvw*1.2)*0.12; eps=0.04; strength=0.35;
+          h1=abs(sin((uvw.x+eps)*PI*4.0))*0.25+wy*0.5;
+          h2=wx*0.5+abs(sin((uvw.y+eps)*PI*4.0))*0.25;
+        } else if (matId == 8) {
+          // Diamondplate — raised diamond tread
+          vec2 uvw = uv * 2.0;
+          float d1=abs(fract(uvw.x+uvw.y)-0.5)*2.0;
+          float d2=abs(fract(uvw.x-uvw.y)-0.5)*2.0;
+          h=pow(d1*d2,0.55); eps=0.03; strength=0.85;
+          h1=pow(abs(fract(uvw.x+eps+uvw.y)-0.5)*2.0*d2,0.55);
+          h2=pow(d1*abs(fract(uvw.x-uvw.y-eps)-0.5)*2.0,0.55);
+        } else if (matId == 9) {
+          // Limestone — strata
+          vec2 uvw = uv * 1.1;
+          float strata=sin(uvw.y*PI*3.0+valueNoise2(uvw*0.5)*1.8)*0.5+0.5;
+          h=strata*0.7+valueNoise2(uvw*2.2)*0.3; eps=0.05; strength=0.5;
+          h1=sin(uvw.y*PI*3.0+valueNoise2((uvw+vec2(eps,0))*0.5)*1.8)*0.35+0.5+valueNoise2((uvw+vec2(eps,0))*2.2)*0.3;
+          h2=sin((uvw.y+eps)*PI*3.0+valueNoise2((uvw+vec2(0,eps))*0.5)*1.8)*0.35+0.5+valueNoise2((uvw+vec2(0,eps))*2.2)*0.3;
+        } else if (matId == 10) {
+          // Asphalt — gritty
+          vec2 uvw = uv * 2.5;
+          h=valueNoise2(uvw)*0.55+valueNoise2(uvw*3.8+2.6)*0.45; eps=0.05; strength=0.38;
+          h1=valueNoise2(uvw+vec2(eps,0))*0.55+valueNoise2((uvw+vec2(eps,0))*3.8+2.6)*0.45;
+          h2=valueNoise2(uvw+vec2(0,eps))*0.55+valueNoise2((uvw+vec2(0,eps))*3.8+2.6)*0.45;
         } else {
-          // Normal plastic/smooth
-          lit = baseRgb * (ambient + vec3(key * 0.72 + fill));
+          // Ceramic tiles — grout lines
+          vec2 uvw = uv * 2.0;
+          float gx=smoothstep(0.0,0.05,fract(uvw.x))*smoothstep(0.0,0.05,1.0-fract(uvw.x));
+          float gy=smoothstep(0.0,0.05,fract(uvw.y))*smoothstep(0.0,0.05,1.0-fract(uvw.y));
+          h=gx*gy; eps=0.025; strength=0.55;
+          float gx2=smoothstep(0.0,0.05,fract(uvw.x+eps))*smoothstep(0.0,0.05,1.0-fract(uvw.x+eps));
+          float gy2=smoothstep(0.0,0.05,fract(uvw.y+eps))*smoothstep(0.0,0.05,1.0-fract(uvw.y+eps));
+          h1=gx2*gy; h2=gx*gy2;
+        }
+        float bx=(h-h1)*strength, by=(h-h2)*strength;
+        return normalize(baseNormal + t*bx + b*by);
+      }
+
+      // Per-material cavity AO from bump gradient
+      float bumpCavity(int matId, vec3 worldPos, vec3 baseNormal) {
+        if (uDetailQuality < 0.5 || matId == 0) return 1.0;
+        vec3 t, b; tangentFrame(baseNormal, t, b);
+        vec3 sp = worldPos * 0.25;
+        vec2 uv = vec2(dot(sp,t), dot(sp,b));
+        float h0, h1, h2;
+        if (matId==4) {
+          vec2 u=uv*2.0; float row=floor(u.y);
+          vec2 bk=vec2(fract(u.x+mod(row,2.0)*0.5),fract(u.y));
+          h0=smoothstep(0.0,0.07,bk.x)*smoothstep(0.0,0.07,1.0-bk.x)*smoothstep(0.0,0.06,bk.y)*smoothstep(0.0,0.06,1.0-bk.y);
+          vec2 bk2=vec2(fract(u.x+0.04+mod(row,2.0)*0.5),bk.y);
+          h1=smoothstep(0.0,0.07,bk2.x)*smoothstep(0.0,0.07,1.0-bk2.x)*h0/max(h0,0.01);
+          h2=h0; // symmetric cavity
+        } else if (matId==5) {
+          vec2 u=uv*1.4; h0=valueNoise2(u); h1=valueNoise2(u+vec2(0.04,0)); h2=valueNoise2(u+vec2(0,0.04));
+        } else if (matId==3) {
+          vec2 u=uv*1.8; h0=valueNoise2(u); h1=valueNoise2(u+vec2(0.05,0)); h2=valueNoise2(u+vec2(0,0.05));
+        } else { return 1.0; }
+        float bx=h0-h1, by=h0-h2;
+        return clamp(1.0-(bx*bx+by*by)*4.0, 0.4, 1.0);
+      }
+
+      // ── ACES filmic tonemapping ──────────────────────────────────────────────
+      vec3 acesTonemap(vec3 x) {
+        // Narkowicz 2015, ACES approximation
+        float a=2.51, b=0.03, c=2.43, d=0.59, e=0.14;
+        return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+      }
+
+      // ── Post-processing ──────────────────────────────────────────────────────
+      vec3 applyPost(vec3 color) {
+        // Exposure
+        color *= uExposure;
+        // Saturation
+        float lum = dot(color, vec3(0.2126,0.7152,0.0722));
+        color = mix(vec3(lum), color, clamp(1.0+uSaturation, 0.0, 2.5));
+        // Contrast (S-curve via shadows lift)
+        color = max(color+vec3(uAmbientLift), vec3(uShadowLift));
+        color = (color-0.5)*(1.0+uContrast)+0.5;
+        // Tint
+        color *= uTint;
+        // Bloom highlight glow
+        float glow = max(max(color.r,color.g),color.b);
+        float bloom = max(glow-0.72,0.0)*uBloom;
+        color += color*bloom*0.22 + vec3(bloom*0.055);
+        // ACES filmic tonemap — no pre-scale crush
+        color = acesTonemap(color);
+        return max(color, vec3(0.0));
+      }
+
+      // ── Point/spot/surface lights ────────────────────────────────────────────
+      vec3 dynamicLights(vec3 worldPos, vec3 n, vec3 viewDir, float rough, vec3 f0) {
+        vec3 total = vec3(0.0);
+        for (int i = 0; i < ${lightCapacity}; i++) {
+          if (i >= uLightCount) continue;
+          vec3 delta = uLightPos[i] - worldPos;
+          float dist = length(delta);
+          if (dist < 0.001) continue;
+          vec3 toLight = delta / dist;
+          float atten = clamp(1.0 - dist/max(uLightRange[i],0.001), 0.0, 1.0);
+          atten *= atten; // inverse square falloff
+          float emission = 1.0;
+          if (uLightKind[i] > 0.5 && uLightKind[i] < 1.5) {
+            float cone = dot(normalize(uLightDir[i]), -toLight);
+            float softCone = smoothstep(max(-1.0,uLightConeCos[i]-0.24), min(1.0,uLightConeCos[i]+0.18), cone);
+            emission = mix(0.28, 1.0, softCone);
+          } else if (uLightKind[i] > 1.5) {
+            emission = pow(max(dot(normalize(uLightDir[i]), -toLight), 0.0), 0.65);
+          }
+          float ndl = max(dot(n, toLight), 0.0);
+          if (ndl < 0.001 || atten < 0.001) continue;
+          vec3 h2 = normalize(toLight + viewDir);
+          float ndh = max(dot(n,h2),0.0);
+          float ndv = max(dot(n,viewDir),0.001);
+          float vdh = max(dot(viewDir,h2),0.0);
+          vec3 spec = specularBRDF(ndh, ndl, ndv, vdh, rough, f0);
+          vec3 kd = (1.0 - F_Schlick(f0, vdh)) / PI;
+          total += uLightColor[i] * atten * emission * ndl * (kd + spec) * 1.55;
+        }
+        return total;
+      }
+
+      // ── 3-D micro-noise for albedo variation ─────────────────────────────────
+      // Scale by 0.025 so 1 noise unit = 40 studs — just subtle surface variation, no blotches
+      float microNoise(vec3 p) {
+        vec3 sp = p * 0.025;
+        return valueNoise3(sp*3.7)*0.55 + valueNoise3(sp*8.9+1.3)*0.30 + valueNoise3(sp*22.1+4.7)*0.15;
+      }
+
+      void main() {
+        if (vUnlit > 0.5) { gl_FragColor = vColor; return; }
+
+        int matId = int(vMatId + 0.5);
+        vec4 mp   = matParams(matId);
+        float rough    = mp.x;
+        float metallic = mp.y;
+        float f0scalar = mp.z;
+        float sssStr   = mp.w;
+
+        // Shading vectors
+        vec3 geoN   = normalize(vNormal);
+        // Roblox-style fallback materials should stay honest when we do not have real
+        // normal/roughness maps. Do not invent noisy fake normals or cavity masks.
+        vec3 n      = geoN;
+        float cavAO = 1.0;
+        vec3 viewDir = normalize(-vWorld);
+        vec3 sunDir  = normalize(uSunDir);
+        vec3 halfDir = normalize(sunDir + viewDir);
+
+        float ndl = max(dot(n, sunDir), 0.0);
+        float ndh = max(dot(n, halfDir), 0.0);
+        float ndv = clamp(dot(n, viewDir), 0.001, 1.0);
+        float vdh = max(dot(viewDir, halfDir), 0.0);
+
+        // Geometry AO from normal perturbation — keep subtle, don't over-darken
+        float geoAO = clamp(dot(n, geoN)*0.6+0.4, 0.0, 1.0);
+        float ao = min(geoAO, cavAO);
+
+        // Base albedo — use the authored color as-is unless a real texture path overrides it.
+        vec3 baseRgb = pow(max(vColor.rgb, vec3(0.0)), vec3(2.2));
+
+        // PBR f0
+        vec3 f0 = mix(vec3(f0scalar), baseRgb, metallic);
+        vec3 diffAlbedo = baseRgb * (1.0 - metallic);
+
+        // ── Sun direct ──────────────────────────────────────────────────────────
+        float wrapNdl = clamp((ndl + 0.25)/1.25, 0.0, 1.0);
+        vec3 sunSpec  = specularBRDF(ndh, max(ndl,0.001), ndv, vdh, rough, f0) * ndl * uSunStrength;
+        // Diffuse: Lambertian — skip /PI so colours stay perceptually bright
+        vec3 kd       = (vec3(1.0) - F_Schlick(f0, vdh)) * (1.0 - metallic);
+        vec3 sunDiff  = kd * diffAlbedo * wrapNdl * uSunStrength;
+        vec3 sunLight = (sunDiff + sunSpec) * uSunColor;
+
+        // ── Hemisphere ambient IBL ───────────────────────────────────────────────
+        float hemi   = n.y * 0.5 + 0.5;
+        vec3 sky     = uSkyColor;
+        vec3 ground  = uGroundColor;
+        // Boosted ambient — makes shaded sides readable and gives the "bouncy" feel
+        vec3 envDiff = mix(ground * 0.9, sky * 1.08, hemi) * 0.50 + vec3(0.13);
+        envDiff     += uLocalAmbient * (0.8 + hemi * 0.2);
+        envDiff     *= ao;
+
+        // ── Specular IBL ────────────────────────────────────────────────────────
+        vec3 refl        = reflect(-viewDir, n);
+        float refHemi    = clamp(refl.y*0.5+0.5, 0.0, 1.0);
+        vec3 envRef      = mix(ground * 1.1, sky * 1.2, refHemi);
+        vec3 envRefBlur  = mix(ground, sky, 0.5) * 0.9 + vec3(0.08);
+        vec3 envSample   = mix(envRef, envRefBlur, rough*rough);
+        vec3 iblSpec     = iblSpecular(f0, rough, ndv, envSample) * ao;
+
+        // ── Multi-directional fill lights (simulate GI bounce) ───────────────────
+        // Side sky fill
+        vec3 fillDir  = normalize(vec3(-0.55, 0.30, -0.50));
+        float fillNdl = max(dot(n, fillDir), 0.0);
+        vec3 skyFill  = sky * fillNdl * diffAlbedo * 0.20;
+        // Opposite fill (back fill from sky rim)
+        vec3 fill2Dir = normalize(vec3(0.60, 0.20, 0.55));
+        float fill2   = max(dot(n, fill2Dir), 0.0);
+        vec3 skyFill2 = sky * fill2 * diffAlbedo * 0.10;
+        // Ground bounce — upward facing ground light
+        vec3 bounceDir = vec3(0.0, 1.0, 0.0); // straight up ground reflect
+        float bounceNdl = max(dot(-n, bounceDir), 0.0); // hits downward-facing surfaces
+        vec3 bounce = ground * bounceNdl * diffAlbedo * 0.28;
+        // Back-side bounce so nothing goes fully black
+        float backFill = clamp(1.0 - ndl, 0.0, 1.0) * 0.18;
+        vec3 backLight = diffAlbedo * (sky * 0.30 + ground * 0.28) * backFill;
+
+        // ── Diffuse ambient total ────────────────────────────────────────────────
+        vec3 ambientDiff = diffAlbedo * envDiff;
+
+        // ── Subsurface scattering ────────────────────────────────────────────────
+        vec3 sss = vec3(0.0);
+        if (sssStr > 0.001) {
+          float backL   = max(dot(-n, sunDir)*0.5+0.5, 0.0);
+          float thickness = clamp(1.0 - microNoise(vPosition*0.8)*0.5, 0.25, 1.0);
+          sss = baseRgb * uSunColor * backL * thickness * sssStr * uSunStrength * 0.55;
         }
 
-        // Gamma encode
-        lit = pow(clamp(lit, 0.0, 1.0), vec3(1.0 / 2.2));
+        // ── Dynamic point/spot lights ────────────────────────────────────────────
+        vec3 localLights = dynamicLights(vPosition, n, viewDir, rough, f0);
+
+        float alpha = vColor.a;
+        int flag = int(vFlag + 0.5);
+        vec3 lit;
+
+        if (flag == 1) {
+          // Neon — emissive
+          float emRim = pow(1.0 - abs(dot(n, sunDir)), 2.8) * 0.5;
+          lit = baseRgb * 2.2 + vec3(emRim * 0.4) + baseRgb * localLights * 0.5;
+          lit = clamp(lit, 0.0, 4.0);
+        } else if (flag == 2) {
+          // Water / glass
+          vec3 diffuse  = diffAlbedo * (envDiff + sunDiff*0.45 + skyFill + bounce + localLights);
+          float wF      = pow(1.0 - max(dot(n, sunDir), 0.0), 3.0);
+          vec3 spec2    = specularBRDF(ndh, max(ndl,0.001), ndv, vdh, 0.04, f0) * ndl * uSunStrength * uSunColor;
+          lit = mix(diffuse, iblSpec + envSample*0.15, wF*0.55) + spec2*0.9 + localLights*diffAlbedo;
+          alpha = min(alpha, 0.58);
+        } else if (flag == 3) {
+          // Metal
+          lit = iblSpec + sunLight + localLights + skyFill*0.3;
+        } else {
+          // Standard PBR
+          lit = ambientDiff + iblSpec + sunLight + skyFill + skyFill2 + bounce + backLight + sss + localLights;
+        }
+
+        lit = applyPost(lit);
+        lit = pow(clamp(lit, 0.0, 1.0), vec3(1.0/2.2));
         gl_FragColor = vec4(lit, alpha);
       }
     `,
@@ -3916,8 +5835,275 @@ const dataTree = (() => {
       aNormal: gl.getAttribLocation(program, 'aNormal'),
       aColor: gl.getAttribLocation(program, 'aColor'),
       aFlag: gl.getAttribLocation(program, 'aFlag'),
+      aMatId: gl.getAttribLocation(program, 'aMatId'),
       uMvp: gl.getUniformLocation(program, 'uMvp'),
       uUnlit: gl.getUniformLocation(program, 'uUnlit'),
+      uCamOffset: gl.getUniformLocation(program, 'uCamOffset'),
+      uCameraPos: gl.getUniformLocation(program, 'uCameraPos'),
+      uTint: gl.getUniformLocation(program, 'uTint'),
+      uExposure: gl.getUniformLocation(program, 'uExposure'),
+      uContrast: gl.getUniformLocation(program, 'uContrast'),
+      uSaturation: gl.getUniformLocation(program, 'uSaturation'),
+      uAmbientLift: gl.getUniformLocation(program, 'uAmbientLift'),
+      uShadowLift: gl.getUniformLocation(program, 'uShadowLift'),
+      uBloom: gl.getUniformLocation(program, 'uBloom'),
+      uDetailQuality: gl.getUniformLocation(program, 'uDetailQuality'),
+      uPerformanceMode: gl.getUniformLocation(program, 'uPerformanceMode'),
+      uSkyColor: gl.getUniformLocation(program, 'uSkyColor'),
+      uGroundColor: gl.getUniformLocation(program, 'uGroundColor'),
+      uLocalAmbient: gl.getUniformLocation(program, 'uLocalAmbient'),
+      uSunDir: gl.getUniformLocation(program, 'uSunDir'),
+      uSunColor: gl.getUniformLocation(program, 'uSunColor'),
+      uSunStrength: gl.getUniformLocation(program, 'uSunStrength'),
+      uLightCount: gl.getUniformLocation(program, 'uLightCount'),
+      uLightPos: gl.getUniformLocation(program, 'uLightPos[0]'),
+      uLightColor: gl.getUniformLocation(program, 'uLightColor[0]'),
+      uLightRange: gl.getUniformLocation(program, 'uLightRange[0]'),
+      uLightDir: gl.getUniformLocation(program, 'uLightDir[0]'),
+      uLightKind: gl.getUniformLocation(program, 'uLightKind[0]'),
+      uLightConeCos: gl.getUniformLocation(program, 'uLightConeCos[0]'),
+      lightCapacity,
+    };
+  }
+
+  function _createTextureViewportProgram(gl) {
+    const lightCapacity = _viewportLightCapacity(gl);
+    const vertex = _compileShader(
+      gl,
+      gl.VERTEX_SHADER,
+      `
+      attribute vec3 aPosition;
+      attribute vec3 aNormal;
+      attribute vec4 aColor;
+      attribute vec2 aUv;
+      attribute float aFlag;
+      uniform mat4 uMvp;
+      uniform vec3 uCamOffset;
+      varying vec4 vColor;
+      varying vec3 vNormal;
+      varying vec3 vWorld;
+      varying vec3 vPosition;
+      varying vec2 vUv;
+      varying float vFlag;
+      void main() {
+        vColor = aColor;
+        vNormal = aNormal;
+        vWorld = aPosition - uCamOffset;
+        vPosition = aPosition;
+        vUv = aUv;
+        vFlag = aFlag;
+        gl_Position = uMvp * vec4(aPosition, 1.0);
+      }
+    `,
+    );
+    const fragment = _compileShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      `
+      precision highp float;
+      uniform sampler2D uTexture;
+      varying vec4 vColor;
+      varying vec3 vNormal;
+      varying vec3 vWorld;
+      varying vec3 vPosition;
+      varying vec2 vUv;
+      varying float vFlag;
+      uniform vec3  uCameraPos;
+      uniform vec3  uTint;
+      uniform float uExposure;
+      uniform float uContrast;
+      uniform float uSaturation;
+      uniform float uAmbientLift;
+      uniform float uShadowLift;
+      uniform float uBloom;
+      uniform float uPerformanceMode;
+      uniform vec3  uSkyColor;
+      uniform vec3  uGroundColor;
+      uniform vec3  uLocalAmbient;
+      uniform vec3  uSunDir;
+      uniform vec3  uSunColor;
+      uniform float uSunStrength;
+      uniform int   uLightCount;
+      uniform vec3  uLightPos[${lightCapacity}];
+      uniform vec3  uLightColor[${lightCapacity}];
+      uniform float uLightRange[${lightCapacity}];
+      uniform vec3  uLightDir[${lightCapacity}];
+      uniform float uLightKind[${lightCapacity}];
+      uniform float uLightConeCos[${lightCapacity}];
+
+      const float PI = 3.14159265359;
+
+      float D_GGX(float ndh, float a2) {
+        float d = ndh*ndh*(a2-1.0)+1.0;
+        return a2/(PI*d*d+1e-5);
+      }
+      float G1s(float ndx, float k){ return ndx/(ndx*(1.0-k)+k+1e-5); }
+      float G_Smith(float ndv, float ndl, float r) {
+        float k=(r+1.0)*(r+1.0)*0.125;
+        return G1s(ndv,k)*G1s(ndl,k);
+      }
+      vec3 F_Schlick(vec3 f0, float vdh){ return f0+(1.0-f0)*pow(1.0-vdh,5.0); }
+      vec3 specBRDF(float ndh,float ndl,float ndv,float vdh,float r,vec3 f0){
+        float a=r*r; float a2=a*a;
+        return (D_GGX(ndh,a2)*G_Smith(ndv,ndl,r)*F_Schlick(f0,vdh))/(4.0*ndv*ndl+1e-5);
+      }
+      vec2 envBRDF(float ndv, float r) {
+        vec4 c0=vec4(-1,-0.0275,-0.572,0.022), c1=vec4(1,0.0425,1.04,-0.04);
+        vec4 rv=r*c0+c1;
+        float a004=min(rv.x*rv.x,exp2(-9.28*ndv))*rv.x+rv.y;
+        return vec2(-1.04,1.04)*a004+rv.zw;
+      }
+      vec3 acesTonemap(vec3 x){
+        return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0);
+      }
+      vec3 applyPost(vec3 color) {
+        color *= uExposure;
+        float lum = dot(color, vec3(0.2126,0.7152,0.0722));
+        color = mix(vec3(lum), color, clamp(1.0+uSaturation,0.0,2.5));
+        color = max(color+vec3(uAmbientLift), vec3(uShadowLift));
+        color = (color-0.5)*(1.0+uContrast)+0.5;
+        color *= uTint;
+        float glow=max(max(color.r,color.g),color.b);
+        float bloom=max(glow-0.72,0.0)*uBloom;
+        color += color*bloom*0.22+vec3(bloom*0.055);
+        return max(acesTonemap(color), vec3(0.0));
+      }
+      vec3 dynamicLights(vec3 worldPos, vec3 n, vec3 viewDir, float rough, vec3 f0) {
+        vec3 total=vec3(0.0);
+        for(int i=0;i<${lightCapacity};i++){
+          if(i>=uLightCount) continue;
+          vec3 delta=uLightPos[i]-worldPos;
+          float dist=length(delta); if(dist<0.001) continue;
+          vec3 toL=delta/dist;
+          float atten=clamp(1.0-dist/max(uLightRange[i],0.001),0.0,1.0); atten*=atten;
+          float em=1.0;
+          if(uLightKind[i]>0.5&&uLightKind[i]<1.5){
+            float cone=dot(normalize(uLightDir[i]),-toL);
+            float softCone=smoothstep(max(-1.0,uLightConeCos[i]-0.24),min(1.0,uLightConeCos[i]+0.18),cone);
+            em=mix(0.28,1.0,softCone);
+          } else if(uLightKind[i]>1.5){
+            em=pow(max(dot(normalize(uLightDir[i]),-toL),0.0),0.65);
+          }
+          float ndl=max(dot(n,toL),0.0); if(ndl<0.001||atten<0.001) continue;
+          vec3 h2=normalize(toL+viewDir);
+          float ndh=max(dot(n,h2),0.0), ndv2=max(dot(n,viewDir),0.001), vdh=max(dot(viewDir,h2),0.0);
+          vec3 spec=specBRDF(ndh,ndl,ndv2,vdh,rough,f0);
+          vec3 kd=(1.0-F_Schlick(f0,vdh))/PI;
+          total+=uLightColor[i]*atten*em*ndl*(kd+spec)*1.55;
+        }
+        return total;
+      }
+      void main() {
+        vec4 tex = texture2D(uTexture, fract(vUv));
+        if (tex.a < 0.03) discard;
+        vec3 n = normalize(vNormal);
+        vec3 viewDir = normalize(-vWorld);
+        vec3 sunDir  = normalize(uSunDir);
+        vec3 halfDir = normalize(sunDir+viewDir);
+        float ndl = max(dot(n,sunDir),0.0);
+        float ndh = max(dot(n,halfDir),0.0);
+        float ndv = clamp(dot(n,viewDir),0.001,1.0);
+        float vdh = max(dot(viewDir,halfDir),0.0);
+        float hemi = n.y*0.5+0.5;
+        vec3 sky=uSkyColor, ground=uGroundColor;
+
+        // Textured surfaces default to rough dielectric plastic (rough=0.7, f0=0.04)
+        float rough=0.70;
+        vec3 f0=vec3(0.04);
+
+        vec3 texRgb = pow(max(tex.rgb,vec3(0.0)),vec3(2.2));
+        texRgb *= pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
+        float alpha = tex.a*vColor.a;
+        int flag = int(vFlag+0.5);
+
+        // Ambient IBL
+        vec3 envDiff = mix(ground,sky,hemi)*0.24+vec3(0.08)+uLocalAmbient*(0.65+hemi*0.12);
+        vec3 refl = reflect(-viewDir,n);
+        vec3 envRef = mix(ground,sky,clamp(refl.y*0.5+0.5,0.0,1.0));
+        vec2 brdf = envBRDF(ndv,rough);
+        vec3 iblSpec = envRef*(f0*brdf.x+brdf.y);
+
+        // Sun direct
+        float wrapNdl=clamp((ndl+0.18)/1.18,0.0,1.0);
+        vec3 kd=(vec3(1.0)-F_Schlick(f0,vdh));
+        vec3 sunDiff=kd*texRgb/PI*wrapNdl*uSunStrength;
+        vec3 sunSpec=specBRDF(ndh,max(ndl,0.001),ndv,vdh,rough,f0)*ndl*uSunStrength;
+        vec3 sunLight=(sunDiff+sunSpec)*uSunColor;
+
+        vec3 fillDir=normalize(vec3(-0.55,0.25,-0.50));
+        vec3 skyFill=sky*max(dot(n,fillDir),0.0)*0.13*texRgb;
+        vec3 bounce=ground*max(dot(n,normalize(vec3(-0.28,0.50,0.82))),0.0)*0.12*texRgb;
+        vec3 localLights=dynamicLights(vPosition,n,viewDir,rough,f0);
+
+        vec3 lit;
+        if(flag==1){
+          lit=texRgb*1.8+localLights*texRgb*0.4;
+          lit=clamp(lit,0.0,4.0);
+        } else if(flag==2){
+          vec3 diffuse=texRgb*(envDiff+sunDiff*0.4+skyFill+bounce+localLights);
+          float wF=pow(1.0-max(dot(n,sunDir),0.0),3.0);
+          vec3 sp=specBRDF(ndh,max(ndl,0.001),ndv,vdh,0.04,f0)*ndl*uSunStrength*uSunColor;
+          lit=mix(diffuse,iblSpec+envRef*0.08,wF*0.55)+sp*0.8+localLights*texRgb;
+          alpha=min(alpha,0.58);
+        } else if(flag==3){
+          vec3 mf0=texRgb;
+          vec3 mSpec=specBRDF(ndh,max(ndl,0.001),ndv,vdh,0.18,mf0)*ndl*uSunStrength*uSunColor;
+          vec2 mb=envBRDF(ndv,0.18);
+          vec3 mIbl=envRef*(mf0*mb.x+mb.y);
+          lit=mIbl+mSpec+localLights;
+        } else {
+          lit=texRgb*envDiff+iblSpec+sunLight+skyFill+bounce+localLights;
+        }
+        lit=applyPost(lit);
+        lit=pow(clamp(lit,0.0,1.0),vec3(1.0/2.2));
+        gl_FragColor=vec4(lit,alpha);
+      }
+    `,
+    );
+    if (!vertex || !fragment) return null;
+    const program = gl.createProgram();
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      gl.deleteProgram(program);
+      return null;
+    }
+    return {
+      program,
+      aPosition: gl.getAttribLocation(program, 'aPosition'),
+      aNormal: gl.getAttribLocation(program, 'aNormal'),
+      aColor: gl.getAttribLocation(program, 'aColor'),
+      aUv: gl.getAttribLocation(program, 'aUv'),
+      aFlag: gl.getAttribLocation(program, 'aFlag'),
+      uMvp: gl.getUniformLocation(program, 'uMvp'),
+      uTexture: gl.getUniformLocation(program, 'uTexture'),
+      uCamOffset: gl.getUniformLocation(program, 'uCamOffset'),
+      uCameraPos: gl.getUniformLocation(program, 'uCameraPos'),
+      uTint: gl.getUniformLocation(program, 'uTint'),
+      uExposure: gl.getUniformLocation(program, 'uExposure'),
+      uContrast: gl.getUniformLocation(program, 'uContrast'),
+      uSaturation: gl.getUniformLocation(program, 'uSaturation'),
+      uAmbientLift: gl.getUniformLocation(program, 'uAmbientLift'),
+      uShadowLift: gl.getUniformLocation(program, 'uShadowLift'),
+      uBloom: gl.getUniformLocation(program, 'uBloom'),
+      uPerformanceMode: gl.getUniformLocation(program, 'uPerformanceMode'),
+      uSkyColor: gl.getUniformLocation(program, 'uSkyColor'),
+      uGroundColor: gl.getUniformLocation(program, 'uGroundColor'),
+      uLocalAmbient: gl.getUniformLocation(program, 'uLocalAmbient'),
+      uSunDir: gl.getUniformLocation(program, 'uSunDir'),
+      uSunColor: gl.getUniformLocation(program, 'uSunColor'),
+      uSunStrength: gl.getUniformLocation(program, 'uSunStrength'),
+      uLightCount: gl.getUniformLocation(program, 'uLightCount'),
+      uLightPos: gl.getUniformLocation(program, 'uLightPos[0]'),
+      uLightColor: gl.getUniformLocation(program, 'uLightColor[0]'),
+      uLightRange: gl.getUniformLocation(program, 'uLightRange[0]'),
+      uLightDir: gl.getUniformLocation(program, 'uLightDir[0]'),
+      uLightKind: gl.getUniformLocation(program, 'uLightKind[0]'),
+      uLightConeCos: gl.getUniformLocation(program, 'uLightConeCos[0]'),
+      lightCapacity,
     };
   }
 
@@ -3932,7 +6118,7 @@ const dataTree = (() => {
     return shader;
   }
 
-  function _createViewportBuffers(gl, scene, program) {
+  function _createViewportBuffers(gl, scene, program, onTextureReady = null) {
     const flatFlags = new Float32Array(scene.guide.vertexCount);
     return {
       mesh: _createVertexBuffer(
@@ -3942,6 +6128,7 @@ const dataTree = (() => {
         scene.mesh.colors,
         scene.mesh.flags || new Float32Array(scene.mesh.vertexCount),
         scene.mesh.vertexCount,
+        scene.mesh.matIds || null,
       ),
       guide: _createVertexBuffer(
         gl,
@@ -3950,12 +6137,16 @@ const dataTree = (() => {
         scene.guide.colors,
         flatFlags,
         scene.guide.vertexCount,
+        null,
       ),
+      textured: (scene.mesh.textured || [])
+        .filter((group) => group.vertexCount > 0)
+        .map((group) => _createTexturedVertexBuffer(gl, group, onTextureReady)),
     };
   }
 
-  function _createVertexBuffer(gl, positions, normals, colors, flags, vertexCount) {
-    const stride = 11;
+  function _createVertexBuffer(gl, positions, normals, colors, flags, vertexCount, matIds) {
+    const stride = 12;
     const data = new Float32Array(vertexCount * stride);
     for (let i = 0; i < vertexCount; i += 1) {
       const base = i * stride;
@@ -3970,6 +6161,7 @@ const dataTree = (() => {
       data[base + 8] = colors[i * 4 + 2];
       data[base + 9] = colors[i * 4 + 3];
       data[base + 10] = flags ? flags[i] || 0 : 0;
+      data[base + 11] = matIds ? matIds[i] || 0 : 0;
     }
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -3989,6 +6181,127 @@ const dataTree = (() => {
       gl.enableVertexAttribArray(program.aFlag);
       gl.vertexAttribPointer(program.aFlag, 1, gl.FLOAT, false, buffer.stride, 40);
     }
+    if (program.aMatId >= 0) {
+      gl.enableVertexAttribArray(program.aMatId);
+      gl.vertexAttribPointer(program.aMatId, 1, gl.FLOAT, false, buffer.stride, 44);
+    }
+  }
+
+  function _createTexturedVertexBuffer(gl, group, onTextureReady = null) {
+    const stride = 13;
+    const data = new Float32Array(group.vertexCount * stride);
+    for (let i = 0; i < group.vertexCount; i += 1) {
+      const base = i * stride;
+      data[base] = group.positions[i * 3];
+      data[base + 1] = group.positions[i * 3 + 1];
+      data[base + 2] = group.positions[i * 3 + 2];
+      data[base + 3] = group.normals[i * 3];
+      data[base + 4] = group.normals[i * 3 + 1];
+      data[base + 5] = group.normals[i * 3 + 2];
+      data[base + 6] = group.colors[i * 4];
+      data[base + 7] = group.colors[i * 4 + 1];
+      data[base + 8] = group.colors[i * 4 + 2];
+      data[base + 9] = group.colors[i * 4 + 3];
+      data[base + 10] = group.uvs[i * 2];
+      data[base + 11] = group.uvs[i * 2 + 1];
+      data[base + 12] = group.flags ? group.flags[i] || 0 : 0;
+    }
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    return {
+      buffer,
+      vertexCount: group.vertexCount,
+      stride: stride * 4,
+      texture: _createGlTexture(gl, group.texture, onTextureReady),
+      textureInfo: group.texture,
+    };
+  }
+
+  function _bindTexturedViewportBuffer(gl, program, buffer) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer.buffer);
+    gl.enableVertexAttribArray(program.aPosition);
+    gl.vertexAttribPointer(program.aPosition, 3, gl.FLOAT, false, buffer.stride, 0);
+    gl.enableVertexAttribArray(program.aNormal);
+    gl.vertexAttribPointer(program.aNormal, 3, gl.FLOAT, false, buffer.stride, 12);
+    gl.enableVertexAttribArray(program.aColor);
+    gl.vertexAttribPointer(program.aColor, 4, gl.FLOAT, false, buffer.stride, 24);
+    gl.enableVertexAttribArray(program.aUv);
+    gl.vertexAttribPointer(program.aUv, 2, gl.FLOAT, false, buffer.stride, 40);
+    if (program.aFlag >= 0) {
+      gl.enableVertexAttribArray(program.aFlag);
+      gl.vertexAttribPointer(program.aFlag, 1, gl.FLOAT, false, buffer.stride, 48);
+    }
+  }
+
+  function _createGlTexture(gl, textureInfo, onTextureReady = null) {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    const anisotropyExt =
+      gl.getExtension('EXT_texture_filter_anisotropic') ||
+      gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic') ||
+      gl.getExtension('MOZ_EXT_texture_filter_anisotropic');
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      1,
+      1,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array([255, 255, 255, 255]),
+    );
+    _textureUrl(textureInfo)
+      .then((url) => _loadImage(url))
+      .then((image) => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        if (_isPowerOf2(image.width) && _isPowerOf2(image.height)) {
+          gl.generateMipmap(gl.TEXTURE_2D);
+        } else {
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        }
+        if (anisotropyExt) {
+          const maxAnisotropy = gl.getParameter(anisotropyExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1;
+          gl.texParameterf(
+            gl.TEXTURE_2D,
+            anisotropyExt.TEXTURE_MAX_ANISOTROPY_EXT,
+            Math.min(8, maxAnisotropy),
+          );
+        }
+        onTextureReady?.();
+      })
+      .catch((err) => _log.warn(`Texture load failed ${textureInfo?.key || ''}: ${_errMsg(err)}`));
+    return texture;
+  }
+
+  async function _textureUrl(textureInfo) {
+    if (textureInfo?.localUrl) return textureInfo.localUrl;
+    if (textureInfo?.id) return (await _fetchAssetBlob(textureInfo.id, 'image')) || '';
+    return '';
+  }
+
+  function _loadImage(url) {
+    return new Promise((resolve, reject) => {
+      if (!url) return reject(new Error('Missing texture URL'));
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Image decode failed'));
+      image.src = url;
+    });
+  }
+
+  function _isPowerOf2(value) {
+    return value > 0 && (value & (value - 1)) === 0;
   }
 
   function _flatNormals(vertexCount) {
@@ -4009,56 +6322,7 @@ const dataTree = (() => {
     const near = Math.max(0.05, scene.extent / 2000);
     const far = Math.max(1000, scene.extent * 120);
     const projection = _mat4Perspective(Math.PI / 3, Math.max(0.1, aspect), near, far);
-    return { mvp: _mat4Multiply(projection, view), eye };
-  }
-
-  function _mat4Perspective(fovy, aspect, near, far) {
-    const f = 1 / Math.tan(fovy / 2);
-    const out = new Float32Array(16);
-    out[0] = f / aspect;
-    out[5] = f;
-    out[10] = (far + near) / (near - far);
-    out[11] = -1;
-    out[14] = (2 * far * near) / (near - far);
-    return out;
-  }
-
-  function _mat4LookAt(eye, center, up) {
-    const z = _norm(_sub(eye, center));
-    const x = _norm(_cross(up, z));
-    const y = _cross(z, x);
-    const out = new Float32Array(16);
-    out[0] = x[0];
-    out[1] = y[0];
-    out[2] = z[0];
-    out[3] = 0;
-    out[4] = x[1];
-    out[5] = y[1];
-    out[6] = z[1];
-    out[7] = 0;
-    out[8] = x[2];
-    out[9] = y[2];
-    out[10] = z[2];
-    out[11] = 0;
-    out[12] = -_dot(x, eye);
-    out[13] = -_dot(y, eye);
-    out[14] = -_dot(z, eye);
-    out[15] = 1;
-    return out;
-  }
-
-  function _mat4Multiply(a, b) {
-    const out = new Float32Array(16);
-    for (let col = 0; col < 4; col += 1) {
-      for (let row = 0; row < 4; row += 1) {
-        out[col * 4 + row] =
-          a[row] * b[col * 4] +
-          a[4 + row] * b[col * 4 + 1] +
-          a[8 + row] * b[col * 4 + 2] +
-          a[12 + row] * b[col * 4 + 3];
-      }
-    }
-    return out;
+    return { mvp: _mat4Multiply(projection, view), eye, near, far };
   }
 
   function _niceGridStep(value) {
@@ -4068,23 +6332,6 @@ const dataTree = (() => {
     if (scaled <= 2) return power * 2;
     if (scaled <= 5) return power * 5;
     return power * 10;
-  }
-
-  function _sub(a, b) {
-    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-  }
-
-  function _cross(a, b) {
-    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  }
-
-  function _dot(a, b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  }
-
-  function _norm(vector) {
-    const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
-    return [vector[0] / length, vector[1] / length, vector[2] / length];
   }
 
   function _scriptPanel(node) {
@@ -4116,6 +6363,17 @@ const dataTree = (() => {
       button.addEventListener('click', () =>
         _downloadAsset(assets[Number(button.dataset.downloadAsset)], button),
       );
+    });
+
+    wrap.querySelectorAll('[data-local-image]').forEach((frame) => {
+      const src = frame.dataset.localImage;
+      if (!src) return;
+      const img = document.createElement('img');
+      img.className = 'dt-asset-image';
+      img.decoding = 'async';
+      img.alt = '';
+      img.src = src;
+      frame.replaceChildren(img);
     });
 
     wrap.querySelectorAll('[data-fetch-image]').forEach((frame) => {
@@ -4168,6 +6426,7 @@ const dataTree = (() => {
       requestAnimationFrame(() =>
         _mountViewport(stage.querySelector('.dt-viewport-canvas'), _sceneFromParsedMesh(mesh)),
       );
+      button.disabled = false;
       button.textContent = 'Mesh loaded';
     } catch (err) {
       button.disabled = false;
@@ -4281,7 +6540,6 @@ const dataTree = (() => {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 6000);
         _log.info(`Downloaded ${filename}`);
         button.textContent = '✓';
         setTimeout(() => {
@@ -4315,11 +6573,13 @@ const dataTree = (() => {
     const preview =
       asset.kind === 'Mesh'
         ? `<div class="dt-asset-image-frame dt-asset-image-frame--mesh" data-mesh-stage="${_escape(asset.id)}"><span>Mesh</span><strong>${_escape(asset.id || '?')}</strong><small>Fetches mesh bytes and renders geometry when Roblox allows delivery.</small></div>`
-        : asset.id
-          ? asset.kind === 'Audio'
-            ? `<div class="dt-asset-image-frame dt-asset-image-frame--audio" data-fetch-audio="${_escape(asset.id)}"><span class="dt-asset-loading">Loading audio…</span><span>${_escape(asset.kind)}</span></div>`
-            : `<div class="dt-asset-image-frame" data-fetch-image="${_escape(asset.id)}"><span class="dt-asset-loading">Loading…</span><span>${_escape(asset.kind)}</span></div>`
-          : '<div class="dt-asset-image-frame empty"><span>No preview</span></div>';
+        : asset.localUrl
+          ? `<div class="dt-asset-image-frame" data-local-image="${_escape(asset.localUrl)}"><span class="dt-asset-loading">Loading bundled preview…</span></div>`
+          : asset.id
+            ? asset.kind === 'Audio'
+              ? `<div class="dt-asset-image-frame dt-asset-image-frame--audio" data-fetch-audio="${_escape(asset.id)}"><span class="dt-asset-loading">Loading audio…</span><span>${_escape(asset.kind)}</span></div>`
+              : `<div class="dt-asset-image-frame" data-fetch-image="${_escape(asset.id)}"><span class="dt-asset-loading">Loading…</span><span>${_escape(asset.kind)}</span></div>`
+            : '<div class="dt-asset-image-frame empty"><span>No preview</span></div>';
     const load =
       asset.kind === 'Mesh' && asset.id
         ? `<button class="dt-asset-open" type="button" data-load-mesh-asset="${index}">Load mesh</button>`
@@ -4330,7 +6590,10 @@ const dataTree = (() => {
     const link = asset.id
       ? `<a class="dt-asset-open" href="https://www.roblox.com/library/${_escape(asset.id)}" target="_blank" rel="noreferrer">Open asset</a>`
       : '';
-    return `<div class="dt-asset-card">${preview}<div class="dt-asset-meta"><div><span>Property</span><strong>${_escape(asset.key)}</strong></div><div><span>Asset ID</span><strong>${_escape(asset.id || 'Not detected')}</strong></div><div><span>Reference</span><code>${_escape(asset.value)}</code></div>${load}${downloadBtn}${link}</div></div>`;
+    const source = asset.source
+      ? `<div><span>Source</span><strong>${_escape(asset.source)}</strong></div>`
+      : '';
+    return `<div class="dt-asset-card">${preview}<div class="dt-asset-meta"><div><span>Property</span><strong>${_escape(asset.key)}</strong></div><div><span>Asset ID</span><strong>${_escape(asset.id || (asset.localUrl ? 'Bundled' : 'Not detected'))}</strong></div><div><span>Reference</span><code>${_escape(asset.value)}</code></div>${source}${load}${downloadBtn}${link}</div></div>`;
   }
 
   function _assetFromNode(node) {
@@ -4375,17 +6638,53 @@ const dataTree = (() => {
     const seenSigs = new Set();
     const assets = [];
 
-    const push = (key, value) => {
-      const id = _assetId(value);
-      const sig = `${key}:${id || value}`;
+    const push = (key, value, extra = {}) => {
+      const id = extra.id ?? _assetId(value);
+      const sig = `${key}:${id || value}:${extra.source || ''}:${extra.localUrl || ''}`;
       if (seenSigs.has(sig)) return;
       if (id && seenIds.has(id)) return;
       seenSigs.add(sig);
       if (id) seenIds.add(id);
-      const entry = { key, value, id, kind: _assetKind(key, value) };
+      const entry = { key, value, id, kind: extra.kind || _assetKind(key, value), ...extra };
       _log.info(`  asset prop "${key}" id=${id || '(none)'} kind=${entry.kind}`);
       assets.push(entry);
     };
+
+    const variantName = _firstProp(props, [
+      'MaterialVariantSerialized',
+      'MaterialVariant',
+      'materialVariantSerialized',
+    ]);
+    const variant = _resolveMaterialVariant(activeSnapshot(), variantName);
+    if (variantName) {
+      const preview = _materialPreviewUrl(variant?.name || variantName);
+      if (preview) {
+        push('MaterialVariantPreview', variantName, {
+          id: '',
+          kind: 'Image',
+          localUrl: preview,
+          source: `Bundled material preview`,
+        });
+      }
+      for (const [mapKey, mapValue] of Object.entries(variant?.maps || {})) {
+        push(mapKey, mapValue.value, {
+          id: mapValue.id,
+          kind: mapValue.kind || 'Image',
+          source: `MaterialService.${variant.name}`,
+        });
+      }
+    } else {
+      const material = _firstProp(props, ['Material', 'material']);
+      const preview = _materialPreviewUrl(_materialKey(material));
+      if (preview) {
+        push('MaterialPreview', _materialKey(material), {
+          id: '',
+          kind: 'Image',
+          localUrl: preview,
+          source: 'Bundled Roblox material',
+        });
+      }
+    }
 
     for (const key of knownKeys) {
       seenKeys.add(key.toLowerCase());
@@ -4500,18 +6799,71 @@ const dataTree = (() => {
       pane.innerHTML = '<div class="dt-empty">Select an instance to inspect metadata.</div>';
       return pane;
     }
-    pane.innerHTML = `<div class="dt-details-head"><div><span>Inspector</span><small>${Number(node.childCount || 0).toLocaleString()} children</small></div></div>`;
-    const sections = [
-      _kvSection('Properties', node.properties, node),
-      _kvSection('Attributes', node.attributes, node),
-    ];
-    const tags = _tagSection(node.tags);
-    if (tags) sections.push(tags);
-    pane.append(...sections);
+    pane.innerHTML = `<div class="dt-details-head"><div><span>Properties - ${_escape(node.className)} "${_escape(node.name)}"</span><small>${Number(node.childCount || 0).toLocaleString()} children</small></div></div><label class="dt-property-filter"><input placeholder="Filter Properties" value="${_escape(state_.propertyQuery)}" spellcheck="false"></label>`;
+    _wirePropertyFilter(pane);
+    const studioGroups = DataTreeStudioProperties.groupsFor(node, state_.propertyQuery);
+    const studioWrap = document.createElement('div');
+    studioWrap.className = 'dt-studio-properties';
+    if (studioGroups.length) {
+      studioWrap.append(...studioGroups.map((group) => _studioSection(group, node)));
+    } else {
+      studioWrap.innerHTML = `<div class="dt-empty-small">${state_.propertyQuery ? 'No matching Studio properties.' : 'No serialized Studio properties for this instance.'}</div>`;
+    }
+    pane.appendChild(studioWrap);
+
+    const raw = document.createElement('details');
+    raw.className = 'dt-raw-details';
+    raw.open = true;
+    raw.innerHTML = '<summary>Serialized XML</summary>';
+    raw.append(
+      _kvSection('Item Attributes', node.itemAttributes, node),
+      _kvSection('Properties', node.properties, node, node.propertyTypes),
+      _kvSection('Attributes', node.attributes, node, node.attributeTypes),
+      _tagSection(node.tags),
+    );
+    pane.appendChild(raw);
     return pane;
   }
 
-  function _kvSection(title, data, node) {
+  function _wirePropertyFilter(pane) {
+    const input = pane.querySelector('.dt-property-filter input');
+    input?.addEventListener('input', () => {
+      state_.propertyQuery = input.value;
+      const start = input.selectionStart ?? state_.propertyQuery.length;
+      const end = input.selectionEnd ?? start;
+      _replace('.dt-details', _detailsPane());
+      requestAnimationFrame(() => {
+        const next = _container()?.querySelector('.dt-property-filter input');
+        next?.focus();
+        next?.setSelectionRange(start, end);
+      });
+    });
+  }
+
+  function _studioSection(group, node) {
+    const section = document.createElement('section');
+    section.className = 'dt-kv-section dt-studio-section';
+    section.innerHTML = `<span><strong>${_escape(group.title)}</strong><em>${group.entries.length.toLocaleString()}</em></span>`;
+    for (const entry of group.entries) {
+      const presentation = _studioValuePresentation(entry);
+      section.appendChild(
+        _valueRow({
+          label: entry.name,
+          text: presentation.text,
+          preview: presentation.preview,
+          type: entry.valueType?.Name || entry.xmlType || '',
+          ariaLabel: `${group.title}.${entry.name}`,
+          value: entry.rawValue,
+          section: 'Properties',
+          key: entry.sourceKey,
+          node,
+        }),
+      );
+    }
+    return section;
+  }
+
+  function _kvSection(title, data, node, typeMap = null) {
     const section = document.createElement('section');
     section.className = 'dt-kv-section';
     const entries = Object.entries(data || {});
@@ -4521,56 +6873,124 @@ const dataTree = (() => {
       return section;
     }
     for (const [key, value] of entries) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'dt-kv-row';
-      row.title = 'Open full value';
-      row.innerHTML = `<span>${_escape(key)}</span><code>${_escape(_formatValue(value))}</code><em>Open</em>`;
-      row.addEventListener('click', () => _openFullValue(title, key, value, node));
-      section.appendChild(row);
+      const type = String(typeMap?.[key] || '');
+      const presentation = _valuePresentation(title, key, value, node);
+      section.appendChild(
+        _valueRow({
+          label: key,
+          text: presentation.text,
+          preview: presentation.preview,
+          type,
+          ariaLabel: `${title}.${key}`,
+          value,
+          section: title,
+          key,
+          node,
+        }),
+      );
     }
     return section;
   }
 
-  async function _openFullValue(section, key, currentValue, node) {
+  function _valueRow({
+    label,
+    text,
+    preview = '',
+    type = '',
+    ariaLabel,
+    value,
+    section,
+    key,
+    node,
+  }) {
+    const row = document.createElement('div');
+    row.className = 'dt-kv-row';
+    row.innerHTML = `<span title="${_escape(label)}">${_escape(label)}</span><label class="dt-kv-value${preview ? ' dt-kv-value--material' : ''}">${preview ? `<img src="${_escape(preview)}" alt="">` : ''}<input readonly spellcheck="false" value="${_escape(text)}" aria-label="${_escape(ariaLabel)}"></label>${type ? `<em title="Value type">${_escape(type)}</em>` : ''}`;
+    const input = row.querySelector('input');
+    input?.addEventListener('focus', () =>
+      _ensureInlineFullValue(input, section, key, value, node),
+    );
+    input?.addEventListener('pointerdown', () =>
+      _ensureInlineFullValue(input, section, key, value, node),
+    );
+    return row;
+  }
+
+  function _studioValuePresentation(entry) {
+    if (entry.name === 'Material') {
+      return {
+        text: _formatValue(entry.value),
+        preview: _materialPreviewUrl(entry.value),
+      };
+    }
+    if (entry.name === 'MaterialVariant') {
+      const variant = _resolveMaterialVariant(activeSnapshot(), entry.rawValue);
+      return {
+        text: _formatValue(entry.value),
+        preview:
+          _materialPreviewUrl(variant?.name || '') ||
+          _materialPreviewUrl(variant?.baseMaterial || ''),
+      };
+    }
+    return { text: _formatValue(entry.value), preview: '' };
+  }
+
+  function _valuePresentation(section, key, value, node) {
+    const text = _formatValue(value);
+    if (section !== 'Properties') return { text, preview: '' };
+    const keyText = String(key || '').toLowerCase();
+    if (keyText === 'material') {
+      const materialKey = _materialKey(value);
+      const preview = _materialPreviewUrl(materialKey);
+      const label =
+        state_.meta.materials?.materials?.find(
+          (item) => item.key === _materialVariantKey(materialKey),
+        )?.name || materialKey;
+      return {
+        text: label && String(value) !== label ? `${label} · ${text}` : text,
+        preview,
+      };
+    }
+    if (keyText === 'materialvariant' || keyText === 'materialvariantserialized') {
+      const variant = _resolveMaterialVariant(activeSnapshot(), value);
+      const name = variant?.name || String(value || '');
+      const preview = _materialPreviewUrl(name) || _materialPreviewUrl(variant?.baseMaterial || '');
+      const base = variant?.baseMaterial ? ` · base ${variant.baseMaterial}` : '';
+      return {
+        text: `${name || text}${base}`,
+        preview,
+      };
+    }
+    return { text, preview: '' };
+  }
+
+  async function _ensureInlineFullValue(input, section, key, currentValue, node) {
+    if (!input || input.dataset.fullLoaded === 'true') return;
+    const currentText = _formatFullValue(currentValue);
+    if (!/^__dt_heavy__:/i.test(currentText)) {
+      input.dataset.fullLoaded = 'true';
+      return;
+    }
     const snapshot = activeSnapshot();
-    let value = currentValue;
+    if (!snapshot?.storagePath || !node?.id) return;
     if (snapshot?.storagePath && node?.id) {
       try {
-        value = await window.__TAURI__.core.invoke('datatree_node_value', {
+        const value = await window.__TAURI__.core.invoke('datatree_node_value', {
           path: snapshot.storagePath,
           nodeId: node.id,
-          section,
+          section: _nodeValueSection(section),
           key,
         });
+        input.value = _formatFullValue(value);
+        input.dataset.fullLoaded = 'true';
       } catch (err) {
         toast.show(err?.message || 'Could not load full value', 'fail', 2400);
       }
     }
-    _valueDialog(`${section}.${key}`, value);
   }
 
-  function _valueDialog(title, value) {
-    document.querySelector('.dt-value-modal')?.remove();
-    const overlay = document.createElement('div');
-    overlay.className = 'dt-value-modal';
-    const text = _formatFullValue(value);
-    overlay.innerHTML = `<div class="dt-value-card" role="dialog" aria-modal="true"><header><div><span>Full Value</span><strong>${_escape(title)}</strong></div><button type="button" data-action="close" aria-label="Close">×</button></header><textarea readonly spellcheck="false"></textarea><footer><small>${text.length.toLocaleString()} characters</small><button type="button" data-action="copy">Copy</button><button type="button" data-action="close">Done</button></footer></div>`;
-    const textarea = overlay.querySelector('textarea');
-    textarea.value = text;
-    const close = () => overlay.remove();
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay || event.target?.dataset?.action === 'close') close();
-    });
-    overlay.querySelector('[data-action="copy"]')?.addEventListener('click', async () => {
-      await navigator.clipboard?.writeText(text).catch(() => {});
-      toast.show('Copied full value', 'ok', 1200);
-    });
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.select();
-    });
+  function _nodeValueSection(section) {
+    return section === 'Item Attributes' ? 'itemAttributes' : section;
   }
 
   function _formatFullValue(value) {
@@ -4580,17 +7000,16 @@ const dataTree = (() => {
   }
 
   function _tagSection(tags) {
-    if (!tags?.length) return null;
     const section = document.createElement('section');
     section.className = 'dt-kv-section';
-    section.innerHTML = `<span><strong>Tags</strong><em>${tags.length.toLocaleString()}</em></span><div class="dt-tags">${tags.map((tag) => `<span>${_escape(tag)}</span>`).join('')}</div>`;
+    const entries = Array.isArray(tags) ? tags : [];
+    section.innerHTML = `<span><strong>Tags</strong><em>${entries.length.toLocaleString()}</em></span>${entries.length ? `<div class="dt-tags">${entries.map((tag) => `<span>${_escape(tag)}</span>`).join('')}</div>` : '<div class="dt-empty-small">None</div>'}`;
     return section;
   }
 
   function _formatValue(value) {
     if (value == null) return String(value);
-    const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
-    return text.length > 240 ? `${text.slice(0, 240)}...` : text;
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
   }
 
   function ensureBridge() {

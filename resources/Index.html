@@ -144,21 +144,26 @@
           </svg>
         </button>
         <button class="activity-btn" data-view="pinboard" title="Pinboard" aria-label="Pinboard" aria-pressed="false">
-          <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 17v5" />
-            <path
-              d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V4h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
+          <svg class="lucide activity-icon activity-icon--dark" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor"
+              d="m6.5 22l-1-1v-4H2v-2l1.5-2.65V10H2V8h9v2H9.5v2.35L11 15v2H7.5v4zm5.5-2v-2h8V6H2q0-.825.588-1.412T4 4h16q.825 0 1.413.588T22 6v12q0 .825-.587 1.413T20 20z" />
+          </svg>
+          <svg class="lucide activity-icon activity-icon--light" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor"
+              d="M6.5 22q-.425 0-.712-.288T5.5 21v-4H2.575q-.575 0-.85-.5t0-1L3.5 12.35V10H3q-.425 0-.712-.288T2 9t.288-.712T3 8h7q.425 0 .713.288T11 9t-.288.713T10 10h-.5v2.35l1.775 3.15q.275.5 0 1t-.85.5H7.5v4q0 .425-.288.713T6.5 22M20 20h-7q-.425 0-.712-.288T12 19t.288-.712T13 18h7V6H3q-.425 0-.712-.288T2 5t.288-.712T3 4h17q.825 0 1.413.588T22 6v12q0 .825-.587 1.413T20 20M4.3 15h4.4l-1.2-2.1V10h-2v2.9zm2.2 0" />
           </svg>
         </button>
         <button class="activity-btn" data-view="cloud" title="Cloud Scripts" aria-label="Cloud Scripts"
           aria-pressed="false">
-          <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m16 6 4 14" />
-            <path d="M12 6v14" />
-            <path d="M8 8v12" />
-            <path d="M4 4v16" />
+          <svg class="lucide activity-icon activity-icon--dark" viewBox="0 0 36 36" aria-hidden="true">
+            <path fill="currentColor"
+              d="M12.75 3h-7.5A1.15 1.15 0 0 0 4 4v29h10V4a1.15 1.15 0 0 0-1.25-1" />
+            <path fill="currentColor"
+              d="m33.77 31.09l-6.94-18.3a1 1 0 0 0-1.29-.58L22 13.59V9a1 1 0 0 0-1-1h-5v25h6V14.69L28.93 33Z" />
+          </svg>
+          <svg class="lucide activity-icon activity-icon--light" viewBox="0 0 36 36" aria-hidden="true">
+            <path fill="currentColor"
+              d="m33.48 29.63l-6.74-17.81a2 2 0 0 0-2.58-1.16L21 11.85V8.92A1.92 1.92 0 0 0 19.08 7H14V4.92A1.92 1.92 0 0 0 12.08 3H5a2 2 0 0 0-2 2v27a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V19.27l5 13.21a1 1 0 0 0 1.29.58l5.61-2.14a1 1 0 0 0 .58-1.29M12 8.83V31H5V5h7ZM19 31h-5V9h5Zm8.51-.25l-6.38-16.83l3.74-1.42l6.39 16.83Z" />
           </svg>
         </button>
         <div class="activity-spacer" role="none"></div>
@@ -483,6 +488,12 @@
             </svg>
             About
           </a>
+          <a class="sp-nav-item" href="#sp-credits" data-section="sp-credits">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Credits
+          </a>
         </nav>
 
         <div class="sp-body" id="spBody">
@@ -725,7 +736,7 @@
             <div class="sp-row">
               <div class="sp-row-info">
                 <span class="sp-row-label">Executor update guide</span>
-                <span class="sp-row-hint">Join the Discord &rarr; <strong>#custom-interfaces</strong> &rarr; search
+                <span class="sp-row-hint sp-row-hint--wrap">Join the Discord &rarr; <strong>#custom-interfaces</strong> &rarr; search
                   <strong>VelocityUI</strong></span>
               </div>
               <button class="about-discord-btn" id="btnDiscord">
@@ -734,6 +745,103 @@
               </button>
             </div>
           </section>
+
+          <section class="sp-section" id="sp-credits">
+            <div class="sp-section-header">
+              <span class="sp-section-title">Credits</span>
+              <span class="sp-section-desc">Libraries, source material, and third-party content used by VelocityUI</span>
+            </div>
+            <div class="credit-grid">
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/microsoft.ico" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Monaco Editor</span>
+                  <span class="sp-row-hint">Microsoft · MIT. Editor runtime loaded for the script workspace</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://microsoft.github.io/monaco-editor/">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/lucide.svg" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Lucide</span>
+                  <span class="sp-row-hint">ISC; some inherited Feather icons remain MIT. Interface iconography</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://lucide.dev/">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/icones.svg" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Icônes / Iconify</span>
+                  <span class="sp-row-hint">MIT Icônes explorer by Anthony Fu Collective. Source/reference for many UI SVGs</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://icones.js.org/">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/jetbrains.ico" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">JetBrains Mono</span>
+                  <span class="sp-row-hint">OFL-1.1. Bundled monospace font files</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://www.jetbrains.com/lp/mono/">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/draco.svg" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Google Draco</span>
+                  <span class="sp-row-hint">Apache-2.0. Bundled mesh decoder runtime</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://github.com/google/draco">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/material-icon-theme.svg" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Material Icon Theme</span>
+                  <span class="sp-row-hint">MIT · material-extensions / PKief. Bundled file and folder icon theme</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://github.com/material-extensions/vscode-material-icon-theme">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/tauri.svg" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Tauri</span>
+                  <span class="sp-row-hint">MIT / Apache-2.0. Desktop runtime and native bridge</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://tauri.app/">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/roblox.ico" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">Roblox Studio assets</span>
+                  <span class="sp-row-hint">Roblox Corporation. Studio-derived class icons and material preview imagery</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://www.roblox.com/">Visit</button>
+              </div>
+
+              <div class="credit-card">
+                <span class="credit-thumb" aria-hidden="true"><img src="Assets/Credits/maximumadhd.png" alt=""></span>
+                <div class="credit-card-info">
+                  <span class="sp-row-label">MaximumADHD / Roblox-Client-Tracker</span>
+                  <span class="sp-row-hint">Roblox API dump lineage used for VelocityUI's API metadata and autocomplete data</span>
+                </div>
+                <button class="credit-link-btn" data-url="https://github.com/MaximumADHD/Roblox-Client-Tracker">Visit</button>
+              </div>
+            </div>
+            <div class="credit-note">
+              Also acknowledged: optional icon themes installable from upstream projects in the app
+              (Ayu Icons, Seti File Icons, Bearded Icons, VSCode Icons), and bundled starter content that points to
+              third-party scripts such as Infinite Yield, MorfOS, Nameless Admin, and Dex Explorer. Icônes is an
+              explorer/aggregator, so copied SVGs can still carry the original icon set's own license terms.
+              Roblox assets are credited here, but attribution is not itself a license grant.
+            </div>
+          </section>
+
 
         </div>
       </div>
@@ -828,6 +936,10 @@
   <script src="Js/Ui/Pinboard/PinboardCard.js"></script>
   <script src="Js/Ui/Pinboard/PinboardOps.js"></script>
   <script src="Js/Ui/Pinboard/Pinboard.js"></script>
+  <script src="Js/Ui/DataTree/DataTreeMath.js"></script>
+  <script src="Js/Ui/DataTree/DataTreeMaterials.js"></script>
+  <script src="Js/Ui/DataTree/DataTreeStudioProperties.js"></script>
+  <script src="Js/Ui/DataTree/DataTreeMeshCodec.js"></script>
   <script src="Js/Ui/DataTree/DataTree.js"></script>
   <script src="Js/Overlays/Modal.js"></script>
   <script src="Js/Overlays/Toast.js"></script>

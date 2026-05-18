@@ -7,6 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use quick_xml::{
     escape::unescape,
     events::{BytesStart, Event},
@@ -27,8 +28,14 @@ pub struct DataTreeNode {
     depth: u16,
     search_text: String,
     child_count: u32,
+    #[serde(default)]
+    item_attributes: Map<String, Value>,
     properties: Map<String, Value>,
+    #[serde(default)]
+    property_types: Map<String, Value>,
     attributes: Map<String, Value>,
+    #[serde(default)]
+    attribute_types: Map<String, Value>,
     tags: Vec<String>,
 }
 
@@ -48,6 +55,16 @@ pub struct DataTreeSnapshot {
     storage_path: String,
     source_path: String,
     source_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerrainCell {
+    material: u8,
+    occupancy: f32,
+    x: u16,
+    y: u16,
+    z: u16,
 }
 
 struct StackItem {
@@ -115,6 +132,20 @@ fn attr_value(start: &BytesStart<'_>, key: &[u8]) -> Option<String> {
         }
     }
     None
+}
+
+fn attrs_map(start: &BytesStart<'_>) -> Map<String, Value> {
+    let mut attrs = Map::new();
+    for attr in start.attributes().flatten() {
+        let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+        let value = attr
+            .unescape_value()
+            .ok()
+            .map(Cow::into_owned)
+            .unwrap_or_default();
+        attrs.insert(key, Value::String(value));
+    }
+    attrs
 }
 
 fn text_from_event_text(text: quick_xml::events::BytesText<'_>) -> String {
@@ -233,10 +264,17 @@ fn is_mesh_child_class(class_name: &str) -> bool {
     )
 }
 
+fn is_light_class(class_name: &str) -> bool {
+    matches!(
+        class_name.to_ascii_lowercase().as_str(),
+        "pointlight" | "spotlight" | "surfacelight"
+    )
+}
+
 fn is_viewport_context_class(class_name: &str) -> bool {
     matches!(
         class_name.to_ascii_lowercase().as_str(),
-        "lighting" | "atmosphere" | "sky"
+        "lighting" | "atmosphere" | "sky" | "colorcorrectioneffect" | "bloomeffect"
     )
 }
 
@@ -284,17 +322,24 @@ fn make_render_snapshot(mut snapshot: DataTreeSnapshot, root_id: u32) -> DataTre
                 depth: 0,
                 search_text: String::new(),
                 child_count: 0,
+                item_attributes: Map::new(),
                 properties: Map::new(),
+                property_types: Map::new(),
                 attributes: Map::new(),
+                attribute_types: Map::new(),
                 tags: Vec::new(),
             },
         );
         if !is_renderable_class(&node.class_name)
             && !is_mesh_child_class(&node.class_name)
+            && !is_light_class(&node.class_name)
             && !is_viewport_context_class(&node.class_name)
         {
+            node.item_attributes.clear();
             node.properties.clear();
+            node.property_types.clear();
             node.attributes.clear();
+            node.attribute_types.clear();
             node.tags.clear();
         }
         if node.id == root_id {
@@ -393,6 +438,8 @@ pub async fn datatree_node_value(
         let section = section.to_ascii_lowercase();
         let value = if section == "attributes" {
             node.attributes.get(&key).cloned()
+        } else if section == "itemattributes" {
+            node.item_attributes.get(&key).cloned()
         } else if section == "tags" {
             Some(Value::Array(
                 node.tags.into_iter().map(Value::String).collect(),
@@ -404,6 +451,78 @@ pub async fn datatree_node_value(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn decode_terrain_grid(raw: &str) -> Vec<TerrainCell> {
+    let compact: String = raw
+        .trim()
+        .rsplit_once(',')
+        .map(|(_, encoded)| encoded)
+        .unwrap_or(raw)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if compact.len() < 10 {
+        return Vec::new();
+    }
+    let Ok(bytes) = BASE64_STANDARD.decode(compact.as_bytes()) else {
+        return Vec::new();
+    };
+    if bytes.len() < 6 {
+        return Vec::new();
+    }
+
+    let x_size = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+    let y_size = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
+    let z_size = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+    if x_size == 0 || y_size == 0 || z_size == 0 {
+        return Vec::new();
+    }
+
+    let Some(voxel_count) = x_size
+        .checked_mul(y_size)
+        .and_then(|count| count.checked_mul(z_size))
+    else {
+        return Vec::new();
+    };
+    let Some(payload_len) = voxel_count.checked_mul(3) else {
+        return Vec::new();
+    };
+    let Some(expected_len) = 6usize.checked_add(payload_len) else {
+        return Vec::new();
+    };
+    if bytes.len() < expected_len {
+        return Vec::new();
+    }
+
+    let mut cells = Vec::new();
+    let mut offset = 6usize;
+    for y in 0..y_size {
+        for z in 0..z_size {
+            for x in 0..x_size {
+                let material = bytes[offset];
+                let occupancy = bytes[offset + 1] as f32 / 255.0;
+                offset += 3;
+                if material != 0 && occupancy > 0.05 {
+                    cells.push(TerrainCell {
+                        material,
+                        occupancy,
+                        x: x as u16,
+                        y: y as u16,
+                        z: z as u16,
+                    });
+                }
+            }
+        }
+    }
+    cells
+}
+
+#[tauri::command]
+pub async fn datatree_decode_terrain_grid(raw: String) -> Result<Vec<TerrainCell>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(decode_terrain_grid(&raw)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn parse_rbxlx(
@@ -465,8 +584,11 @@ fn parse_rbxlx(
                         depth: stack.len().min(u16::MAX as usize) as u16,
                         search_text: String::new(),
                         child_count: 0,
+                        item_attributes: attrs_map(&start),
                         properties: Map::new(),
+                        property_types: Map::new(),
                         attributes: Map::new(),
+                        attribute_types: Map::new(),
                         tags: Vec::new(),
                     });
                     stack.push(StackItem { node_index: index });
@@ -510,7 +632,10 @@ fn parse_rbxlx(
                             let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
                             nodes[current.node_index]
                                 .attributes
-                                .insert(name, normalize_scalar(&tag, ""));
+                                .insert(name.clone(), normalize_scalar(&tag, ""));
+                            nodes[current.node_index]
+                                .attribute_types
+                                .insert(name, Value::String(tag));
                         }
                     }
                 } else if in_properties && prop.is_none() {
@@ -519,7 +644,10 @@ fn parse_rbxlx(
                             let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
                             nodes[current.node_index]
                                 .properties
-                                .insert(name, normalize_scalar(&tag, ""));
+                                .insert(name.clone(), normalize_scalar(&tag, ""));
+                            nodes[current.node_index]
+                                .property_types
+                                .insert(name, Value::String(tag));
                         }
                     }
                 }
@@ -601,6 +729,9 @@ fn parse_rbxlx(
                                 } else {
                                     finished.name
                                 };
+                                nodes[item.node_index]
+                                    .attribute_types
+                                    .insert(key.clone(), Value::String(finished.tag));
                                 nodes[item.node_index].attributes.insert(key, value);
                             }
                         }
@@ -622,6 +753,9 @@ fn parse_rbxlx(
                                         name_props.insert(nodes[item.node_index].id, s.to_string());
                                     }
                                 }
+                                nodes[item.node_index]
+                                    .property_types
+                                    .insert(finished.name.clone(), Value::String(finished.tag));
                                 nodes[item.node_index]
                                     .properties
                                     .insert(finished.name, value);
@@ -758,6 +892,24 @@ pub async fn datatree_import_dialog(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_terrain_grid_cells() {
+        let bytes = vec![
+            2, 0, // x
+            1, 0, // y
+            1, 0, // z
+            3, 255, 0, // solid rock
+            0, 0, 0, // empty
+        ];
+        let raw = BASE64_STANDARD.encode(bytes);
+        let cells = decode_terrain_grid(&raw);
+
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].material, 3);
+        assert!((cells[0].occupancy - 1.0).abs() < f32::EPSILON);
+        assert_eq!((cells[0].x, cells[0].y, cells[0].z), (0, 0, 0));
+    }
 
     #[test]
     #[ignore]

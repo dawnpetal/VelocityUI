@@ -36,6 +36,13 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn read_binary_file(path: String) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
 pub fn read_text_file_preview(path: String, max_bytes: u64) -> Result<serde_json::Value, String> {
     use std::io::Read;
     let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
@@ -88,6 +95,19 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::write(p, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_binary_file(path: String, content_base64: String) -> Result<(), String> {
+    use base64::{engine::general_purpose, Engine as _};
+    let p = std::path::Path::new(&path);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = general_purpose::STANDARD
+        .decode(content_base64)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(p, bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

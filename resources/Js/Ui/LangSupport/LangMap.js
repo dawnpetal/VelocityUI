@@ -1,6 +1,7 @@
 const LangMap = (() => {
   const EXT_TO_LANG = {
     lua: 'lua',
+    luau: 'lua',
     js: 'javascript',
     ts: 'typescript',
     jsx: 'javascript',
