@@ -12,4 +12,5 @@ pub mod scripts;
 pub mod search;
 pub mod seed;
 pub mod update;
+pub mod viewport;
 pub mod window;

@@ -355,6 +355,7 @@ const LuaIntelligence = (() => {
       ${_findFunctionEndOffset.toString()}
       ${_docFieldType.toString()}
       ${_docFunctionSignature.toString()}
+      ${_offsetToPos.toString()}
       ${_collectSymbolsRaw.toString()}
       ${_collectTableMembersRaw.toString()}
       ${_collectObjectMembersRaw.toString()}

@@ -85,6 +85,25 @@ const DataTreeMaterials = (() => {
     woodplanksalt: [128, 82, 49],
   };
 
+  const viewportStyles = {
+    asphalt: { detail: 0.34, detile: 0.7, tile: 10 },
+    basalt: { detail: 0.34, detile: 0.62, tile: 10 },
+    cobblestone: { detail: 0.5, detile: 0.22, tile: 7 },
+    concrete: { detail: 0.34, detile: 0.56, tile: 10 },
+    grass: { detail: 0.32, detile: 0.76, tile: 12 },
+    ground: { detail: 0.28, detile: 0.82, tile: 14 },
+    leafygrass: { detail: 0.34, detile: 0.76, tile: 12 },
+    mud: { detail: 0.28, detile: 0.78, tile: 12 },
+    pavement: { detail: 0.36, detile: 0.48, tile: 9 },
+    pebble: { detail: 0.44, detile: 0.56, tile: 9 },
+    rock: { detail: 0.38, detile: 0.68, tile: 11 },
+    salt: { detail: 0.28, detile: 0.72, tile: 12 },
+    sand: { detail: 0.26, detile: 0.82, tile: 14 },
+    sandstone: { detail: 0.34, detile: 0.72, tile: 12 },
+    slate: { detail: 0.34, detile: 0.7, tile: 11 },
+    snow: { detail: 0.22, detile: 0.76, tile: 14 },
+  };
+
   function variantKey(value = '') {
     return String(value || '')
       .toLowerCase()
@@ -136,5 +155,28 @@ const DataTreeMaterials = (() => {
     return fallback?.preview || '';
   }
 
-  return { alpha, id, key, previewUrl, tint, variantKey };
+  function viewportTexture(manifest, name, studsPerTile = '') {
+    const lookup = variantKey(name);
+    if (!lookup) return null;
+    const direct = manifest?.materials?.find((item) => item.key === lookup);
+    const fallbackKey = variantKey(key(name));
+    const fallback = manifest?.materials?.find((item) => item.key === fallbackKey);
+    const material = direct || fallback;
+    if (!material?.colorMap) return null;
+    if (material.key === 'glass' || material.key === 'forcefield') return null;
+    const style = viewportStyles[material.key] || {};
+    const tile = Math.max(0.25, Number(studsPerTile) || style.tile || 4);
+    return {
+      key: `material:${material.key}`,
+      localUrl: material.colorMap,
+      source: 'Material',
+      detailStrength: style.detail ?? 0.72,
+      detileStrength: style.detile ?? 0,
+      meanColor: material.colorMean || [1, 1, 1],
+      studsPerTileU: tile,
+      studsPerTileV: tile,
+    };
+  }
+
+  return { alpha, id, key, previewUrl, tint, variantKey, viewportTexture };
 })();

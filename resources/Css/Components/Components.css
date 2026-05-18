@@ -2840,6 +2840,16 @@
   border-radius: 999px;
 }
 
+.dt-kv-swatch {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, white 18%);
+  border-radius: 4px;
+  background: var(--dt-kv-swatch);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+
 .dt-kv-value input {
   width: 100%;
   min-width: 0;

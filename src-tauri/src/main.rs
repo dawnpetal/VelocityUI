@@ -8,6 +8,7 @@ mod managers;
 mod models;
 mod paths;
 mod services;
+mod viewport;
 
 use std::sync::Arc;
 
@@ -240,10 +241,13 @@ fn main() {
             commands::auth::get_key_cache,
             commands::auth::record_inject_cmd,
             commands::datatree::datatree_load_snapshot,
+            commands::datatree::datatree_load_explorer_snapshot,
+            commands::datatree::datatree_node_detail,
             commands::datatree::datatree_node_value,
             commands::datatree::datatree_render_snapshot,
             commands::datatree::datatree_decode_terrain_grid,
             commands::datatree::datatree_import_dialog,
+            commands::viewport::viewport_summary,
             commands::network::http_fetch,
             commands::network::http_fetch_binary,
             commands::search::search_with_highlights,

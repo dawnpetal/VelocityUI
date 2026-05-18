@@ -27,6 +27,7 @@ const dataTree = (() => {
   const MAX_VIEWPORT_DPR = 1.5;
   const COMPLEX_VIEWPORT_DPR = 1.25;
   const INTERACTIVE_VIEWPORT_DPR = 1;
+  const CONTACT_AO_SCALE = 0.5;
   const ROBLOX_DESKTOP_HEADERS = {
     Accept: '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
@@ -78,11 +79,16 @@ const dataTree = (() => {
       activeAssetKeys: new Set(),
     },
     viewportSummary: new Map(),
+    nodeDetailLoads: new Map(),
     meshVersion: 0,
     viewportAutoLoad: false,
     viewportClickSelect: false,
     importing: false,
     treeLoading: false,
+    treeProgress: {
+      progress: 0,
+      message: 'Loading explorer',
+    },
     snapshotLoadToken: 0,
     previewReady: false,
     importProgress: {
@@ -223,11 +229,16 @@ const dataTree = (() => {
       return snapshot;
     }
     if (!snapshot.storagePath) return snapshot;
-    const full = await window.__TAURI__.core.invoke('datatree_load_snapshot', {
-      path: snapshot.storagePath,
-      light,
-    });
+    const full = light
+      ? await window.__TAURI__.core.invoke('datatree_load_explorer_snapshot', {
+          path: snapshot.storagePath,
+        })
+      : await window.__TAURI__.core.invoke('datatree_load_snapshot', {
+          path: snapshot.storagePath,
+          light,
+        });
     snapshot.nodes = full.nodes || [];
+    snapshot.materialVariantNodes = full.materialVariantNodes || snapshot.materialVariantNodes || [];
     snapshot.nodeCount = full.nodeCount ?? snapshot.nodes.length;
     snapshot.rootId = snapshot.rootId || full.rootId || snapshot.nodes[0]?.id || null;
     snapshot.expandedIds = snapshot.expandedIds || full.expandedIds || [];
@@ -235,6 +246,7 @@ const dataTree = (() => {
     snapshot.sourcePath = snapshot.sourcePath || full.sourcePath || '';
     snapshot.sourceSize = snapshot.sourceSize || full.sourceSize || 0;
     snapshot.heavyLoaded = !light;
+    snapshot.explorerOnly = light;
     await _hydrateAsync(snapshot);
     return snapshot;
   }
@@ -255,6 +267,7 @@ const dataTree = (() => {
     snapshot.sourcePath = full.sourcePath || snapshot.sourcePath || '';
     snapshot.sourceSize = full.sourceSize || snapshot.sourceSize || 0;
     snapshot.heavyLoaded = true;
+    snapshot.explorerOnly = false;
     await _hydrateAsync(snapshot);
     return snapshot;
   }
@@ -284,13 +297,22 @@ const dataTree = (() => {
     const snapshotId = snapshot.id;
     state_.snapshotLoadToken = token;
     state_.treeLoading = true;
+    state_.treeProgress = {
+      progress: 0.08,
+      message: 'Loading saved explorer',
+    };
     state_.previewReady = false;
     render();
     _ensureSnapshotLoaded(snapshot, { light: true })
       .then(() => {
         if (!_isActiveSnapshotLoad(token, snapshotId)) return;
+        state_.treeProgress = {
+          progress: 0.9,
+          message: 'Preparing explorer',
+        };
         _restoreSnapshotState(snapshot);
         state_.previewTab = 'raw';
+        _ensureActiveNodeDetailLoaded(snapshot).catch(() => {});
       })
       .catch((err) => {
         if (_isActiveSnapshotLoad(token, snapshotId))
@@ -298,6 +320,10 @@ const dataTree = (() => {
       })
       .finally(() => {
         if (!_isActiveSnapshotLoad(token, snapshotId)) return;
+        state_.treeProgress = {
+          progress: 1,
+          message: 'Explorer ready',
+        };
         state_.treeLoading = false;
         render();
         _schedulePreviewWarmup();
@@ -311,6 +337,39 @@ const dataTree = (() => {
   function _cancelSnapshotLoad() {
     state_.snapshotLoadToken = (state_.snapshotLoadToken || 0) + 1;
     state_.treeLoading = false;
+  }
+
+  function _nodeHasDetails(node) {
+    return Boolean(node?.detailLoaded || node?.properties || node?.itemAttributes || node?.attributes);
+  }
+
+  async function _ensureActiveNodeDetailLoaded(snapshot = activeSnapshot()) {
+    const node =
+      snapshot?.byId?.get(state_.activeNodeId) ||
+      (snapshot?.rootId ? snapshot.byId?.get(snapshot.rootId) : null);
+    if (node) await _ensureNodeDetailsLoaded(snapshot, node);
+  }
+
+  async function _ensureNodeDetailsLoaded(snapshot, node) {
+    if (!snapshot?.storagePath || !node?.id || _nodeHasDetails(node)) return node;
+    const key = `${snapshot.id}:${node.id}`;
+    if (state_.nodeDetailLoads.has(key)) return state_.nodeDetailLoads.get(key);
+    const load = window.__TAURI__.core
+      .invoke('datatree_node_detail', {
+        path: snapshot.storagePath,
+        nodeId: node.id,
+      })
+      .then((detail) => {
+        Object.assign(node, detail, { detailLoaded: true });
+        if (snapshot === activeSnapshot() && state_.activeNodeId === node.id) {
+          if (state_.previewReady) _replace('.dt-preview-pane', _previewPane());
+          _replace('.dt-details', _detailsPane());
+        }
+        return node;
+      })
+      .finally(() => state_.nodeDetailLoads.delete(key));
+    state_.nodeDetailLoads.set(key, load);
+    return load;
   }
 
   function _schedulePreviewWarmup() {
@@ -471,6 +530,7 @@ const dataTree = (() => {
     for (const node of snapshot.nodes || []) {
       byId.set(node.id, node);
       delete node.path;
+      node.detailLoaded = _nodeHasDetails(node);
       node.searchText =
         node.searchText || `${node.name || ''} ${node.className || ''}`.toLowerCase();
       const parentId = node.parentId ?? 0;
@@ -495,6 +555,7 @@ const dataTree = (() => {
     for (const node of nodes) {
       byId.set(node.id, node);
       delete node.path;
+      node.detailLoaded = _nodeHasDetails(node);
       node.searchText =
         node.searchText || `${node.name || ''} ${node.className || ''}`.toLowerCase();
       const parentId = node.parentId ?? 0;
@@ -522,12 +583,13 @@ const dataTree = (() => {
     snapshot.rootId = children.get(0)?.[0]?.id ?? snapshot.nodes?.[0]?.id ?? null;
     snapshot.nodeCount = nodes.length || 0;
     _hydrateMaterialRegistry(snapshot);
-    await _ensureDepthsAsync(snapshot, chunkMs);
+    if (nodes.some((node) => !Number.isFinite(node.depth)))
+      await _ensureDepthsAsync(snapshot, chunkMs);
   }
 
   function _hydrateMaterialRegistry(snapshot) {
     const variants = new Map();
-    for (const node of snapshot?.nodes || []) {
+    for (const node of [...(snapshot?.nodes || []), ...(snapshot?.materialVariantNodes || [])]) {
       if (!/^materialvariant$/i.test(String(node.className || ''))) continue;
       const props = node.properties || {};
       const name = String(node.name || props.Name || '').trim();
@@ -641,9 +703,10 @@ const dataTree = (() => {
 
   function _view() {
     const shell = document.createElement('div');
-    shell.className = `dt-shell${state_.importing ? ' is-importing' : ''}`;
+    shell.className = `dt-shell${state_.importing ? ' is-importing' : ''}${state_.treeLoading ? ' is-tree-loading' : ''}`;
     shell.append(_topbar(), _content());
     if (state_.importing) shell.appendChild(_importOverlay());
+    else if (state_.treeLoading) shell.appendChild(_treeLoadOverlay());
     return shell;
   }
 
@@ -700,6 +763,20 @@ const dataTree = (() => {
         : 'Preparing parser';
       meta.textContent = `${pct}% · ${count}`;
     }
+  }
+
+  function _treeLoadOverlay() {
+    const overlay = document.createElement('div');
+    overlay.className = 'dt-busy-overlay';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    const pct = Math.round(Math.max(0.02, Math.min(1, state_.treeProgress.progress || 0.02)) * 100);
+    const snapshot = activeSnapshot();
+    const count = snapshot?.nodeCount
+      ? `${snapshot.nodeCount.toLocaleString()} instances`
+      : 'Preparing explorer';
+    overlay.innerHTML = `<div class="dt-busy-card"><span class="dt-busy-spinner"></span><strong>Loading Explorer</strong><p class="dt-import-message">${_escape(state_.treeProgress.message || 'Loading saved explorer')}</p><div class="dt-progress-track dt-import-progress"><span style="width:${pct}%"></span></div><small class="dt-import-meta">${pct}% · ${_escape(count)}</small></div>`;
+    return overlay;
   }
 
   function _content() {
@@ -933,6 +1010,7 @@ const dataTree = (() => {
     _activeRowEl?.classList.add('active');
     if (state_.previewReady) _replace('.dt-preview-pane', _previewPane());
     _replace('.dt-details', _detailsPane());
+    if (snapshot && node) _ensureNodeDetailsLoaded(snapshot, node).catch(() => {});
     if (!state_.previewReady) _schedulePreviewWarmup();
     _saveSoon();
   }
@@ -961,6 +1039,7 @@ const dataTree = (() => {
     state_.terrainCells.clear();
     state_.viewportCameras.clear();
     state_.viewportSummary.clear();
+    state_.nodeDetailLoads.clear();
     state_.meshVersion += 1;
     state_.viewportAutoLoad = false;
     state_.viewportClickSelect = false;
@@ -1345,6 +1424,28 @@ const dataTree = (() => {
   async function _ensureViewportSummary(snapshot, node, key) {
     if (!snapshot || !node || state_.viewportSummary.has(key)) return;
     const token = state_.viewportBuild.token;
+    if (snapshot.storagePath) {
+      try {
+        const summary = await window.__TAURI__.core.invoke('viewport_summary', {
+          path: snapshot.storagePath,
+          rootId: node.id,
+        });
+        if (token !== state_.viewportBuild.token) return;
+        const nativeSummary = {
+          parts: Number(summary.renderableParts) || 0,
+          assets: Number(summary.externalMeshReferences) || 0,
+          processed: Number(summary.processedNodes) || 0,
+        };
+        state_.viewportSummary.set(key, nativeSummary);
+        const el = _container()?.querySelector(`[data-summary-key="${_cssEscape(key)}"]`);
+        if (el) {
+          el.textContent = `${nativeSummary.parts.toLocaleString()} renderable instances · ${nativeSummary.assets.toLocaleString()} external mesh IDs · built only when requested.`;
+        }
+        return;
+      } catch (err) {
+        _log.warn(`Native viewport summary failed; using JS fallback: ${_errMsg(err)}`);
+      }
+    }
     let parts = 0;
     let assets = 0;
     let processed = 0;
@@ -1727,102 +1828,33 @@ const dataTree = (() => {
   }
 
   function _sceneSky(snapshot) {
-    let nodes = snapshot?.nodes || [];
-    let lighting = nodes.find((node) =>
-      /^lighting$/i.test(String(node.className || node.name || '')),
-    );
-    if (!lighting && activeSnapshot()?.id !== snapshot?.id) {
-      nodes = activeSnapshot()?.nodes || nodes;
-      lighting = nodes.find((node) =>
-        /^lighting$/i.test(String(node.className || node.name || '')),
-      );
-    }
-    const colorCorrection = nodes.find((node) =>
-      /^colorcorrectioneffect$/i.test(String(node.className || '')),
-    );
-    const bloom = nodes.find((node) => /^bloomeffect$/i.test(String(node.className || '')));
-    const atmosphere = nodes.find((node) => /^atmosphere$/i.test(String(node.className || '')));
-    const props = lighting?.properties || {};
-    const ccProps = colorCorrection?.properties || {};
-    const bloomProps = bloom?.properties || {};
-    const atmosphereProps = atmosphere?.properties || {};
-    const ambient = _parseColor(_firstProp(props, ['OutdoorAmbient', 'Ambient', 'ColorShift_Top']));
-    const brightness = Math.max(
-      0,
-      Math.min(1.4, (Number(_firstProp(props, ['Brightness'])) || 1) * 0.38),
-    );
-    const skyShift = _parseColor(_firstProp(props, ['ColorShift_Top']) || ambient.join(' '));
-    const groundShift = _parseColor(_firstProp(props, ['ColorShift_Bottom']) || ambient.join(' '));
-    const atmosphereColor = _parseColor(_firstProp(atmosphereProps, ['Color']) || '199 199 199');
-    const atmosphereDecay = _parseColor(
-      _firstProp(atmosphereProps, ['Decay']) || atmosphereColor.join(' '),
-    );
-    const density = Math.max(0, Math.min(1, Number(_firstProp(atmosphereProps, ['Density'])) || 0));
-    const haze = Math.max(0, Math.min(10, Number(_firstProp(atmosphereProps, ['Haze'])) || 0));
-    const glare = Math.max(0, Math.min(10, Number(_firstProp(atmosphereProps, ['Glare'])) || 0));
-    const rainRate = Math.max(
-      0,
-      Math.min(1, Number(_firstProp(atmosphereProps, ['RainRate'])) || 0),
-    );
-    const windSpeed = Math.max(
-      0,
-      Math.min(100, Number(_firstProp(atmosphereProps, ['WindSpeed'])) || 0),
-    );
-    const atmosphereMix = Math.min(0.72, density * 0.62 + haze * 0.035);
-    const horizonMix = Math.min(0.8, density * 0.72 + haze * 0.055);
-    const topBase = _mixRgb(_boostRgb(ambient, brightness), _boostRgb(skyShift, brightness), 0.34);
-    const bottomBase = _mixRgb(_boostRgb(groundShift, brightness * 0.78), topBase, 0.32);
-    const ambientSkyBase = _mixRgb(
-      _boostRgb(ambient, brightness * 0.92),
-      _boostRgb(skyShift, brightness * 0.92),
-      0.12,
-    );
-    const ambientGroundBase = _mixRgb(
-      _boostRgb(ambient, brightness * 0.72),
-      _boostRgb(groundShift, brightness * 0.72),
-      0.16,
-    );
-    const ambientSky = _neutralizeRgb(ambientSkyBase, 0.86);
-    const ambientGround = _neutralizeRgb(ambientGroundBase, 0.9);
-
-    const top = _mixRgb(topBase, _boostRgb(atmosphereColor, 1 + glare * 0.025), atmosphereMix);
-    const bottom = _mixRgb(bottomBase, atmosphereDecay, horizonMix);
-    const contrast = Math.max(-0.6, Math.min(0.8, Number(_firstProp(ccProps, ['Contrast'])) || 0));
-    const saturation = Math.max(
-      -0.8,
-      Math.min(1.2, Number(_firstProp(ccProps, ['Saturation'])) || 0),
-    );
-    const exposure = Math.max(
-      0,
-      Math.min(2, 1 + (Number(_firstProp(ccProps, ['Brightness'])) || 0)),
-    );
-    const tint = _parseColor(_firstProp(ccProps, ['TintColor', 'Tint']) || '255 255 255');
-    const bloomIntensity = Math.max(
-      0,
-      Math.min(1.5, Number(_firstProp(bloomProps, ['Intensity'])) || 0),
-    );
-    const sun = _sceneSun(props, top);
     return {
-      top,
-      bottom,
-      cssTop: _rgbCss(top),
-      cssBottom: _rgbCss(bottom),
-      rain: rainRate,
-      wind: windSpeed,
+      top: [235, 237, 241],
+      bottom: [205, 209, 216],
+      cssTop: 'rgb(235 237 241)',
+      cssBottom: 'rgb(205 209 216)',
+      rain: 0,
+      wind: 0,
       effects: {
-        exposure: Math.max(1.08, exposure),
-        contrast,
-        saturation,
-        tint,
+        exposure: 1,
+        contrast: 0,
+        saturation: 0,
+        tint: [255, 255, 255],
         ambientLift: 0,
         shadowLift: 0,
-        bloom: bloomIntensity,
+        bloom: 0,
       },
       ambient: {
-        sky: ambientSky,
-        ground: ambientGround,
+        // Neutral inspection ambient, not imported game mood lighting. Keep this low
+        // enough that the sun/normal relationship can create real form separation.
+        sky: [156, 156, 156],
+        ground: [76, 76, 76],
       },
-      sun,
+      sun: {
+        direction: _norm([0.48, 0.82, 0.31]),
+        color: [255, 255, 255],
+        strength: 0.92,
+      },
     };
   }
 
@@ -2033,6 +2065,8 @@ const dataTree = (() => {
         material: {
           key: _terrainMaterialKey(cell.material),
           preview: _materialPreviewUrl(_terrainMaterialKey(cell.material)),
+          viewportTexture: _materialViewportTexture(_terrainMaterialKey(cell.material)),
+          studsPerTile: 4,
           maps: {},
         },
         isTerrain: true,
@@ -2225,6 +2259,9 @@ const dataTree = (() => {
         : matKey.includes('metal') || matKey.includes('diamond') || matKey.includes('foil')
           ? 3
           : 0;
+    const previewMaterial = _materialPreviewUrl(materialVariant?.name)
+      ? materialVariant.name
+      : matKey;
     return {
       id: node.id,
       className: node.className,
@@ -2242,7 +2279,9 @@ const dataTree = (() => {
         value: material,
         key: matKey,
         variant: materialVariant?.name || materialVariantName || '',
-        preview: _materialPreviewUrl(materialVariant?.name || matKey),
+        preview: _materialPreviewUrl(previewMaterial),
+        viewportTexture: _materialViewportTexture(matKey, materialVariant?.studPattern),
+        studsPerTile: Math.max(0.25, Number(materialVariant?.studPattern) || 4),
         maps: { ...(materialVariant?.maps || {}), ...(surfaceAppearance?.maps || {}) },
       },
     };
@@ -2543,18 +2582,6 @@ const dataTree = (() => {
     const key = _materialKey(material);
     let out = color.slice();
 
-    const tint = _materialTint(variant?.name || key);
-    const isTerrain =
-      key.includes('grass') ||
-      key.includes('ground') ||
-      key.includes('mud') ||
-      key.includes('sand') ||
-      key.includes('snow') ||
-      key.includes('rock') ||
-      key.includes('slate');
-    if (tint && isTerrain) out = _mixRgb(out, tint, 0.3);
-    else if (tint && variant) out = _mixRgb(out, tint, 0.18);
-
     if (key.includes('neon')) out = out.map((item) => Math.min(255, item * 1.2 + 12));
 
     if (reflectance > 0)
@@ -2573,6 +2600,10 @@ const dataTree = (() => {
 
   function _materialPreviewUrl(name) {
     return DataTreeMaterials.previewUrl(state_.meta.materials, name);
+  }
+
+  function _materialViewportTexture(name, studsPerTile = '') {
+    return DataTreeMaterials.viewportTexture(state_.meta.materials, name, studsPerTile);
   }
 
   function _materialTint(name = '') {
@@ -3046,9 +3077,17 @@ const dataTree = (() => {
   function _partTextureSource(part) {
     if (part.surfaceTexture?.id || part.surfaceTexture?.localUrl) return part.surfaceTexture;
     const colorMap = part.material?.maps?.ColorMap;
-    if (colorMap?.id) return { key: `asset:${colorMap.id}`, id: colorMap.id, source: 'ColorMap' };
+    if (colorMap?.id)
+      return {
+        key: `asset:${colorMap.id}`,
+        id: colorMap.id,
+        source: 'ColorMap',
+        studsPerTileU: part.material?.studsPerTile,
+        studsPerTileV: part.material?.studsPerTile,
+      };
     if (part.mesh?.textureId)
       return { key: `asset:${part.mesh.textureId}`, id: part.mesh.textureId, source: 'TextureID' };
+    if (part.material?.viewportTexture) return part.material.viewportTexture;
     return null;
   }
 
@@ -3161,27 +3200,27 @@ const dataTree = (() => {
           [-x, y, z],
         ],
         faces: [
-          [0, 1, 2, 3],
-          [4, 7, 6, 5],
-          [0, 4, 5, 1],
-          [3, 2, 6, 7],
-          [1, 5, 6, 2],
-          [0, 3, 7, 4],
+          [3, 2, 1, 0],
+          [5, 6, 7, 4],
+          [1, 5, 4, 0],
+          [7, 6, 2, 3],
+          [2, 6, 5, 1],
+          [4, 7, 3, 0],
         ],
       };
     return {
       vertices,
       faces: [
-        [0, 1, 9, 8],
-        [2, 3, 11, 10],
-        [4, 5, 13, 12],
-        [6, 7, 15, 14],
-        [0, 7, 6, 5, 4, 3, 2, 1],
-        [8, 9, 10, 11, 12, 13, 14, 15],
-        [1, 2, 10, 9],
-        [3, 4, 12, 11],
-        [5, 6, 14, 13],
-        [7, 0, 8, 15],
+        [8, 9, 1, 0],
+        [10, 11, 3, 2],
+        [12, 13, 5, 4],
+        [14, 15, 7, 6],
+        [1, 2, 3, 4, 5, 6, 7, 0],
+        [15, 14, 13, 12, 11, 10, 9, 8],
+        [9, 10, 2, 1],
+        [11, 12, 4, 3],
+        [13, 14, 6, 5],
+        [15, 8, 0, 7],
       ],
     };
   }
@@ -3546,7 +3585,48 @@ const dataTree = (() => {
     guide.line(root, [root[0], root[1], root[2] + axis], [0.36, 0.66, 1, 0.82]);
   }
 
-  function _createSsaoProgram(gl) {
+  function _createDepthViewportProgram(gl) {
+    const vertex = _compileShader(
+      gl,
+      gl.VERTEX_SHADER,
+      `
+      precision highp float;
+      attribute vec3 aPosition;
+      uniform mat4 uMvp;
+      void main() {
+        gl_Position = uMvp * vec4(aPosition, 1.0);
+      }
+    `,
+    );
+    const fragment = _compileShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      `
+      precision mediump float;
+      void main() {
+        gl_FragColor = vec4(1.0);
+      }
+    `,
+    );
+    if (!vertex || !fragment) return null;
+    const program = gl.createProgram();
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      gl.deleteProgram(program);
+      return null;
+    }
+    return {
+      program,
+      aPosition: gl.getAttribLocation(program, 'aPosition'),
+      uMvp: gl.getUniformLocation(program, 'uMvp'),
+    };
+  }
+
+  function _createContactAoProgram(gl) {
     const vertex = _compileShader(
       gl,
       gl.VERTEX_SHADER,
@@ -3565,7 +3645,6 @@ const dataTree = (() => {
       gl.FRAGMENT_SHADER,
       `
       precision highp float;
-      uniform sampler2D uColor;
       uniform sampler2D uDepth;
       uniform vec2 uTexelSize;
       uniform float uNear;
@@ -3576,9 +3655,9 @@ const dataTree = (() => {
       }
       void main() {
         float depth = texture2D(uDepth, vUv).r;
-        if (depth >= 0.9999) { gl_FragColor = texture2D(uColor, vUv); return; }
+        if (depth >= 0.9999) { gl_FragColor = vec4(0.0); return; }
         float linD = linearizeDepth(depth);
-        float radius = 0.003 + linD * 0.004;
+        vec2 radius = uTexelSize * (1.5 + clamp(linD * 24.0, 0.0, 2.5));
         float occ = 0.0;
         float sd, diff;
         sd = linearizeDepth(texture2D(uDepth, vUv + vec2(0.0, 1.0) * radius).r);
@@ -3598,9 +3677,7 @@ const dataTree = (() => {
         sd = linearizeDepth(texture2D(uDepth, vUv + vec2(-0.71, -0.71) * radius).r);
         diff = linD - sd; occ += smoothstep(0.0,0.004,diff)*(1.0-smoothstep(0.008,0.022,diff));
         occ = clamp(occ / 8.0, 0.0, 1.0);
-        vec4 color = texture2D(uColor, vUv);
-        color.rgb *= (1.0 - occ * 0.76);
-        gl_FragColor = color;
+        gl_FragColor = vec4(0.0, 0.0, 0.0, occ * 0.34);
       }
     `,
     );
@@ -3622,7 +3699,6 @@ const dataTree = (() => {
     return {
       program: prog,
       aPos: gl.getAttribLocation(prog, 'aPos'),
-      uColor: gl.getUniformLocation(prog, 'uColor'),
       uDepth: gl.getUniformLocation(prog, 'uDepth'),
       uTexelSize: gl.getUniformLocation(prog, 'uTexelSize'),
       uNear: gl.getUniformLocation(prog, 'uNear'),
@@ -3657,31 +3733,33 @@ const dataTree = (() => {
       ? true
       : gl.getExtension('WEBGL_depth_texture') || gl.getExtension('WEBKIT_WEBGL_depth_texture');
 
-    const ssaoEnabled = false && !!depthTexExt;
-    let fboColor = null,
-      fboDepth = null,
-      fbo = null,
-      ssaoProgram = null;
+    const contactAoEnabled = !!depthTexExt;
+    let aoColor = null,
+      aoDepth = null,
+      aoFbo = null,
+      contactAoProgram = null,
+      depthProgram = null;
 
-    if (ssaoEnabled) {
-      fboColor = gl.createTexture();
-      fboDepth = gl.createTexture();
-      fbo = gl.createFramebuffer();
-      ssaoProgram = _createSsaoProgram(gl);
-      if (!ssaoProgram) {
-        fboColor = fboDepth = fbo = null;
+    if (contactAoEnabled) {
+      aoColor = gl.createTexture();
+      aoDepth = gl.createTexture();
+      aoFbo = gl.createFramebuffer();
+      contactAoProgram = _createContactAoProgram(gl);
+      depthProgram = _createDepthViewportProgram(gl);
+      if (!contactAoProgram || !depthProgram) {
+        aoColor = aoDepth = aoFbo = null;
       }
     }
 
-    const resizeFbo = (w, h) => {
-      if (!fbo) return;
-      gl.bindTexture(gl.TEXTURE_2D, fboColor);
+    const resizeAoFbo = (w, h) => {
+      if (!aoFbo) return;
+      gl.bindTexture(gl.TEXTURE_2D, aoColor);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.bindTexture(gl.TEXTURE_2D, fboDepth);
+      gl.bindTexture(gl.TEXTURE_2D, aoDepth);
       if (isWebGL2) {
         gl.texImage2D(
           gl.TEXTURE_2D,
@@ -3711,9 +3789,9 @@ const dataTree = (() => {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboColor, 0);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, fboDepth, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, aoFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, aoColor, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, aoDepth, 0);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
     };
@@ -3730,8 +3808,8 @@ const dataTree = (() => {
     let lastTime = 0;
     let disposed = false;
     let animating = false;
-    let fboWidth = 0,
-      fboHeight = 0;
+    let aoWidth = 0,
+      aoHeight = 0;
 
     const moveSpeed = () => {
       const base = Math.max(1.15, Math.min(22, scene.extent * 0.012));
@@ -3807,13 +3885,14 @@ const dataTree = (() => {
       deleteBuffers();
       gl.deleteProgram(program.program);
       if (textureProgram?.program) gl.deleteProgram(textureProgram.program);
-      if (fbo) gl.deleteFramebuffer(fbo);
-      if (fboColor) gl.deleteTexture(fboColor);
-      if (fboDepth) gl.deleteTexture(fboDepth);
-      if (ssaoProgram) {
-        gl.deleteProgram(ssaoProgram.program);
-        gl.deleteBuffer(ssaoProgram.triBuf);
+      if (aoFbo) gl.deleteFramebuffer(aoFbo);
+      if (aoColor) gl.deleteTexture(aoColor);
+      if (aoDepth) gl.deleteTexture(aoDepth);
+      if (contactAoProgram) {
+        gl.deleteProgram(contactAoProgram.program);
+        gl.deleteBuffer(contactAoProgram.triBuf);
       }
+      if (depthProgram) gl.deleteProgram(depthProgram.program);
       gl.getExtension('WEBGL_lose_context')?.loseContext?.();
       canvas.width = 0;
       canvas.height = 0;
@@ -4103,6 +4182,14 @@ const dataTree = (() => {
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, group.texture);
           gl.uniform1i(textureProgram.uTexture, 0);
+          if (textureProgram.uTextureDetail)
+            gl.uniform1f(textureProgram.uTextureDetail, group.textureInfo?.detailStrength ?? 1);
+          if (textureProgram.uTextureDetile)
+            gl.uniform1f(textureProgram.uTextureDetile, group.textureInfo?.detileStrength ?? 0);
+          if (textureProgram.uTextureMean) {
+            const mean = group.textureInfo?.meanColor || [1, 1, 1];
+            gl.uniform3f(textureProgram.uTextureMean, mean[0], mean[1], mean[2]);
+          }
           gl.drawArrays(gl.TRIANGLES, 0, group.vertexCount);
         }
         gl.useProgram(program.program);
@@ -4113,6 +4200,26 @@ const dataTree = (() => {
       _bindViewportBuffer(gl, program, buffers.guide);
       gl.drawArrays(gl.LINES, 0, scene.guide.vertexCount);
       gl.enable(gl.DEPTH_TEST);
+    }
+
+    function drawDepthScene(matrices) {
+      if (!depthProgram) return;
+      gl.clearColor(1, 1, 1, 1);
+      gl.clearDepth(1);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.colorMask(false, false, false, false);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(depthProgram.program);
+      gl.uniformMatrix4fv(depthProgram.uMvp, false, matrices.mvp);
+      _prepareDepthViewportAttributes(gl, depthProgram, program, textureProgram, contactAoProgram);
+      _bindDepthViewportBuffer(gl, depthProgram, buffers.mesh);
+      gl.drawArrays(gl.TRIANGLES, 0, scene.mesh.vertexCount);
+      for (const group of buffers.textured || []) {
+        _bindDepthViewportBuffer(gl, depthProgram, group);
+        gl.drawArrays(gl.TRIANGLES, 0, group.vertexCount);
+      }
+      gl.colorMask(true, true, true, true);
     }
 
     function draw(now) {
@@ -4165,39 +4272,39 @@ const dataTree = (() => {
 
       const matrices = _viewportMatrices(scene, camera, width / height);
 
-      if (fbo && ssaoProgram) {
-        if (fboWidth !== width || fboHeight !== height) {
-          resizeFbo(width, height);
-          fboWidth = width;
-          fboHeight = height;
+      const useContactAo = !!(aoFbo && contactAoProgram && depthProgram && !interactive);
+      if (useContactAo) {
+        const nextAoWidth = Math.max(1, Math.floor(width * CONTACT_AO_SCALE));
+        const nextAoHeight = Math.max(1, Math.floor(height * CONTACT_AO_SCALE));
+        if (aoWidth !== nextAoWidth || aoHeight !== nextAoHeight) {
+          resizeAoFbo(nextAoWidth, nextAoHeight);
+          aoWidth = nextAoWidth;
+          aoHeight = nextAoHeight;
         }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-        gl.viewport(0, 0, width, height);
-        drawScene(width, height, matrices, interactive);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, aoFbo);
+        gl.viewport(0, 0, aoWidth, aoHeight);
+        drawDepthScene(matrices);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      }
 
-        gl.viewport(0, 0, width, height);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.viewport(0, 0, width, height);
+      drawScene(width, height, matrices);
+
+      if (useContactAo) {
         gl.disable(gl.DEPTH_TEST);
-        gl.useProgram(ssaoProgram.program);
+        gl.useProgram(contactAoProgram.program);
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, fboColor);
-        gl.uniform1i(ssaoProgram.uColor, 0);
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, fboDepth);
-        gl.uniform1i(ssaoProgram.uDepth, 1);
-        gl.uniform2f(ssaoProgram.uTexelSize, 1.0 / width, 1.0 / height);
-        gl.uniform1f(ssaoProgram.uNear, matrices.near);
-        gl.uniform1f(ssaoProgram.uFar, matrices.far);
-        gl.bindBuffer(gl.ARRAY_BUFFER, ssaoProgram.triBuf);
-        gl.enableVertexAttribArray(ssaoProgram.aPos);
-        gl.vertexAttribPointer(ssaoProgram.aPos, 2, gl.FLOAT, false, 8, 0);
+        gl.bindTexture(gl.TEXTURE_2D, aoDepth);
+        gl.uniform1i(contactAoProgram.uDepth, 0);
+        gl.uniform2f(contactAoProgram.uTexelSize, 1.0 / aoWidth, 1.0 / aoHeight);
+        gl.uniform1f(contactAoProgram.uNear, matrices.near);
+        gl.uniform1f(contactAoProgram.uFar, matrices.far);
+        gl.bindBuffer(gl.ARRAY_BUFFER, contactAoProgram.triBuf);
+        gl.enableVertexAttribArray(contactAoProgram.aPos);
+        gl.vertexAttribPointer(contactAoProgram.aPos, 2, gl.FLOAT, false, 8, 0);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.enable(gl.DEPTH_TEST);
         gl.activeTexture(gl.TEXTURE0);
-      } else {
-        gl.viewport(0, 0, width, height);
-        drawScene(width, height, matrices, interactive);
       }
 
       if (animating || keys.size > 0) schedule(true);
@@ -5733,46 +5840,40 @@ const dataTree = (() => {
         vec3 diffAlbedo = baseRgb * (1.0 - metallic);
 
         // ── Sun direct ──────────────────────────────────────────────────────────
-        float wrapNdl = clamp((ndl + 0.25)/1.25, 0.0, 1.0);
+        float wrapNdl = clamp((ndl + 0.08)/1.08, 0.0, 1.0);
         vec3 sunSpec  = specularBRDF(ndh, max(ndl,0.001), ndv, vdh, rough, f0) * ndl * uSunStrength;
-        // Diffuse: Lambertian — skip /PI so colours stay perceptually bright
+        // Diffuse: keep the neutral inspector path physically closer to the textured path.
         vec3 kd       = (vec3(1.0) - F_Schlick(f0, vdh)) * (1.0 - metallic);
-        vec3 sunDiff  = kd * diffAlbedo * wrapNdl * uSunStrength;
+        vec3 sunDiff  = kd * diffAlbedo / PI * wrapNdl * uSunStrength;
         vec3 sunLight = (sunDiff + sunSpec) * uSunColor;
 
         // ── Hemisphere ambient IBL ───────────────────────────────────────────────
         float hemi   = n.y * 0.5 + 0.5;
         vec3 sky     = uSkyColor;
         vec3 ground  = uGroundColor;
-        // Boosted ambient — makes shaded sides readable and gives the "bouncy" feel
-        vec3 envDiff = mix(ground * 0.9, sky * 1.08, hemi) * 0.50 + vec3(0.13);
-        envDiff     += uLocalAmbient * (0.8 + hemi * 0.2);
+        // Lean hemisphere ambient: enough readability to inspect forms, but no fake
+        // brightness floor that erases the difference between lit and unlit faces.
+        vec3 envDiff = mix(ground * 0.92, sky, hemi) * 0.28 + vec3(0.025);
+        envDiff     += uLocalAmbient * (0.42 + hemi * 0.12);
         envDiff     *= ao;
 
         // ── Specular IBL ────────────────────────────────────────────────────────
         vec3 refl        = reflect(-viewDir, n);
         float refHemi    = clamp(refl.y*0.5+0.5, 0.0, 1.0);
-        vec3 envRef      = mix(ground * 1.1, sky * 1.2, refHemi);
-        vec3 envRefBlur  = mix(ground, sky, 0.5) * 0.9 + vec3(0.08);
+        vec3 envRef      = mix(ground * 0.92, sky * 1.03, refHemi);
+        vec3 envRefBlur  = mix(ground, sky, 0.5) * 0.78 + vec3(0.025);
         vec3 envSample   = mix(envRef, envRefBlur, rough*rough);
         vec3 iblSpec     = iblSpecular(f0, rough, ndv, envSample) * ao;
 
-        // ── Multi-directional fill lights (simulate GI bounce) ───────────────────
-        // Side sky fill
+        // ── Cheap indirect light ──────────────────────────────────────────────────
+        // One restrained sky fill plus a little ground bounce is more believable and
+        // cheaper than the old multi-directional wrap/back-fill stack.
         vec3 fillDir  = normalize(vec3(-0.55, 0.30, -0.50));
         float fillNdl = max(dot(n, fillDir), 0.0);
-        vec3 skyFill  = sky * fillNdl * diffAlbedo * 0.20;
-        // Opposite fill (back fill from sky rim)
-        vec3 fill2Dir = normalize(vec3(0.60, 0.20, 0.55));
-        float fill2   = max(dot(n, fill2Dir), 0.0);
-        vec3 skyFill2 = sky * fill2 * diffAlbedo * 0.10;
-        // Ground bounce — upward facing ground light
+        vec3 skyFill  = sky * fillNdl * diffAlbedo * 0.06;
         vec3 bounceDir = vec3(0.0, 1.0, 0.0); // straight up ground reflect
         float bounceNdl = max(dot(-n, bounceDir), 0.0); // hits downward-facing surfaces
-        vec3 bounce = ground * bounceNdl * diffAlbedo * 0.28;
-        // Back-side bounce so nothing goes fully black
-        float backFill = clamp(1.0 - ndl, 0.0, 1.0) * 0.18;
-        vec3 backLight = diffAlbedo * (sky * 0.30 + ground * 0.28) * backFill;
+        vec3 bounce = ground * bounceNdl * diffAlbedo * 0.08;
 
         // ── Diffuse ambient total ────────────────────────────────────────────────
         vec3 ambientDiff = diffAlbedo * envDiff;
@@ -5809,7 +5910,7 @@ const dataTree = (() => {
           lit = iblSpec + sunLight + localLights + skyFill*0.3;
         } else {
           // Standard PBR
-          lit = ambientDiff + iblSpec + sunLight + skyFill + skyFill2 + bounce + backLight + sss + localLights;
+          lit = ambientDiff + iblSpec + sunLight + skyFill + bounce + sss + localLights;
         }
 
         lit = applyPost(lit);
@@ -5902,6 +6003,9 @@ const dataTree = (() => {
       `
       precision highp float;
       uniform sampler2D uTexture;
+      uniform float uTextureDetail;
+      uniform float uTextureDetile;
+      uniform vec3  uTextureMean;
       varying vec4 vColor;
       varying vec3 vNormal;
       varying vec3 vWorld;
@@ -5968,6 +6072,30 @@ const dataTree = (() => {
         color += color*bloom*0.22+vec3(bloom*0.055);
         return max(acesTonemap(color), vec3(0.0));
       }
+      float hash12(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+      float valueNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(hash12(i), hash12(i + vec2(1.0, 0.0)), u.x),
+          mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x),
+          u.y
+        );
+      }
+      vec4 sampleMaterial(vec2 uv) {
+        vec4 primary = texture2D(uTexture, fract(uv));
+        if (uTextureDetile < 0.001) return primary;
+        float seed = valueNoise(uv * 0.17 + vec2(19.3, 7.1));
+        vec2 altUv = vec2(uv.y, -uv.x) * (0.82 + seed * 0.29) + vec2(17.17, 9.37);
+        vec4 alternate = texture2D(uTexture, fract(altUv));
+        float amount = uTextureDetile * (0.18 + seed * 0.34);
+        return mix(primary, alternate, amount);
+      }
       vec3 dynamicLights(vec3 worldPos, vec3 n, vec3 viewDir, float rough, vec3 f0) {
         vec3 total=vec3(0.0);
         for(int i=0;i<${lightCapacity};i++){
@@ -5994,7 +6122,7 @@ const dataTree = (() => {
         return total;
       }
       void main() {
-        vec4 tex = texture2D(uTexture, fract(vUv));
+        vec4 tex = sampleMaterial(vUv);
         if (tex.a < 0.03) discard;
         vec3 n = normalize(vNormal);
         vec3 viewDir = normalize(-vWorld);
@@ -6011,28 +6139,31 @@ const dataTree = (() => {
         float rough=0.70;
         vec3 f0=vec3(0.04);
 
-        vec3 texRgb = pow(max(tex.rgb,vec3(0.0)),vec3(2.2));
-        texRgb *= pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
+        vec3 authoredRgb = pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
+        vec3 sampledRgb = pow(max(tex.rgb,vec3(0.0)),vec3(2.2));
+        vec3 meanRgb = pow(max(uTextureMean,vec3(0.02)),vec3(2.2));
+        vec3 relativeTexture = clamp(sampledRgb / meanRgb, vec3(0.42), vec3(1.85));
+        vec3 texRgb = authoredRgb * mix(vec3(1.0), relativeTexture, clamp(uTextureDetail,0.0,1.0));
         float alpha = tex.a*vColor.a;
         int flag = int(vFlag+0.5);
 
         // Ambient IBL
-        vec3 envDiff = mix(ground,sky,hemi)*0.24+vec3(0.08)+uLocalAmbient*(0.65+hemi*0.12);
+        vec3 envDiff = mix(ground*0.92,sky,hemi)*0.28+vec3(0.025)+uLocalAmbient*(0.42+hemi*0.12);
         vec3 refl = reflect(-viewDir,n);
         vec3 envRef = mix(ground,sky,clamp(refl.y*0.5+0.5,0.0,1.0));
         vec2 brdf = envBRDF(ndv,rough);
         vec3 iblSpec = envRef*(f0*brdf.x+brdf.y);
 
         // Sun direct
-        float wrapNdl=clamp((ndl+0.18)/1.18,0.0,1.0);
+        float wrapNdl=clamp((ndl+0.08)/1.08,0.0,1.0);
         vec3 kd=(vec3(1.0)-F_Schlick(f0,vdh));
         vec3 sunDiff=kd*texRgb/PI*wrapNdl*uSunStrength;
         vec3 sunSpec=specBRDF(ndh,max(ndl,0.001),ndv,vdh,rough,f0)*ndl*uSunStrength;
         vec3 sunLight=(sunDiff+sunSpec)*uSunColor;
 
         vec3 fillDir=normalize(vec3(-0.55,0.25,-0.50));
-        vec3 skyFill=sky*max(dot(n,fillDir),0.0)*0.13*texRgb;
-        vec3 bounce=ground*max(dot(n,normalize(vec3(-0.28,0.50,0.82))),0.0)*0.12*texRgb;
+        vec3 skyFill=sky*max(dot(n,fillDir),0.0)*0.05*texRgb;
+        vec3 bounce=ground*max(dot(n,normalize(vec3(-0.28,0.50,0.82))),0.0)*0.07*texRgb;
         vec3 localLights=dynamicLights(vPosition,n,viewDir,rough,f0);
 
         vec3 lit;
@@ -6080,6 +6211,9 @@ const dataTree = (() => {
       aFlag: gl.getAttribLocation(program, 'aFlag'),
       uMvp: gl.getUniformLocation(program, 'uMvp'),
       uTexture: gl.getUniformLocation(program, 'uTexture'),
+      uTextureDetail: gl.getUniformLocation(program, 'uTextureDetail'),
+      uTextureDetile: gl.getUniformLocation(program, 'uTextureDetile'),
+      uTextureMean: gl.getUniformLocation(program, 'uTextureMean'),
       uCamOffset: gl.getUniformLocation(program, 'uCamOffset'),
       uCameraPos: gl.getUniformLocation(program, 'uCameraPos'),
       uTint: gl.getUniformLocation(program, 'uTint'),
@@ -6184,6 +6318,26 @@ const dataTree = (() => {
     if (program.aMatId >= 0) {
       gl.enableVertexAttribArray(program.aMatId);
       gl.vertexAttribPointer(program.aMatId, 1, gl.FLOAT, false, buffer.stride, 44);
+    }
+  }
+
+  function _bindDepthViewportBuffer(gl, program, buffer) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer.buffer);
+    gl.enableVertexAttribArray(program.aPosition);
+    gl.vertexAttribPointer(program.aPosition, 3, gl.FLOAT, false, buffer.stride, 0);
+  }
+
+  function _prepareDepthViewportAttributes(gl, depthProgram, ...programs) {
+    const keep = depthProgram?.aPosition;
+    const seen = new Set();
+    for (const program of programs) {
+      if (!program) continue;
+      for (const key of ['aPosition', 'aNormal', 'aColor', 'aUv', 'aFlag', 'aMatId']) {
+        const location = program[key];
+        if (location == null || location < 0 || location === keep || seen.has(location)) continue;
+        seen.add(location);
+        gl.disableVertexAttribArray(location);
+      }
     }
   }
 
@@ -6731,6 +6885,11 @@ const dataTree = (() => {
   function _rawPanel(node) {
     const wrap = document.createElement('div');
     wrap.className = 'dt-workbench dt-workbench--single';
+    if (!_nodeHasDetails(node)) {
+      wrap.innerHTML =
+        '<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Raw</span></div><div class="dt-empty-small">Loading serialized XML for this instance...</div></section>';
+      return wrap;
+    }
     wrap.innerHTML = `<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Raw</span><small>${_escape(_nodePath(activeSnapshot(), node))}</small></div><pre>${_escape(JSON.stringify(node, null, 2))}</pre></section>`;
     return wrap;
   }
@@ -6799,6 +6958,10 @@ const dataTree = (() => {
       pane.innerHTML = '<div class="dt-empty">Select an instance to inspect metadata.</div>';
       return pane;
     }
+    if (!_nodeHasDetails(node)) {
+      pane.innerHTML = `<div class="dt-details-head"><div><span>Properties - ${_escape(node.className)} "${_escape(node.name)}"</span><small>${Number(node.childCount || 0).toLocaleString()} children</small></div></div><div class="dt-empty">Loading properties and attributes...</div>`;
+      return pane;
+    }
     pane.innerHTML = `<div class="dt-details-head"><div><span>Properties - ${_escape(node.className)} "${_escape(node.name)}"</span><small>${Number(node.childCount || 0).toLocaleString()} children</small></div></div><label class="dt-property-filter"><input placeholder="Filter Properties" value="${_escape(state_.propertyQuery)}" spellcheck="false"></label>`;
     _wirePropertyFilter(pane);
     const studioGroups = DataTreeStudioProperties.groupsFor(node, state_.propertyQuery);
@@ -6851,6 +7014,7 @@ const dataTree = (() => {
           label: entry.name,
           text: presentation.text,
           preview: presentation.preview,
+          swatch: presentation.swatch,
           type: entry.valueType?.Name || entry.xmlType || '',
           ariaLabel: `${group.title}.${entry.name}`,
           value: entry.rawValue,
@@ -6880,6 +7044,7 @@ const dataTree = (() => {
           label: key,
           text: presentation.text,
           preview: presentation.preview,
+          swatch: presentation.swatch,
           type,
           ariaLabel: `${title}.${key}`,
           value,
@@ -6896,6 +7061,7 @@ const dataTree = (() => {
     label,
     text,
     preview = '',
+    swatch = '',
     type = '',
     ariaLabel,
     value,
@@ -6905,7 +7071,7 @@ const dataTree = (() => {
   }) {
     const row = document.createElement('div');
     row.className = 'dt-kv-row';
-    row.innerHTML = `<span title="${_escape(label)}">${_escape(label)}</span><label class="dt-kv-value${preview ? ' dt-kv-value--material' : ''}">${preview ? `<img src="${_escape(preview)}" alt="">` : ''}<input readonly spellcheck="false" value="${_escape(text)}" aria-label="${_escape(ariaLabel)}"></label>${type ? `<em title="Value type">${_escape(type)}</em>` : ''}`;
+    row.innerHTML = `<span title="${_escape(label)}">${_escape(label)}</span><label class="dt-kv-value${preview ? ' dt-kv-value--material' : ''}${swatch ? ' dt-kv-value--color' : ''}">${preview ? `<img src="${_escape(preview)}" alt="">` : ''}${swatch ? `<i class="dt-kv-swatch" style="--dt-kv-swatch:${_escape(swatch)}" aria-hidden="true"></i>` : ''}<input readonly spellcheck="false" value="${_escape(text)}" aria-label="${_escape(ariaLabel)}"></label>${type ? `<em title="Value type">${_escape(type)}</em>` : ''}`;
     const input = row.querySelector('input');
     input?.addEventListener('focus', () =>
       _ensureInlineFullValue(input, section, key, value, node),
@@ -6917,10 +7083,13 @@ const dataTree = (() => {
   }
 
   function _studioValuePresentation(entry) {
+    const swatch = _propertyColorSwatch(entry.name, entry.rawValue, entry.valueType?.Name);
+    if (swatch) return { text: _formatValue(entry.value), preview: '', swatch };
     if (entry.name === 'Material') {
       return {
         text: _formatValue(entry.value),
         preview: _materialPreviewUrl(entry.value),
+        swatch: '',
       };
     }
     if (entry.name === 'MaterialVariant') {
@@ -6930,15 +7099,18 @@ const dataTree = (() => {
         preview:
           _materialPreviewUrl(variant?.name || '') ||
           _materialPreviewUrl(variant?.baseMaterial || ''),
+        swatch: '',
       };
     }
-    return { text: _formatValue(entry.value), preview: '' };
+    return { text: _formatValue(entry.value), preview: '', swatch: '' };
   }
 
   function _valuePresentation(section, key, value, node) {
     const text = _formatValue(value);
-    if (section !== 'Properties') return { text, preview: '' };
+    if (section !== 'Properties') return { text, preview: '', swatch: '' };
     const keyText = String(key || '').toLowerCase();
+    const swatch = _propertyColorSwatch(key, value, node?.propertyTypes?.[key]);
+    if (swatch) return { text, preview: '', swatch };
     if (keyText === 'material') {
       const materialKey = _materialKey(value);
       const preview = _materialPreviewUrl(materialKey);
@@ -6949,6 +7121,7 @@ const dataTree = (() => {
       return {
         text: label && String(value) !== label ? `${label} · ${text}` : text,
         preview,
+        swatch: '',
       };
     }
     if (keyText === 'materialvariant' || keyText === 'materialvariantserialized') {
@@ -6959,9 +7132,26 @@ const dataTree = (() => {
       return {
         text: `${name || text}${base}`,
         preview,
+        swatch: '',
       };
     }
-    return { text, preview: '' };
+    return { text, preview: '', swatch: '' };
+  }
+
+  function _propertyColorSwatch(name = '', value = '', type = '') {
+    const key = String(name || '').toLowerCase();
+    const valueType = String(type || '').toLowerCase();
+    const isColor =
+      key === 'color' ||
+      key === 'color3' ||
+      key === 'color3uint8' ||
+      key === 'brickcolor' ||
+      key.endsWith('color') ||
+      valueType.includes('color3') ||
+      valueType.includes('brickcolor');
+    if (!isColor) return '';
+    const [r, g, b] = _parseColor(value);
+    return `rgb(${r} ${g} ${b})`;
   }
 
   async function _ensureInlineFullValue(input, section, key, currentValue, node) {

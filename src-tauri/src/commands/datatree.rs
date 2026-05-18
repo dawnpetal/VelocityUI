@@ -59,6 +59,36 @@ pub struct DataTreeSnapshot {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DataTreeExplorerNode {
+    id: u32,
+    parent_id: Option<u32>,
+    name: String,
+    class_name: String,
+    depth: u16,
+    child_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataTreeExplorerSnapshot {
+    id: String,
+    name: String,
+    source: String,
+    captured_at: u64,
+    completed_at: u64,
+    status: String,
+    nodes: Vec<DataTreeExplorerNode>,
+    material_variant_nodes: Vec<DataTreeNode>,
+    node_count: usize,
+    expanded_ids: Vec<u32>,
+    active_node_id: Option<u32>,
+    storage_path: String,
+    source_path: String,
+    source_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerrainCell {
     material: u8,
     occupancy: f32,
@@ -239,6 +269,79 @@ fn make_snapshot_light(snapshot: &mut DataTreeSnapshot) {
     }
 }
 
+fn make_node_light(node: &mut DataTreeNode) {
+    for (key, value) in node.properties.iter_mut() {
+        if is_heavy_snapshot_value(key, value) {
+            if let Value::String(text) = value {
+                let marker = format!("__dt_heavy__:{} bytes preserved in native snapshot", text.len());
+                *value = Value::String(marker);
+            }
+        }
+    }
+    for (key, value) in node.attributes.iter_mut() {
+        if matches!(value, Value::String(text) if text.len() > 512) || is_heavy_snapshot_value(key, value)
+        {
+            if let Value::String(text) = value {
+                let marker = format!("__dt_heavy__:{} bytes preserved in native snapshot", text.len());
+                *value = Value::String(marker);
+            }
+        }
+    }
+}
+
+fn make_explorer_snapshot(snapshot: DataTreeSnapshot) -> DataTreeExplorerSnapshot {
+    let mut material_variant_nodes: Vec<DataTreeNode> = snapshot
+        .nodes
+        .iter()
+        .filter(|node| node.class_name.eq_ignore_ascii_case("MaterialVariant"))
+        .map(|node| DataTreeNode {
+            id: node.id,
+            parent_id: node.parent_id,
+            name: node.name.clone(),
+            class_name: node.class_name.clone(),
+            depth: node.depth,
+            search_text: node.search_text.clone(),
+            child_count: node.child_count,
+            item_attributes: node.item_attributes.clone(),
+            properties: node.properties.clone(),
+            property_types: node.property_types.clone(),
+            attributes: node.attributes.clone(),
+            attribute_types: node.attribute_types.clone(),
+            tags: node.tags.clone(),
+        })
+        .collect();
+    for node in material_variant_nodes.iter_mut() {
+        make_node_light(node);
+    }
+    DataTreeExplorerSnapshot {
+        id: snapshot.id,
+        name: snapshot.name,
+        source: snapshot.source,
+        captured_at: snapshot.captured_at,
+        completed_at: snapshot.completed_at,
+        status: snapshot.status,
+        nodes: snapshot
+            .nodes
+            .into_iter()
+            .map(|node| DataTreeExplorerNode {
+                id: node.id,
+                parent_id: node.parent_id,
+                name: node.name,
+                class_name: node.class_name,
+                depth: node.depth,
+                child_count: node.child_count,
+            })
+            .collect(),
+        material_variant_nodes,
+        node_count: snapshot.node_count,
+        expanded_ids: snapshot.expanded_ids,
+        active_node_id: snapshot.active_node_id,
+        storage_path: snapshot.storage_path,
+        source_path: snapshot.source_path,
+        source_size: snapshot.source_size,
+    }
+}
+
 fn is_renderable_class(class_name: &str) -> bool {
     matches!(
         class_name.to_ascii_lowercase().as_str(),
@@ -403,6 +506,21 @@ pub async fn datatree_load_snapshot(
 }
 
 #[tauri::command]
+pub async fn datatree_load_explorer_snapshot(
+    path: String,
+) -> Result<DataTreeExplorerSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = File::open(&path).map_err(|e| e.to_string())?;
+        let reader = BufReader::with_capacity(1024 * 1024, file);
+        let snapshot: DataTreeSnapshot =
+            serde_json::from_reader(reader).map_err(|e| e.to_string())?;
+        Ok(make_explorer_snapshot(snapshot))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn datatree_render_snapshot(
     path: String,
     root_id: u32,
@@ -448,6 +566,25 @@ pub async fn datatree_node_value(
             node.properties.get(&key).cloned()
         };
         value.ok_or_else(|| "DataTree value no longer exists".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn datatree_node_detail(path: String, node_id: u32) -> Result<DataTreeNode, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = File::open(&path).map_err(|e| e.to_string())?;
+        let reader = BufReader::with_capacity(1024 * 1024, file);
+        let snapshot: DataTreeSnapshot =
+            serde_json::from_reader(reader).map_err(|e| e.to_string())?;
+        let mut node = snapshot
+            .nodes
+            .into_iter()
+            .find(|node| node.id == node_id)
+            .ok_or_else(|| "DataTree node no longer exists".to_string())?;
+        make_node_light(&mut node);
+        Ok(node)
     })
     .await
     .map_err(|e| e.to_string())?
