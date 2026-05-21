@@ -167,7 +167,7 @@
           </svg>
         </button>
         <div class="activity-spacer" role="none"></div>
-        <button class="activity-btn" id="btnGuide" title="Guide" aria-label="Open guide">
+        <button class="activity-btn" id="btnGuide" title="Velocity Website" aria-label="Open Velocity website">
           <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="currentColor" d="M11 9h2V7h-2m1 13c-4.41 0-8-3.59-8-8s3.59-8 8-8s8 3.59 8 8s-3.59 8-8 8m0-18A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m-1 15h2v-6h-2z"/>
           </svg>
@@ -683,6 +683,9 @@
               <div class="sp-shortcut-row"><kbd>⌘W</kbd><span>Close tab</span></div>
               <div class="sp-shortcut-row"><kbd>⌘↩</kbd><span>Execute script</span></div>
               <div class="sp-shortcut-row"><kbd>⌘\`</kbd><span>Toggle console</span></div>
+              <div class="sp-shortcut-row"><kbd>⌘+</kbd><span>Zoom in</span></div>
+              <div class="sp-shortcut-row"><kbd>⌘-</kbd><span>Zoom out</span></div>
+              <div class="sp-shortcut-row"><kbd>⌘0</kbd><span>Reset zoom</span></div>
               <div class="sp-shortcut-row"><kbd>⌘⇧F</kbd><span>Search files</span></div>
               <div class="sp-shortcut-row"><kbd>⌘⇧E</kbd><span>Focus explorer</span></div>
               <div class="sp-shortcut-row"><kbd>⌘⇧O</kbd><span>Open folder</span></div>
@@ -731,6 +734,33 @@
               <div class="about-update-group">
                 <span class="about-update-status" id="aboutUpdateStatus"></span>
                 <button class="about-update-btn" id="btnCheckUpdate">Check for updates</button>
+              </div>
+            </div>
+            <div class="sp-row">
+              <div class="sp-row-info">
+                <label class="sp-row-label" for="autoUpdateToggle">Auto Update</label>
+                <span class="sp-row-hint">Check, download, and offer app updates automatically</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoUpdateToggle" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              </label>
+            </div>
+            <div class="sp-row about-manual-update-row" id="manualUpdateRow" hidden>
+              <div class="sp-row-info">
+                <span class="sp-row-label">Manual Update</span>
+                <span class="sp-row-hint" id="manualUpdateHint">Check for updates to enable download</span>
+              </div>
+              <div class="manual-update-actions">
+                <button class="manual-update-download" id="btnManualDownloadUpdate" type="button" aria-label="Download update" disabled>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" x2="12" y1="15" y2="3"></line>
+                  </svg>
+                </button>
+                <button class="manual-update-apply" id="btnManualApplyUpdate" type="button" disabled>Apply update</button>
               </div>
             </div>
             <div class="sp-row">

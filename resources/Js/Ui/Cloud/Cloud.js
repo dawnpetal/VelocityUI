@@ -169,7 +169,12 @@ const cloud = (() => {
           const btn = e.currentTarget;
           btn.classList.add('loading');
           try {
-            const result = await injector.execute(await _getContent(script));
+            const content = await _getContent(script);
+            eventBus.emit('script:executing', {
+              filename: script.title,
+              source: 'cloud',
+            });
+            const result = await injector.execute(content);
             const port = await injector.getPort();
             toast.show(port ? `Executed on :${port}` : 'Executed', 'ok');
             if (result) console_.log(result, 'ok');

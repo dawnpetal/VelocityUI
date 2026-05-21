@@ -39,8 +39,22 @@ pub struct UiSettings {
     pub minimap: Option<bool>,
     #[serde(rename = "lineNumbers")]
     pub line_numbers: Option<bool>,
+    #[serde(rename = "appZoom", default, skip_serializing_if = "Option::is_none")]
+    pub app_zoom: Option<f64>,
+    #[serde(
+        rename = "hiddenActivityViews",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hidden_activity_views: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
+    #[serde(
+        rename = "autoUpdate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub auto_update: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

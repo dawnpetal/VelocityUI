@@ -832,6 +832,77 @@
   pointer-events: none;
 }
 
+.about-manual-update-row[hidden] {
+  display: none !important;
+}
+
+.manual-update-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 190px;
+}
+
+.manual-update-download,
+.manual-update-apply {
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg2) 92%, var(--text0) 8%);
+  color: var(--text1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 1px 0 rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition:
+    background 0.14s,
+    border-color 0.14s,
+    color 0.14s,
+    opacity 0.14s;
+}
+
+.manual-update-download {
+  width: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 7px;
+}
+
+.manual-update-download svg {
+  width: 15px;
+  height: 15px;
+}
+
+.manual-update-apply {
+  min-width: 150px;
+  padding: 0 15px;
+  border-radius: 7px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.manual-update-download:hover:not(:disabled),
+.manual-update-apply:hover:not(:disabled) {
+  background: var(--bg4);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  color: var(--text0);
+}
+
+.manual-update-download:disabled,
+.manual-update-apply:disabled {
+  background: color-mix(in srgb, var(--bg1) 86%, var(--text3) 14%);
+  border-color: color-mix(in srgb, var(--border) 76%, var(--text3) 24%);
+  color: var(--text4);
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .about-discord-btn {
   display: flex;
   align-items: center;

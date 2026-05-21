@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, Runtime,
 };
@@ -22,17 +22,60 @@ use tauri::{
 use app::AppContext;
 
 fn build_app_menu<R: Runtime>(app: &tauri::App<R>) -> Result<Menu<R>> {
+    let quit = MenuItem::with_id(
+        app,
+        "app:quit",
+        "Quit VelocityUI",
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
     let velocityui_menu = Submenu::with_items(
         app,
         "VelocityUI",
         true,
-        &[&MenuItem::with_id(
-            app,
-            "quit",
-            "Quit VelocityUI",
-            true,
-            Some("CmdOrCtrl+Q"),
-        )?],
+        &[
+            &MenuItem::with_id(
+                app,
+                "app:website",
+                "Velocity Website",
+                true,
+                Some("CmdOrCtrl+Shift+?"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "app:updates",
+                "Check for Updates...",
+                true,
+                None::<&str>,
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(app, "file:new", "New File", true, Some("CmdOrCtrl+N"))?,
+            &MenuItem::with_id(
+                app,
+                "file:open-folder",
+                "Open Folder...",
+                true,
+                Some("CmdOrCtrl+Shift+O"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "file:save", "Save", true, Some("CmdOrCtrl+S"))?,
+            &MenuItem::with_id(
+                app,
+                "file:close-tab",
+                "Close Tab",
+                true,
+                Some("CmdOrCtrl+W"),
+            )?,
+        ],
     )?;
 
     let edit_menu = Submenu::with_items(
@@ -47,11 +90,200 @@ fn build_app_menu<R: Runtime>(app: &tauri::App<R>) -> Result<Menu<R>> {
             &PredefinedMenuItem::copy(app, None)?,
             &PredefinedMenuItem::paste(app, None)?,
             &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "edit:format-document",
+                "Format Document",
+                true,
+                Some("Shift+Alt+F"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "edit:toggle-comment",
+                "Toggle Line Comment",
+                true,
+                Some("CmdOrCtrl+/"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
 
-    Ok(Menu::with_items(app, &[&velocityui_menu, &edit_menu])?)
+    let activity_visibility = Submenu::with_items(
+        app,
+        "Activity Bar Tabs",
+        true,
+        &[
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:explorer",
+                "Explorer",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:search",
+                "Search",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:datatree",
+                "DataTree",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:accounts",
+                "Accounts",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:pinboard",
+                "Pinboard",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:cloud",
+                "Cloud Scripts",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "activity:toggle:settings",
+                "Settings",
+                true,
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )?;
+
+    let view_menu = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "view:command-palette",
+                "Command Palette...",
+                true,
+                Some("CmdOrCtrl+P"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "view:explorer",
+                "Explorer",
+                true,
+                Some("CmdOrCtrl+Shift+E"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "view:search",
+                "Search",
+                true,
+                Some("CmdOrCtrl+Shift+F"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "view:datatree",
+                "DataTree",
+                true,
+                Some("CmdOrCtrl+Shift+D"),
+            )?,
+            &MenuItem::with_id(app, "view:accounts", "Accounts", true, None::<&str>)?,
+            &MenuItem::with_id(app, "view:pinboard", "Pinboard", true, None::<&str>)?,
+            &MenuItem::with_id(app, "view:cloud", "Cloud Scripts", true, None::<&str>)?,
+            &MenuItem::with_id(app, "view:settings", "Settings", true, Some("CmdOrCtrl+,"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "view:toggle-sidebar",
+                "Toggle Sidebar",
+                true,
+                Some("CmdOrCtrl+B"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "view:toggle-panel",
+                "Toggle Panel",
+                true,
+                Some("CmdOrCtrl+J"),
+            )?,
+            &activity_visibility,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "view:zoom-in", "Zoom In", true, Some("CmdOrCtrl+="))?,
+            &MenuItem::with_id(app, "view:zoom-out", "Zoom Out", true, Some("CmdOrCtrl+-"))?,
+            &MenuItem::with_id(
+                app,
+                "view:zoom-reset",
+                "Reset Zoom",
+                true,
+                Some("CmdOrCtrl+0"),
+            )?,
+        ],
+    )?;
+
+    let window_menu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "window:minimize",
+                "Minimize",
+                true,
+                Some("CmdOrCtrl+M"),
+            )?,
+            &MenuItem::with_id(app, "window:toggle-zoom", "Zoom", true, None::<&str>)?,
+        ],
+    )?;
+
+    let help_menu = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[
+            &MenuItem::with_id(app, "help:website", "Velocity Website", true, None::<&str>)?,
+            &MenuItem::with_id(app, "help:discord", "Join Discord", true, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                "help:updates",
+                "Check for Updates...",
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )?;
+
+    Ok(Menu::with_items(
+        app,
+        &[
+            &velocityui_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu,
+        ],
+    )?)
 }
 
 fn position_popover_below_tray(app: &AppHandle, tray_pos: tauri::PhysicalPosition<f64>) {
@@ -148,9 +380,12 @@ fn main() {
             let menu = build_app_menu(app)?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
-                if event.id() == "quit" {
+                let id = event.id().0.clone();
+                if id == "app:quit" {
                     app.exit(0);
+                    return;
                 }
+                let _ = app.emit("app-menu-command", id);
             });
 
             if let Err(e) = commands::seed::seed_default_workspace(app.handle()) {
@@ -186,6 +421,7 @@ fn main() {
                 }
             });
 
+            commands::console::ensure_console_monitor(app.handle().clone());
             commands::executor::start_autoexec_watcher(app.handle().clone(), executor_for_watcher);
 
             Ok(())
@@ -202,11 +438,12 @@ fn main() {
             commands::accounts::accounts_kill_all,
             commands::accounts::accounts_set_default,
             commands::accounts::accounts_is_launching,
+            commands::console::console_monitor_set_streaming,
+            commands::console::console_monitor_watch_errors,
             commands::io::get_app_paths,
             commands::io::read_text_file,
             commands::io::read_binary_file,
             commands::io::read_text_file_preview,
-            commands::io::read_text_file_from,
             commands::io::write_text_file,
             commands::io::write_binary_file,
             commands::io::read_dir,
@@ -224,6 +461,7 @@ fn main() {
             commands::window::close_window,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,
+            commands::window::set_app_zoom,
             commands::executor::inject_script,
             commands::executor::inject_script_with_client_bridge,
             commands::executor::get_active_port,
@@ -277,6 +515,8 @@ fn main() {
             commands::update::get_app_version,
             commands::update::check_for_update,
             commands::update::get_last_update_result,
+            commands::update::download_update,
+            commands::update::install_update_and_restart,
             commands::multi_instance::multiinstance_get_clients,
             commands::multi_instance::multiinstance_send_script,
             commands::multi_instance::multiinstance_send_script_many,

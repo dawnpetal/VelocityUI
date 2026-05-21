@@ -25,6 +25,10 @@ const PinboardOps = (() => {
     }
     const startTime = Date.now();
     try {
+      eventBus.emit('script:executing', {
+        filename: snippet.label,
+        source: 'pinboard',
+      });
       await injector.execute(snippet.code);
       const elapsed = Date.now() - startTime;
       const idx = findIdx(snippet.id);

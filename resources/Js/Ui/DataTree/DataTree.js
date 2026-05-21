@@ -28,8 +28,9 @@ const dataTree = (() => {
   const COMPLEX_VIEWPORT_DPR = 1.25;
   const INTERACTIVE_VIEWPORT_DPR = 1;
   const CONTACT_AO_SCALE = 0.5;
+  const ANY_MIME = '*' + '/' + '*';
   const ROBLOX_DESKTOP_HEADERS = {
-    Accept: '*/*',
+    Accept: ANY_MIME,
     'Accept-Language': 'en-US,en;q=0.9',
     'Cache-Control': 'no-cache',
     Pragma: 'no-cache',
@@ -56,6 +57,7 @@ const dataTree = (() => {
     query: '',
     propertyQuery: '',
     railExplorerHeight: null,
+    railWidth: null,
     previewTab: 'viewport',
     visibleOverflow: 0,
     scroll: { tree: 0, details: 0 },
@@ -86,11 +88,13 @@ const dataTree = (() => {
     importing: false,
     treeLoading: false,
     treeProgress: {
-      progress: 0,
+      progress: null,
       message: 'Loading explorer',
     },
     snapshotLoadToken: 0,
     previewReady: false,
+    visible: false,
+    memoryUnloaded: false,
     importProgress: {
       progress: 0,
       message: 'Waiting for file',
@@ -131,6 +135,12 @@ const dataTree = (() => {
   const _snapshotStoragePath = (id) => {
     const safeId = String(id || helpers.uid()).replace(/[^a-z0-9_-]/gi, '_');
     return `${paths.internals}/${SNAPSHOT_DIR}/${safeId}.json`;
+  };
+  const _explorerSnapshotStoragePath = (path = '') => {
+    const text = String(path || '');
+    const slash = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+    const dot = text.lastIndexOf('.');
+    return dot > slash ? `${text.slice(0, dot)}.explorer.json` : `${text}.explorer.json`;
   };
   const _escape = (value) => helpers.escapeHtml(String(value ?? ''));
   const _cssEscape = (value) =>
@@ -238,7 +248,8 @@ const dataTree = (() => {
           light,
         });
     snapshot.nodes = full.nodes || [];
-    snapshot.materialVariantNodes = full.materialVariantNodes || snapshot.materialVariantNodes || [];
+    snapshot.materialVariantNodes =
+      full.materialVariantNodes || snapshot.materialVariantNodes || [];
     snapshot.nodeCount = full.nodeCount ?? snapshot.nodes.length;
     snapshot.rootId = snapshot.rootId || full.rootId || snapshot.nodes[0]?.id || null;
     snapshot.expandedIds = snapshot.expandedIds || full.expandedIds || [];
@@ -291,6 +302,8 @@ const dataTree = (() => {
 
   function _loadActiveSnapshotForView() {
     const snapshot = activeSnapshot();
+    if (!state_.visible) return;
+    state_.memoryUnloaded = false;
     if (!snapshot?.storagePath || snapshot.byId || snapshot.nodes?.length || state_.treeLoading)
       return;
     const token = (state_.snapshotLoadToken || 0) + 1;
@@ -298,8 +311,8 @@ const dataTree = (() => {
     state_.snapshotLoadToken = token;
     state_.treeLoading = true;
     state_.treeProgress = {
-      progress: 0.08,
-      message: 'Loading saved explorer',
+      progress: null,
+      message: 'Opening optimized explorer snapshot',
     };
     state_.previewReady = false;
     render();
@@ -307,8 +320,8 @@ const dataTree = (() => {
       .then(() => {
         if (!_isActiveSnapshotLoad(token, snapshotId)) return;
         state_.treeProgress = {
-          progress: 0.9,
-          message: 'Preparing explorer',
+          progress: null,
+          message: 'Hydrating tree index',
         };
         _restoreSnapshotState(snapshot);
         state_.previewTab = 'raw';
@@ -321,7 +334,7 @@ const dataTree = (() => {
       .finally(() => {
         if (!_isActiveSnapshotLoad(token, snapshotId)) return;
         state_.treeProgress = {
-          progress: 1,
+          progress: null,
           message: 'Explorer ready',
         };
         state_.treeLoading = false;
@@ -331,7 +344,9 @@ const dataTree = (() => {
   }
 
   function _isActiveSnapshotLoad(token, snapshotId) {
-    return state_.snapshotLoadToken === token && state_.activeSnapshotId === snapshotId;
+    return (
+      state_.visible && state_.snapshotLoadToken === token && state_.activeSnapshotId === snapshotId
+    );
   }
 
   function _cancelSnapshotLoad() {
@@ -340,7 +355,9 @@ const dataTree = (() => {
   }
 
   function _nodeHasDetails(node) {
-    return Boolean(node?.detailLoaded || node?.properties || node?.itemAttributes || node?.attributes);
+    return Boolean(
+      node?.detailLoaded || node?.properties || node?.itemAttributes || node?.attributes,
+    );
   }
 
   async function _ensureActiveNodeDetailLoaded(snapshot = activeSnapshot()) {
@@ -374,6 +391,7 @@ const dataTree = (() => {
 
   function _schedulePreviewWarmup() {
     clearTimeout(_previewWarmupTimer);
+    if (!state_.visible) return;
     if (!activeSnapshot()?.byId) return;
     _previewWarmupTimer = setTimeout(() => {
       requestAnimationFrame(() => {
@@ -402,6 +420,7 @@ const dataTree = (() => {
   }
 
   function show() {
+    state_.visible = true;
     if (!_inited) {
       const root = _container();
       if (root) root.replaceChildren(_shellSkeleton('Preparing DataTree'));
@@ -411,11 +430,13 @@ const dataTree = (() => {
       return;
     }
     render();
-    requestAnimationFrame(_loadActiveSnapshotForView);
+    if (!state_.memoryUnloaded) requestAnimationFrame(_loadActiveSnapshotForView);
     if (activeSnapshot()?.byId && !state_.previewReady) _schedulePreviewWarmup();
   }
 
   function hide() {
+    state_.visible = false;
+    _cancelSnapshotLoad();
     clearTimeout(_previewWarmupTimer);
     state_.previewReady = false;
     const root = _container();
@@ -424,7 +445,35 @@ const dataTree = (() => {
       _disposeViewports(root);
       root.innerHTML = '';
     }
-    _releaseHeavyRenderState({ unloadSnapshots: false });
+    _releaseHeavyRenderState({ unloadSnapshots: false, preserveWarmState: true });
+  }
+
+  function unloadMemory() {
+    const snapshot = activeSnapshot();
+    if (!snapshot?.storagePath) {
+      toast.show('Nothing to unload yet', 'info', 1400);
+      return;
+    }
+    _persistSnapshotState(snapshot);
+    _cancelSnapshotLoad();
+    clearTimeout(_previewWarmupTimer);
+    state_.previewReady = false;
+    state_.memoryUnloaded = true;
+    const root = _container();
+    if (root) {
+      _rememberScroll(root);
+      _disposeViewports(root);
+    }
+    _releaseHeavyRenderState({ unloadSnapshots: true, preserveWarmState: false });
+    if (state_.visible) render();
+    toast.show('DataTree memory unloaded', 'ok', 1800);
+  }
+
+  function reloadMemory() {
+    if (!activeSnapshot()?.storagePath) return;
+    state_.memoryUnloaded = false;
+    render();
+    requestAnimationFrame(_loadActiveSnapshotForView);
   }
 
   async function openImportDialog() {
@@ -467,6 +516,7 @@ const dataTree = (() => {
       await _hydrateAsync(snapshot);
       state_.snapshots.unshift(snapshot);
       state_.snapshots = state_.snapshots.slice(0, SNAPSHOT_LIMIT);
+      state_.memoryUnloaded = false;
       await _activateSnapshot(snapshot.id);
       await _save();
       _log.info(`Import complete: ${snapshot.nodeCount} instances, id=${snapshot.id}`);
@@ -477,8 +527,10 @@ const dataTree = (() => {
     } finally {
       if (typeof unlisten === 'function') unlisten();
       state_.importing = false;
-      render();
-      _schedulePreviewWarmup();
+      if (state_.visible) {
+        render();
+        _schedulePreviewWarmup();
+      }
     }
   }
 
@@ -499,6 +551,7 @@ const dataTree = (() => {
     clearTimeout(_previewWarmupTimer);
     _cancelViewportBuild();
     state_.activeSnapshotId = snapshot?.id ?? null;
+    state_.memoryUnloaded = false;
     state_.previewReady = false;
     state_.previewTab = 'raw';
     _clearSceneCache();
@@ -716,7 +769,7 @@ const dataTree = (() => {
     const snapshot = activeSnapshot();
     const busy = state_.importing;
     bar.setAttribute('aria-busy', String(busy));
-    bar.innerHTML = `<div class="dt-title-block"><h2>DataTree</h2><p>${busy ? 'Importing RBXLX' : 'RBXLX Explorer'}</p></div><div class="dt-actions"><select class="dt-snapshot-select" aria-label="Saved DataTrees"${busy ? ' disabled' : ''}>${state_.snapshots.map((item) => `<option value="${_escape(item.id)}"${item.id === state_.activeSnapshotId ? ' selected' : ''}>${_escape(item.name || 'Untitled DataTree')}</option>`).join('') || '<option>No imports</option>'}</select><button class="dt-icon-action" type="button" data-action="delete" title="Delete import"${busy ? ' disabled' : ''}>Delete</button><button class="dt-btn dt-btn-primary" data-action="import"${busy ? ' disabled' : ''}>${busy ? 'Importing RBXLX' : 'Import RBXLX'}</button></div>`;
+    bar.innerHTML = `<div class="dt-title-block"><h2>DataTree</h2><p>${busy ? 'Importing RBXLX' : 'RBXLX Explorer'}</p></div><div class="dt-actions"><select class="dt-snapshot-select" aria-label="Saved DataTrees"${busy ? ' disabled' : ''}>${state_.snapshots.map((item) => `<option value="${_escape(item.id)}"${item.id === state_.activeSnapshotId ? ' selected' : ''}>${_escape(item.name || 'Untitled DataTree')}</option>`).join('') || '<option>No imports</option>'}</select><button class="dt-icon-action dt-memory-action" type="button" data-action="${state_.memoryUnloaded ? 'reload-memory' : 'unload-memory'}" title="${state_.memoryUnloaded ? 'Reload this DataTree into memory' : 'Unload this DataTree from memory when you are done inspecting it'}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>${state_.memoryUnloaded ? 'Reload' : 'Unload'}</button><button class="dt-icon-action" type="button" data-action="delete" title="Delete import"${busy ? ' disabled' : ''}>Delete</button><button class="dt-btn dt-btn-primary" data-action="import"${busy ? ' disabled' : ''}>${busy ? 'Importing RBXLX' : 'Import RBXLX'}</button></div>`;
     const select = bar.querySelector('.dt-snapshot-select');
     select?.addEventListener('change', async () => {
       if (state_.importing) return;
@@ -725,6 +778,8 @@ const dataTree = (() => {
       render();
       requestAnimationFrame(_loadActiveSnapshotForView);
     });
+    bar.querySelector('[data-action="unload-memory"]')?.addEventListener('click', unloadMemory);
+    bar.querySelector('[data-action="reload-memory"]')?.addEventListener('click', reloadMemory);
     bar.querySelector('[data-action="delete"]')?.addEventListener('click', deleteSnapshot);
     bar.querySelector('[data-action="import"]')?.addEventListener('click', () => importRbxlx());
     if (!snapshot) {
@@ -770,26 +825,99 @@ const dataTree = (() => {
     overlay.className = 'dt-busy-overlay';
     overlay.setAttribute('role', 'status');
     overlay.setAttribute('aria-live', 'polite');
-    const pct = Math.round(Math.max(0.02, Math.min(1, state_.treeProgress.progress || 0.02)) * 100);
+    const progress = Number(state_.treeProgress.progress);
+    const hasProgress = Number.isFinite(progress);
+    const pct = hasProgress ? Math.round(Math.max(0.02, Math.min(1, progress)) * 100) : null;
     const snapshot = activeSnapshot();
     const count = snapshot?.nodeCount
       ? `${snapshot.nodeCount.toLocaleString()} instances`
       : 'Preparing explorer';
-    overlay.innerHTML = `<div class="dt-busy-card"><span class="dt-busy-spinner"></span><strong>Loading Explorer</strong><p class="dt-import-message">${_escape(state_.treeProgress.message || 'Loading saved explorer')}</p><div class="dt-progress-track dt-import-progress"><span style="width:${pct}%"></span></div><small class="dt-import-meta">${pct}% · ${_escape(count)}</small></div>`;
+    overlay.innerHTML = `<div class="dt-busy-card"><span class="dt-busy-spinner"></span><strong>Loading Explorer</strong><p class="dt-import-message">${_escape(state_.treeProgress.message || 'Loading saved explorer')}</p><div class="dt-progress-track dt-import-progress${hasProgress ? '' : ' is-indeterminate'}"><span style="width:${hasProgress ? pct : 42}%"></span></div><small class="dt-import-meta">${hasProgress ? `${pct}% · ` : ''}${_escape(count)}</small></div>`;
     return overlay;
   }
 
   function _content() {
     const wrap = document.createElement('div');
     wrap.className = 'dt-content';
+    if (state_.railWidth) wrap.style.setProperty('--dt-side-width', `${state_.railWidth}px`);
+    if (state_.memoryUnloaded) {
+      wrap.append(_memoryUnloadedPane(), _sideSplitter(wrap), _memoryUnloadedSide());
+      return wrap;
+    }
     const side = document.createElement('section');
     side.className = `dt-side${state_.treeLoading ? ' dt-side--loading' : ''}`;
     if (state_.railExplorerHeight) {
       side.style.setProperty('--dt-explorer-height', `${state_.railExplorerHeight}px`);
     }
     side.append(_treePane(), _railSplitter(side), _detailsPane());
-    wrap.append(state_.previewReady ? _previewPane() : _previewDormantPane(), side);
+    wrap.append(
+      state_.previewReady ? _previewPane() : _previewDormantPane(),
+      _sideSplitter(wrap),
+      side,
+    );
     return wrap;
+  }
+
+  function _memoryUnloadedPane() {
+    const pane = document.createElement('main');
+    pane.className = 'dt-preview-pane';
+    pane.innerHTML =
+      '<div class="dt-preview-empty dt-preview-empty--deferred"><span>DataTree is unloaded</span><p>The saved import is still available. Reload it when you want to inspect it again.</p><button class="dt-btn dt-btn-primary" type="button" data-action="reload-memory">Reload DataTree</button></div>';
+    pane.querySelector('[data-action="reload-memory"]')?.addEventListener('click', reloadMemory);
+    return pane;
+  }
+
+  function _memoryUnloadedSide() {
+    const side = document.createElement('section');
+    side.className = 'dt-side dt-side--loading';
+    side.innerHTML =
+      '<main class="dt-tree-pane"><div class="dt-tree-toolbar"><div><span class="dt-tree-title">Data Model Explorer</span><small>Memory unloaded</small></div></div><div class="dt-tree-list"><div class="dt-empty">Reload DataTree to restore the explorer.</div></div></main><aside class="dt-details"><div class="dt-empty">Inspector is sleeping.</div></aside>';
+    return side;
+  }
+
+  function _sideSplitter(content) {
+    const handle = document.createElement('div');
+    handle.className = 'dt-side-splitter';
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.title = 'Drag to resize DataTree inspector';
+    let dragging = false;
+    let pointerId = null;
+    const minSide = 320;
+    const maxSide = 560;
+    const minPreview = 520;
+    const move = (event) => {
+      if (!dragging) return;
+      const rect = content.getBoundingClientRect();
+      const maxByPreview = Math.max(minSide, rect.width - minPreview - handle.offsetWidth);
+      const max = Math.min(maxSide, maxByPreview);
+      const next = Math.max(minSide, Math.min(max, rect.right - event.clientX));
+      state_.railWidth = Math.round(next);
+      content.style.setProperty('--dt-side-width', `${state_.railWidth}px`);
+    };
+    const stop = () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      if (pointerId != null) handle.releasePointerCapture?.(pointerId);
+      pointerId = null;
+    };
+    handle.addEventListener('pointerdown', (event) => {
+      dragging = true;
+      pointerId = event.pointerId;
+      handle.classList.add('dragging');
+      handle.setPointerCapture?.(pointerId);
+      move(event);
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('dblclick', () => {
+      state_.railWidth = null;
+      content.style.removeProperty('--dt-side-width');
+    });
+    return handle;
   }
 
   function _railSplitter(side) {
@@ -856,8 +984,12 @@ const dataTree = (() => {
     _releaseSnapshotPayload(snapshot, snapshot.id === state_.activeSnapshotId);
     _releaseHeavyRenderState({ unloadSnapshots: false });
     state_.snapshots = state_.snapshots.filter((item) => item.id !== snapshot.id);
-    if (snapshot.storagePath)
+    if (snapshot.storagePath) {
       window.__TAURI__.core.invoke('remove_path', { path: snapshot.storagePath }).catch(() => {});
+      window.__TAURI__.core
+        .invoke('remove_path', { path: _explorerSnapshotStoragePath(snapshot.storagePath) })
+        .catch(() => {});
+    }
     await _activateSnapshot(state_.snapshots[0]?.id ?? null);
     _saveSoon();
     render();
@@ -1026,7 +1158,7 @@ const dataTree = (() => {
     scope?.querySelectorAll?.('.dt-viewport-canvas').forEach((canvas) => canvas.__dtDispose?.());
   }
 
-  function _releaseHeavyRenderState({ unloadSnapshots = false } = {}) {
+  function _releaseHeavyRenderState({ unloadSnapshots = false, preserveWarmState = false } = {}) {
     const activeBuildScene = state_.viewportBuild.scene;
     _cancelViewportBuild();
     for (const scene of state_.sceneCache.values()) _releaseSceneCpuMesh(scene);
@@ -1037,14 +1169,16 @@ const dataTree = (() => {
     state_.assetBlobs.clear();
     state_.assetByteFetches.clear();
     state_.terrainCells.clear();
-    state_.viewportCameras.clear();
-    state_.viewportSummary.clear();
     state_.nodeDetailLoads.clear();
     state_.meshVersion += 1;
-    state_.viewportAutoLoad = false;
-    state_.viewportClickSelect = false;
-    state_.visibleOverflow = 0;
-    for (const snapshot of state_.snapshots) _stripHeavySnapshotValues(snapshot);
+    if (!preserveWarmState) {
+      state_.viewportCameras.clear();
+      state_.viewportSummary.clear();
+      state_.viewportAutoLoad = false;
+      state_.viewportClickSelect = false;
+      state_.visibleOverflow = 0;
+      for (const snapshot of state_.snapshots) _stripHeavySnapshotValues(snapshot);
+    }
     if (!unloadSnapshots) return;
     const activeId = state_.activeSnapshotId;
     for (const snapshot of state_.snapshots)
@@ -1474,6 +1608,7 @@ const dataTree = (() => {
   }
 
   function _ensureViewportBuild(snapshot, node, key) {
+    if (!state_.visible) return;
     if (!snapshot || !node) return;
     const current = state_.viewportBuild;
     if (current.key === key && (current.status === 'scanning' || current.status === 'building')) {
@@ -1519,6 +1654,7 @@ const dataTree = (() => {
   }
 
   async function _buildViewportSceneProgressive(snapshot, node, key, token) {
+    if (!state_.visible) return;
     let renderSnapshot = snapshot;
     let renderNode = node;
     if (snapshot.storagePath) {
@@ -1529,7 +1665,11 @@ const dataTree = (() => {
       });
       renderSnapshot = await _loadRenderSnapshot(snapshot, node);
       renderNode = renderSnapshot.byId?.get(node.id) || renderNode;
-      if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== key) {
+      if (
+        !state_.visible ||
+        state_.viewportBuild.token !== token ||
+        state_.viewportBuild.key !== key
+      ) {
         return;
       }
     }
@@ -1539,7 +1679,12 @@ const dataTree = (() => {
     const stack = [renderNode];
     let scanned = 0;
     while (stack.length) {
-      if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== key) return;
+      if (
+        !state_.visible ||
+        state_.viewportBuild.token !== token ||
+        state_.viewportBuild.key !== key
+      )
+        return;
       const sliceStart = performance.now();
       while (stack.length && performance.now() - sliceStart < 8) {
         const current = stack.pop();
@@ -1577,7 +1722,8 @@ const dataTree = (() => {
       message: `Building preview · ${parts.length.toLocaleString()} renderables`,
     });
     const scene = await _buildSceneProgressive(parts, key, token, renderSnapshot);
-    if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== key) return;
+    if (!state_.visible || state_.viewportBuild.token !== token || state_.viewportBuild.key !== key)
+      return;
     state_.sceneCache.set(key, scene);
     _trimSceneCache();
     _updateViewportBuild(key, {
@@ -1607,7 +1753,11 @@ const dataTree = (() => {
     const aabbs = [];
     let omittedParts = 0;
     for (let i = 0; i < parts.length; i += 1) {
-      if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== key)
+      if (
+        !state_.visible ||
+        state_.viewportBuild.token !== token ||
+        state_.viewportBuild.key !== key
+      )
         return _emptyScene();
       if (mesh.visualVertexCount() >= budget.maxVertices) {
         omittedParts = parts.length - i;
@@ -1845,8 +1995,6 @@ const dataTree = (() => {
         bloom: 0,
       },
       ambient: {
-        // Neutral inspection ambient, not imported game mood lighting. Keep this low
-        // enough that the sun/normal relationship can create real form separation.
         sky: [156, 156, 156],
         ground: [76, 76, 76],
       },
@@ -3844,6 +3992,7 @@ const dataTree = (() => {
       for (const group of buffers.textured || []) {
         if (group?.buffer) gl.deleteBuffer(group.buffer);
         if (group?.texture) gl.deleteTexture(group.texture);
+        if (group?.heightTexture) gl.deleteTexture(group.heightTexture);
       }
     };
     canvas.__dtUpdateScene = (nextScene) => {
@@ -4182,10 +4331,15 @@ const dataTree = (() => {
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, group.texture);
           gl.uniform1i(textureProgram.uTexture, 0);
+          gl.activeTexture(gl.TEXTURE1);
+          gl.bindTexture(gl.TEXTURE_2D, group.heightTexture || group.texture);
+          if (textureProgram.uHeightTexture) gl.uniform1i(textureProgram.uHeightTexture, 1);
           if (textureProgram.uTextureDetail)
             gl.uniform1f(textureProgram.uTextureDetail, group.textureInfo?.detailStrength ?? 1);
           if (textureProgram.uTextureDetile)
             gl.uniform1f(textureProgram.uTextureDetile, group.textureInfo?.detileStrength ?? 0);
+          if (textureProgram.uHeightStrength)
+            gl.uniform1f(textureProgram.uHeightStrength, group.textureInfo?.heightStrength ?? 0);
           if (textureProgram.uTextureMean) {
             const mean = group.textureInfo?.meanColor || [1, 1, 1];
             gl.uniform3f(textureProgram.uTextureMean, mean[0], mean[1], mean[2]);
@@ -4523,7 +4677,8 @@ const dataTree = (() => {
   const VIEWPORT_REFRESH_BATCH = 32;
 
   async function _loadViewportAssets(assets = [], nodeId, buildKey = '', token = null) {
-    const isActive = () => token == null || _isViewportBuildActive(buildKey, token);
+    const isActive = () =>
+      state_.visible && (token == null || _isViewportBuildActive(buildKey, token));
     if (!isActive()) return;
     const pending = [];
     for (const asset of assets) {
@@ -4639,6 +4794,7 @@ const dataTree = (() => {
   }
 
   function _scheduleViewportAssetRetry(assets = [], nodeId, buildKey = '', token = null) {
+    if (!state_.visible) return;
     if (!_isViewportBuildActive(buildKey, token)) return;
     const job = state_.viewportBuild;
     if (job.assetRetryTimer) {
@@ -4672,6 +4828,7 @@ const dataTree = (() => {
   }
 
   async function _refreshViewportSceneLive(buildKey, nodeId, opts = {}) {
+    if (!state_.visible) return;
     const job = state_.viewportBuild;
     if (!buildKey || job.key !== buildKey || !job.renderSnapshot) return;
     const snapshot = job.renderSnapshot;
@@ -4702,7 +4859,12 @@ const dataTree = (() => {
     const parts = [];
     const stack = [node];
     while (stack.length) {
-      if (state_.viewportBuild.token !== token || state_.viewportBuild.key !== key) return parts;
+      if (
+        !state_.visible ||
+        state_.viewportBuild.token !== token ||
+        state_.viewportBuild.key !== key
+      )
+        return parts;
       const sliceStart = performance.now();
       while (stack.length && performance.now() - sliceStart < 6) {
         const current = stack.pop();
@@ -4841,7 +5003,7 @@ const dataTree = (() => {
       timeoutMs: MESH_FETCH_TIMEOUT_MS,
       headers: {
         ...ROBLOX_DESKTOP_HEADERS,
-        Accept: 'application/octet-stream,*/*',
+        Accept: ['application/octet-stream', ANY_MIME].join(','),
       },
       validate: _isMeshPayload,
     });
@@ -4952,7 +5114,10 @@ const dataTree = (() => {
       let deliveryDenial = null;
       let deliveryDenialCount = 0;
       const requestHeaders = headers || ROBLOX_DESKTOP_HEADERS;
-      const deliveryHeaders = { ...ROBLOX_DESKTOP_HEADERS, Accept: 'application/json,*/*' };
+      const deliveryHeaders = {
+        ...ROBLOX_DESKTOP_HEADERS,
+        Accept: ['application/json', ANY_MIME].join(','),
+      };
 
       for (const apiUrl of _assetDeliveryApiUrls(numericId)) {
         try {
@@ -5832,32 +5997,32 @@ const dataTree = (() => {
         float geoAO = clamp(dot(n, geoN)*0.6+0.4, 0.0, 1.0);
         float ao = min(geoAO, cavAO);
 
-        // Base albedo — use the authored color as-is unless a real texture path overrides it.
+
         vec3 baseRgb = pow(max(vColor.rgb, vec3(0.0)), vec3(2.2));
 
-        // PBR f0
+
         vec3 f0 = mix(vec3(f0scalar), baseRgb, metallic);
         vec3 diffAlbedo = baseRgb * (1.0 - metallic);
 
-        // ── Sun direct ──────────────────────────────────────────────────────────
+
         float wrapNdl = clamp((ndl + 0.08)/1.08, 0.0, 1.0);
         vec3 sunSpec  = specularBRDF(ndh, max(ndl,0.001), ndv, vdh, rough, f0) * ndl * uSunStrength;
-        // Diffuse: keep the neutral inspector path physically closer to the textured path.
+
         vec3 kd       = (vec3(1.0) - F_Schlick(f0, vdh)) * (1.0 - metallic);
         vec3 sunDiff  = kd * diffAlbedo / PI * wrapNdl * uSunStrength;
         vec3 sunLight = (sunDiff + sunSpec) * uSunColor;
 
-        // ── Hemisphere ambient IBL ───────────────────────────────────────────────
+
         float hemi   = n.y * 0.5 + 0.5;
         vec3 sky     = uSkyColor;
         vec3 ground  = uGroundColor;
-        // Lean hemisphere ambient: enough readability to inspect forms, but no fake
-        // brightness floor that erases the difference between lit and unlit faces.
+
+
         vec3 envDiff = mix(ground * 0.92, sky, hemi) * 0.28 + vec3(0.025);
         envDiff     += uLocalAmbient * (0.42 + hemi * 0.12);
         envDiff     *= ao;
 
-        // ── Specular IBL ────────────────────────────────────────────────────────
+
         vec3 refl        = reflect(-viewDir, n);
         float refHemi    = clamp(refl.y*0.5+0.5, 0.0, 1.0);
         vec3 envRef      = mix(ground * 0.92, sky * 1.03, refHemi);
@@ -5865,20 +6030,20 @@ const dataTree = (() => {
         vec3 envSample   = mix(envRef, envRefBlur, rough*rough);
         vec3 iblSpec     = iblSpecular(f0, rough, ndv, envSample) * ao;
 
-        // ── Cheap indirect light ──────────────────────────────────────────────────
-        // One restrained sky fill plus a little ground bounce is more believable and
-        // cheaper than the old multi-directional wrap/back-fill stack.
+
+
+
         vec3 fillDir  = normalize(vec3(-0.55, 0.30, -0.50));
         float fillNdl = max(dot(n, fillDir), 0.0);
         vec3 skyFill  = sky * fillNdl * diffAlbedo * 0.06;
-        vec3 bounceDir = vec3(0.0, 1.0, 0.0); // straight up ground reflect
-        float bounceNdl = max(dot(-n, bounceDir), 0.0); // hits downward-facing surfaces
+        vec3 bounceDir = vec3(0.0, 1.0, 0.0);
+        float bounceNdl = max(dot(-n, bounceDir), 0.0);
         vec3 bounce = ground * bounceNdl * diffAlbedo * 0.08;
 
-        // ── Diffuse ambient total ────────────────────────────────────────────────
+
         vec3 ambientDiff = diffAlbedo * envDiff;
 
-        // ── Subsurface scattering ────────────────────────────────────────────────
+
         vec3 sss = vec3(0.0);
         if (sssStr > 0.001) {
           float backL   = max(dot(-n, sunDir)*0.5+0.5, 0.0);
@@ -5886,7 +6051,7 @@ const dataTree = (() => {
           sss = baseRgb * uSunColor * backL * thickness * sssStr * uSunStrength * 0.55;
         }
 
-        // ── Dynamic point/spot lights ────────────────────────────────────────────
+
         vec3 localLights = dynamicLights(vPosition, n, viewDir, rough, f0);
 
         float alpha = vColor.a;
@@ -5894,22 +6059,22 @@ const dataTree = (() => {
         vec3 lit;
 
         if (flag == 1) {
-          // Neon — emissive
+
           float emRim = pow(1.0 - abs(dot(n, sunDir)), 2.8) * 0.5;
           lit = baseRgb * 2.2 + vec3(emRim * 0.4) + baseRgb * localLights * 0.5;
           lit = clamp(lit, 0.0, 4.0);
         } else if (flag == 2) {
-          // Water / glass
+
           vec3 diffuse  = diffAlbedo * (envDiff + sunDiff*0.45 + skyFill + bounce + localLights);
           float wF      = pow(1.0 - max(dot(n, sunDir), 0.0), 3.0);
           vec3 spec2    = specularBRDF(ndh, max(ndl,0.001), ndv, vdh, 0.04, f0) * ndl * uSunStrength * uSunColor;
           lit = mix(diffuse, iblSpec + envSample*0.15, wF*0.55) + spec2*0.9 + localLights*diffAlbedo;
           alpha = min(alpha, 0.58);
         } else if (flag == 3) {
-          // Metal
+
           lit = iblSpec + sunLight + localLights + skyFill*0.3;
         } else {
-          // Standard PBR
+
           lit = ambientDiff + iblSpec + sunLight + skyFill + bounce + sss + localLights;
         }
 
@@ -6003,8 +6168,10 @@ const dataTree = (() => {
       `
       precision highp float;
       uniform sampler2D uTexture;
+      uniform sampler2D uHeightTexture;
       uniform float uTextureDetail;
       uniform float uTextureDetile;
+      uniform float uHeightStrength;
       uniform vec3  uTextureMean;
       varying vec4 vColor;
       varying vec3 vNormal;
@@ -6093,8 +6260,21 @@ const dataTree = (() => {
         float seed = valueNoise(uv * 0.17 + vec2(19.3, 7.1));
         vec2 altUv = vec2(uv.y, -uv.x) * (0.82 + seed * 0.29) + vec2(17.17, 9.37);
         vec4 alternate = texture2D(uTexture, fract(altUv));
-        float amount = uTextureDetile * (0.18 + seed * 0.34);
+        float amount = uTextureDetile * (0.15 + seed * 0.27);
         return mix(primary, alternate, amount);
+      }
+      float sampleHeightDetail(vec2 uv) {
+        if (uHeightStrength < 0.001) return 1.0;
+        vec2 baseUv = fract(uv);
+        vec2 tap = vec2(0.0018);
+        float h = texture2D(uHeightTexture, baseUv).r;
+        float l = texture2D(uHeightTexture, fract(baseUv - vec2(tap.x, 0.0))).r;
+        float r = texture2D(uHeightTexture, fract(baseUv + vec2(tap.x, 0.0))).r;
+        float d = texture2D(uHeightTexture, fract(baseUv - vec2(0.0, tap.y))).r;
+        float u = texture2D(uHeightTexture, fract(baseUv + vec2(0.0, tap.y))).r;
+        float cavity = clamp(1.0 + (h * 4.0 - l - r - d - u) * 1.32, 0.78, 1.27);
+        float level = clamp(0.89 + h * 0.22, 0.84, 1.17);
+        return mix(1.0, cavity * level, uHeightStrength);
       }
       vec3 dynamicLights(vec3 worldPos, vec3 n, vec3 viewDir, float rough, vec3 f0) {
         vec3 total=vec3(0.0);
@@ -6135,26 +6315,28 @@ const dataTree = (() => {
         float hemi = n.y*0.5+0.5;
         vec3 sky=uSkyColor, ground=uGroundColor;
 
-        // Textured surfaces default to rough dielectric plastic (rough=0.7, f0=0.04)
-        float rough=0.70;
-        vec3 f0=vec3(0.04);
+
+        float rough=0.86;
+        vec3 f0=vec3(0.025);
 
         vec3 authoredRgb = pow(max(vColor.rgb,vec3(0.0)),vec3(2.2));
         vec3 sampledRgb = pow(max(tex.rgb,vec3(0.0)),vec3(2.2));
         vec3 meanRgb = pow(max(uTextureMean,vec3(0.02)),vec3(2.2));
-        vec3 relativeTexture = clamp(sampledRgb / meanRgb, vec3(0.42), vec3(1.85));
+        vec3 relativeTexture = clamp(sampledRgb / meanRgb, vec3(0.36), vec3(2.12));
+        relativeTexture = pow(relativeTexture, vec3(1.09));
         vec3 texRgb = authoredRgb * mix(vec3(1.0), relativeTexture, clamp(uTextureDetail,0.0,1.0));
+        texRgb *= sampleHeightDetail(vUv);
         float alpha = tex.a*vColor.a;
         int flag = int(vFlag+0.5);
 
-        // Ambient IBL
+
         vec3 envDiff = mix(ground*0.92,sky,hemi)*0.28+vec3(0.025)+uLocalAmbient*(0.42+hemi*0.12);
         vec3 refl = reflect(-viewDir,n);
         vec3 envRef = mix(ground,sky,clamp(refl.y*0.5+0.5,0.0,1.0));
         vec2 brdf = envBRDF(ndv,rough);
         vec3 iblSpec = envRef*(f0*brdf.x+brdf.y);
 
-        // Sun direct
+
         float wrapNdl=clamp((ndl+0.08)/1.08,0.0,1.0);
         vec3 kd=(vec3(1.0)-F_Schlick(f0,vdh));
         vec3 sunDiff=kd*texRgb/PI*wrapNdl*uSunStrength;
@@ -6211,8 +6393,10 @@ const dataTree = (() => {
       aFlag: gl.getAttribLocation(program, 'aFlag'),
       uMvp: gl.getUniformLocation(program, 'uMvp'),
       uTexture: gl.getUniformLocation(program, 'uTexture'),
+      uHeightTexture: gl.getUniformLocation(program, 'uHeightTexture'),
       uTextureDetail: gl.getUniformLocation(program, 'uTextureDetail'),
       uTextureDetile: gl.getUniformLocation(program, 'uTextureDetile'),
+      uHeightStrength: gl.getUniformLocation(program, 'uHeightStrength'),
       uTextureMean: gl.getUniformLocation(program, 'uTextureMean'),
       uCamOffset: gl.getUniformLocation(program, 'uCamOffset'),
       uCameraPos: gl.getUniformLocation(program, 'uCameraPos'),
@@ -6368,6 +6552,14 @@ const dataTree = (() => {
       vertexCount: group.vertexCount,
       stride: stride * 4,
       texture: _createGlTexture(gl, group.texture, onTextureReady),
+      heightTexture: group.texture?.heightUrl
+        ? _createGlTexture(
+            gl,
+            { key: `${group.texture.key}:height`, localUrl: group.texture.heightUrl },
+            onTextureReady,
+            [128, 128, 128, 255],
+          )
+        : null,
       textureInfo: group.texture,
     };
   }
@@ -6388,7 +6580,12 @@ const dataTree = (() => {
     }
   }
 
-  function _createGlTexture(gl, textureInfo, onTextureReady = null) {
+  function _createGlTexture(
+    gl,
+    textureInfo,
+    onTextureReady = null,
+    fallbackPixel = [255, 255, 255, 255],
+  ) {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
@@ -6409,7 +6606,7 @@ const dataTree = (() => {
       0,
       gl.RGBA,
       gl.UNSIGNED_BYTE,
-      new Uint8Array([255, 255, 255, 255]),
+      new Uint8Array(fallbackPixel),
     );
     _textureUrl(textureInfo)
       .then((url) => _loadImage(url))
@@ -6429,7 +6626,7 @@ const dataTree = (() => {
           gl.texParameterf(
             gl.TEXTURE_2D,
             anisotropyExt.TEXTURE_MAX_ANISOTROPY_EXT,
-            Math.min(8, maxAnisotropy),
+            Math.min(16, maxAnisotropy),
           );
         }
         onTextureReady?.();
@@ -6887,7 +7084,7 @@ const dataTree = (() => {
     wrap.className = 'dt-workbench dt-workbench--single';
     if (!_nodeHasDetails(node)) {
       wrap.innerHTML =
-        '<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Raw</span></div><div class="dt-empty-small">Loading serialized XML for this instance...</div></section>';
+        '<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Raw</span></div><div class="dt-empty-small">Loading stored values for this instance...</div></section>';
       return wrap;
     }
     wrap.innerHTML = `<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Raw</span><small>${_escape(_nodePath(activeSnapshot(), node))}</small></div><pre>${_escape(JSON.stringify(node, null, 2))}</pre></section>`;
@@ -6958,34 +7155,120 @@ const dataTree = (() => {
       pane.innerHTML = '<div class="dt-empty">Select an instance to inspect metadata.</div>';
       return pane;
     }
+    const title = `${node.className || 'Instance'} "${node.name || 'Unnamed'}"`;
+    const subtitle = `${Number(node.childCount || 0).toLocaleString()} children`;
     if (!_nodeHasDetails(node)) {
-      pane.innerHTML = `<div class="dt-details-head"><div><span>Properties - ${_escape(node.className)} "${_escape(node.name)}"</span><small>${Number(node.childCount || 0).toLocaleString()} children</small></div></div><div class="dt-empty">Loading properties and attributes...</div>`;
+      pane.innerHTML = `<div class="dt-details-head"><div><span>${_escape(title)}</span><small>${_escape(subtitle)}</small></div></div><div class="dt-empty">Loading properties and attributes...</div>`;
       return pane;
     }
-    pane.innerHTML = `<div class="dt-details-head"><div><span>Properties - ${_escape(node.className)} "${_escape(node.name)}"</span><small>${Number(node.childCount || 0).toLocaleString()} children</small></div></div><label class="dt-property-filter"><input placeholder="Filter Properties" value="${_escape(state_.propertyQuery)}" spellcheck="false"></label>`;
+    pane.innerHTML = `<div class="dt-details-head"><div><span>${_escape(title)}</span><small>${_escape(subtitle)}</small></div></div><label class="dt-property-filter"><input placeholder="Filter properties" value="${_escape(state_.propertyQuery)}" spellcheck="false"></label>`;
     _wirePropertyFilter(pane);
+    const query = state_.propertyQuery;
     const studioGroups = DataTreeStudioProperties.groupsFor(node, state_.propertyQuery);
+    const groupedPropertyKeys = new Set();
+    for (const group of studioGroups) {
+      for (const entry of group.entries || []) {
+        if (entry.sourceKey) groupedPropertyKeys.add(String(entry.sourceKey).toLowerCase());
+      }
+    }
+    const body = document.createElement('div');
+    body.className = 'dt-details-body';
     const studioWrap = document.createElement('div');
     studioWrap.className = 'dt-studio-properties';
     if (studioGroups.length) {
       studioWrap.append(...studioGroups.map((group) => _studioSection(group, node)));
-    } else {
-      studioWrap.innerHTML = `<div class="dt-empty-small">${state_.propertyQuery ? 'No matching Studio properties.' : 'No serialized Studio properties for this instance.'}</div>`;
+      body.appendChild(studioWrap);
     }
-    pane.appendChild(studioWrap);
 
-    const raw = document.createElement('details');
-    raw.className = 'dt-raw-details';
-    raw.open = true;
-    raw.innerHTML = '<summary>Serialized XML</summary>';
-    raw.append(
-      _kvSection('Item Attributes', node.itemAttributes, node),
-      _kvSection('Properties', node.properties, node, node.propertyTypes),
-      _kvSection('Attributes', node.attributes, node, node.attributeTypes),
-      _tagSection(node.tags),
+    const extraProperties = _kvSection(
+      'Additional Properties',
+      node.properties,
+      node,
+      node.propertyTypes,
+      {
+        excludeKeys: groupedPropertyKeys,
+        query,
+        storageSection: 'Properties',
+        presentationSection: 'Properties',
+        hideWhenEmpty: studioGroups.length > 0 && !query,
+      },
     );
-    pane.appendChild(raw);
+    const itemMetadata = _kvSection('Item Metadata', node.itemAttributes, node, null, {
+      query,
+      storageSection: 'itemAttributes',
+      hideWhenEmpty: !query,
+    });
+    const customAttributes = _kvSection(
+      'Custom Attributes',
+      node.attributes,
+      node,
+      node.attributeTypes,
+      {
+        query,
+        storageSection: 'attributes',
+        hideWhenEmpty: !query,
+      },
+    );
+    const tags = _tagSection(node.tags, query, { hideWhenEmpty: !query });
+    for (const section of [extraProperties, itemMetadata, customAttributes, tags]) {
+      if (section) body.appendChild(section);
+    }
+    if (!body.childElementCount) {
+      body.innerHTML = `<div class="dt-empty-small">${query ? 'No properties match this filter.' : 'No stored metadata for this instance.'}</div>`;
+    }
+    pane.appendChild(body);
     return pane;
+  }
+
+  function _filterEntries(title, data, typeMap = null, options = {}) {
+    const query = String(options.query || '')
+      .trim()
+      .toLowerCase();
+    const excludeKeys = options.excludeKeys || null;
+    return Object.entries(data || {}).filter(([key, value]) => {
+      if (excludeKeys?.has?.(String(key).toLowerCase())) return false;
+      if (!query) return true;
+      const type = String(typeMap?.[key] || '');
+      const haystack = `${title} ${key} ${type} ${_formatValue(value)}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  function _appendSectionCount(section, title, count) {
+    section.innerHTML = `<span><strong>${_escape(title)}</strong><em>${count.toLocaleString()}</em></span>`;
+  }
+
+  function _kvSection(title, data, node, typeMap = null, options = {}) {
+    const entries = _filterEntries(title, data, typeMap, options);
+    if (!entries.length && options.hideWhenEmpty) return null;
+    const section = document.createElement('section');
+    section.className = 'dt-kv-section';
+    _appendSectionCount(section, title, entries.length);
+    if (!entries.length) {
+      section.insertAdjacentHTML('beforeend', '<div class="dt-empty-small">None</div>');
+      return section;
+    }
+    const storageSection = options.storageSection || title;
+    const presentationSection = options.presentationSection || storageSection;
+    for (const [key, value] of entries) {
+      const type = String(typeMap?.[key] || '');
+      const presentation = _valuePresentation(presentationSection, key, value, node);
+      section.appendChild(
+        _valueRow({
+          label: key,
+          text: presentation.text,
+          preview: presentation.preview,
+          swatch: presentation.swatch,
+          type,
+          ariaLabel: `${title}.${key}`,
+          value,
+          section: storageSection,
+          key,
+          node,
+        }),
+      );
+    }
+    return section;
   }
 
   function _wirePropertyFilter(pane) {
@@ -7006,7 +7289,7 @@ const dataTree = (() => {
   function _studioSection(group, node) {
     const section = document.createElement('section');
     section.className = 'dt-kv-section dt-studio-section';
-    section.innerHTML = `<span><strong>${_escape(group.title)}</strong><em>${group.entries.length.toLocaleString()}</em></span>`;
+    _appendSectionCount(section, group.title, group.entries.length);
     for (const entry of group.entries) {
       const presentation = _studioValuePresentation(entry);
       section.appendChild(
@@ -7020,36 +7303,6 @@ const dataTree = (() => {
           value: entry.rawValue,
           section: 'Properties',
           key: entry.sourceKey,
-          node,
-        }),
-      );
-    }
-    return section;
-  }
-
-  function _kvSection(title, data, node, typeMap = null) {
-    const section = document.createElement('section');
-    section.className = 'dt-kv-section';
-    const entries = Object.entries(data || {});
-    section.innerHTML = `<span><strong>${_escape(title)}</strong><em>${entries.length.toLocaleString()}</em></span>`;
-    if (!entries.length) {
-      section.insertAdjacentHTML('beforeend', '<div class="dt-empty-small">None</div>');
-      return section;
-    }
-    for (const [key, value] of entries) {
-      const type = String(typeMap?.[key] || '');
-      const presentation = _valuePresentation(title, key, value, node);
-      section.appendChild(
-        _valueRow({
-          label: key,
-          text: presentation.text,
-          preview: presentation.preview,
-          swatch: presentation.swatch,
-          type,
-          ariaLabel: `${title}.${key}`,
-          value,
-          section: title,
-          key,
           node,
         }),
       );
@@ -7180,7 +7433,13 @@ const dataTree = (() => {
   }
 
   function _nodeValueSection(section) {
-    return section === 'Item Attributes' ? 'itemAttributes' : section;
+    const key = String(section || '')
+      .replace(/\s+/g, '')
+      .toLowerCase();
+    if (key === 'itemattributes' || key === 'itemmetadata') return 'itemAttributes';
+    if (key === 'attributes' || key === 'customattributes') return 'attributes';
+    if (key === 'tags') return 'tags';
+    return 'properties';
   }
 
   function _formatFullValue(value) {
@@ -7189,11 +7448,24 @@ const dataTree = (() => {
     return JSON.stringify(value, null, 2);
   }
 
-  function _tagSection(tags) {
+  function _tagSection(tags, query = '', options = {}) {
+    const q = String(query || '')
+      .trim()
+      .toLowerCase();
+    const entries = (Array.isArray(tags) ? tags : []).filter((tag) => {
+      if (!q) return true;
+      return `tags ${tag}`.toLowerCase().includes(q);
+    });
+    if (!entries.length && options.hideWhenEmpty) return null;
     const section = document.createElement('section');
     section.className = 'dt-kv-section';
-    const entries = Array.isArray(tags) ? tags : [];
-    section.innerHTML = `<span><strong>Tags</strong><em>${entries.length.toLocaleString()}</em></span>${entries.length ? `<div class="dt-tags">${entries.map((tag) => `<span>${_escape(tag)}</span>`).join('')}</div>` : '<div class="dt-empty-small">None</div>'}`;
+    _appendSectionCount(section, 'Tags', entries.length);
+    section.insertAdjacentHTML(
+      'beforeend',
+      entries.length
+        ? `<div class="dt-tags">${entries.map((tag) => `<span>${_escape(tag)}</span>`).join('')}</div>`
+        : '<div class="dt-empty-small">None</div>',
+    );
     return section;
   }
 

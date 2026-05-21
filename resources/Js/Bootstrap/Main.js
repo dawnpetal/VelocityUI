@@ -33,15 +33,9 @@ const console_ = (() => {
     panel.classList.add('visible');
   }
   let _monitoring = false;
-  let _pollTimer = null;
-  let _lastLogSize = 0;
   let _logPath = null;
-  const LOG_RE = /\[(FLog::(Output|Warning|Error))\] (.+)$/;
-  const TYPE_MAP = {
-    Output: 'rbx',
-    Warning: 'warn',
-    Error: 'fail',
-  };
+  let _nativeListenersReady = false;
+  let _nativeListenersPromise = null;
   function _parseRichText(raw) {
     return raw
       .replace(/&/g, '&amp;')
@@ -56,20 +50,6 @@ const console_ = (() => {
       .replace(/\x00LT\x00[^]*?\x00GT\x00/g, '')
       .replace(/\x00LT\x00/g, '&lt;')
       .replace(/\x00GT\x00/g, '&gt;');
-  }
-  function _parseLine(line) {
-    const m = line.match(LOG_RE);
-    if (!m) return null;
-    const [, channel, level, message] = m;
-    const time = line.slice(11, 19);
-    let type = TYPE_MAP[level];
-    if (type === 'rbx' && message.startsWith('Info:')) type = 'info';
-    return {
-      time,
-      type,
-      channel,
-      message,
-    };
   }
   function _appendLine(output, text, type) {
     if (!output) return;
@@ -120,110 +100,43 @@ const console_ = (() => {
     _appendLine(robloxOutputEl(), text, type);
     _showPanel();
   }
-  let _errorScanTimer = null;
-  const _seenErrors = new Map();
-  function _pruneSeenErrors() {
-    const now = Date.now();
-    for (const [key, ts] of _seenErrors) {
-      if (now - ts > 10000) _seenErrors.delete(key);
-    }
-  }
-  async function _fileSize(path) {
-    try {
-      const stat = await window.__TAURI__.core.invoke('stat_path', { path });
-      return stat?.size ?? 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  async function _readFrom(path, offset, maxBytes = 512 * 1024) {
-    return window.__TAURI__.core.invoke('read_text_file_from', { path, offset, maxBytes });
-  }
-
   async function startErrorWatch() {
-    clearTimeout(_errorScanTimer);
-    _errorScanTimer = null;
-    let watchPath = _logPath;
-    if (!watchPath) {
-      try {
-        watchPath = await _findLatestLog();
-      } catch {}
-    }
-    if (!watchPath) return;
-    let base = _lastLogSize || (await _fileSize(watchPath));
-    const POLL_MS = 300;
-    const deadline = Date.now() + 3000;
-    async function poll() {
-      try {
-        const chunk = await _readFrom(watchPath, base);
-        if ((chunk.size ?? 0) < base) base = 0;
-        if (chunk.content) _scanForErrors(chunk.content);
-        base = chunk.nextOffset ?? chunk.size ?? base;
-      } catch {}
-      if (Date.now() < deadline) _errorScanTimer = setTimeout(poll, POLL_MS);
-    }
-    _errorScanTimer = setTimeout(poll, POLL_MS);
+    await initNativeMonitor().catch(() => {});
+    await window.__TAURI__.core.invoke('console_monitor_watch_errors').catch(() => {});
   }
-  function _scanForErrors(text) {
-    _pruneSeenErrors();
-    const lines = text.split('\n');
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-      const m = line.match(LOG_RE);
-      if (m && m[2] === 'Error') {
-        const message = m[3];
-        const stack = [];
-        let j = i + 1;
-        while (j < lines.length) {
-          const next = lines[j];
-          if (!next.trim() || /^\d{4}-\d{2}-\d{2}T/.test(next)) break;
-          if (next.includes('Stack Begin') || next.includes('Stack End')) {
-            j++;
-            continue;
-          }
-          stack.push(next.trim());
-          j++;
-        }
-        if (stack.length > 0) {
-          const key = `fail:${message}`;
-          if (!_seenErrors.has(key)) {
-            _seenErrors.set(key, Date.now());
-            _appendOutputError('fail', message, stack);
-          }
-        }
-        i = j;
-      } else {
-        i++;
-      }
-    }
-  }
-  async function _findLatestLog() {
-    const home = paths.home;
-    const candidates = [`${home}/Library/Logs/Roblox`, `${home}/Library/Logs/Roblox Player`];
-    for (const logDir of candidates) {
-      try {
-        const entries = await window.__TAURI__.core.invoke('read_dir', {
-          path: logDir,
-        });
-        const logs = entries
-          .filter((e) => e.type === 'FILE' && (e.entry.endsWith('.log') || e.entry.includes('Log')))
-          .sort((a, b) => {
-            const tsRe = /(\d{8}T\d{6}Z)/;
-            const tsA = a.entry.match(tsRe)?.[1] ?? a.entry;
-            const tsB = b.entry.match(tsRe)?.[1] ?? b.entry;
-            return tsB.localeCompare(tsA);
+  async function initNativeMonitor() {
+    if (_nativeListenersReady) return;
+    if (_nativeListenersPromise) return _nativeListenersPromise;
+    _nativeListenersPromise = Promise.all([
+      window.__TAURI__.event.listen('console-monitor:batch', (event) => {
+        if (!_monitoring) return;
+        const entries = Array.isArray(event.payload) ? event.payload : [];
+        entries.forEach((entry) => {
+          if (!entry?.message) return;
+          _appendRobloxLine({
+            time: entry.time || helpers.timestamp(),
+            type: entry.type || 'rbx',
+            channel: entry.channel || 'Output',
+            message: entry.message,
           });
-        if (logs.length) return `${logDir}/${logs[0].entry}`;
-      } catch (err) {
-        robloxLog(
-          `[VelocityUI] Could not read directory "${logDir}": ${err.message ?? err}`,
-          'warn',
-        );
-      }
-    }
-    return null;
+        });
+      }),
+      window.__TAURI__.event.listen('console-monitor:script-error', (event) => {
+        const payload = event.payload || {};
+        _appendOutputError('fail', payload.header || 'Error: Opiumware', payload.stack || []);
+      }),
+      window.__TAURI__.event.listen('console-monitor:status', (event) => {
+        if (event.payload?.path) _logPath = event.payload.path;
+      }),
+    ])
+      .then(() => {
+        _nativeListenersReady = true;
+      })
+      .catch((err) => {
+        _nativeListenersPromise = null;
+        throw err;
+      });
+    return _nativeListenersPromise;
   }
   function _updateControls() {
     const start = document.getElementById('btnRbxStart');
@@ -233,64 +146,38 @@ const console_ = (() => {
   }
   async function startMonitoring() {
     if (_monitoring) return;
+    await initNativeMonitor().catch(() => {});
     _monitoring = true;
-    _lastLogSize = 0;
     _showPanel();
     const robloxTab = document.querySelector('.panel-tab[data-panel="roblox"]');
     if (robloxTab && !robloxTab.classList.contains('active')) robloxTab.click();
-    robloxLog('[VelocityUI] Searching for Roblox log file...', 'info');
     try {
-      _logPath = await _findLatestLog();
+      const status = await window.__TAURI__.core.invoke('console_monitor_set_streaming', {
+        enabled: true,
+        showRawLogs: false,
+      });
+      _logPath = status?.path || null;
     } catch (err) {
-      robloxLog(`[VelocityUI] Unexpected error scanning logs: ${err.message ?? err}`, 'fail');
-      toast.show('Failed to scan log directories', 'fail', 4000);
+      robloxLog(`[VelocityUI] Could not start console stream: ${err.message ?? err}`, 'fail');
+      toast.show('Failed to start console monitoring', 'fail', 4000);
       _monitoring = false;
       _updateControls();
       return;
     }
     if (!_logPath) {
-      robloxLog('[VelocityUI] No Roblox log found. Expected: ~/Library/Logs/Roblox/', 'warn');
-      robloxLog('[VelocityUI] Make sure Roblox is running and try again.', 'warn');
-      toast.show('No Roblox log found', 'warn', 4000);
-      _monitoring = false;
-      _updateControls();
-      return;
+      robloxLog('[VelocityUI] Console monitor started. Waiting for a Roblox log file...', 'warn');
+    } else {
+      robloxLog(`[VelocityUI] Watching: ${_logPath.split('/').pop()}`, 'info');
     }
-    _lastLogSize = await _fileSize(_logPath);
-    robloxLog(`[VelocityUI] Watching: ${_logPath.split('/').pop()}`, 'info');
     toast.show('Monitoring started', 'ok', 2000);
     _updateControls();
-    _pollTimer = setInterval(async () => {
-      try {
-        const chunk = await _readFrom(_logPath, _lastLogSize);
-        if ((chunk.size ?? 0) < _lastLogSize) _lastLogSize = 0;
-        if (!chunk.content) {
-          _lastLogSize = chunk.nextOffset ?? chunk.size ?? _lastLogSize;
-          return;
-        }
-        _lastLogSize = chunk.nextOffset ?? chunk.size ?? _lastLogSize;
-        chunk.content
-          .split('\n')
-          .filter((l) => l.trim())
-          .forEach((line) => {
-            const parsed = _parseLine(line);
-            if (parsed) _appendRobloxLine(parsed);
-          });
-      } catch (err) {
-        robloxLog(`[VelocityUI] Polling error: ${err.message ?? err}`, 'fail');
-        toast.show('Log monitoring stopped unexpectedly', 'fail', 4000);
-        stopMonitoring();
-      }
-    }, 1200);
   }
   function stopMonitoring() {
-    clearInterval(_pollTimer);
-    _pollTimer = null;
-    clearTimeout(_errorScanTimer);
-    _errorScanTimer = null;
+    window.__TAURI__.core
+      .invoke('console_monitor_set_streaming', { enabled: false, showRawLogs: false })
+      .catch(() => {});
     _monitoring = false;
     _logPath = null;
-    _lastLogSize = 0;
     _updateControls();
   }
   return {
@@ -299,10 +186,13 @@ const console_ = (() => {
     startMonitoring,
     stopMonitoring,
     startErrorWatch,
+    initNativeMonitor,
   };
 })();
 document.addEventListener('DOMContentLoaded', async () => {
   RobloxAPI.init();
   appController.init();
+  console_.initNativeMonitor();
+  eventBus.on('script:executing', () => console_.startErrorWatch());
   eventBus.on('script:executed', () => console_.startErrorWatch());
 });

@@ -55,7 +55,8 @@
         0.881818,
         0.884154,
         0.888355
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/asphalt/height.png"
     },
     {
       "name": "Basalt",
@@ -69,7 +70,8 @@
         0.621585,
         0.622471,
         0.615179
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/basalt/height.png"
     },
     {
       "name": "Brick",
@@ -83,7 +85,8 @@
         0.87289,
         0.814005,
         0.770977
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/brick/height.png"
     },
     {
       "name": "CeramicTiles",
@@ -96,7 +99,8 @@
         0.935108,
         0.934531,
         0.935108
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/ceramictiles/height.png"
     },
     {
       "name": "ClayRoofTiles",
@@ -109,7 +113,8 @@
         0.638619,
         0.638584,
         0.639038
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/clayrooftiles/height.png"
     },
     {
       "name": "Cobblestone",
@@ -123,7 +128,8 @@
         0.837483,
         0.839496,
         0.842504
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/cobblestone/height.png"
     },
     {
       "name": "Concrete",
@@ -137,7 +143,8 @@
         0.878276,
         0.878853,
         0.877816
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/concrete/height.png"
     },
     {
       "name": "CorrodedMetal",
@@ -164,7 +171,8 @@
         0.261711,
         0.27026,
         0.283337
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/crackedlava/height.png"
     },
     {
       "name": "DiamondPlate",
@@ -177,7 +185,8 @@
         0.817214,
         0.819125,
         0.816955
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/diamondplate/height.png"
     },
     {
       "name": "Fabric",
@@ -190,7 +199,8 @@
         0.854501,
         0.854501,
         0.854501
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/fabric/height.png"
     },
     {
       "name": "Foil",
@@ -203,7 +213,8 @@
         0.93406,
         0.93406,
         0.93406
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/foil/height.png"
     },
     {
       "name": "Glacier",
@@ -217,7 +228,8 @@
         0.878644,
         0.894651,
         0.89733
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/glacier/height.png"
     },
     {
       "name": "Glass",
@@ -230,7 +242,8 @@
         0.996933,
         0.996933,
         0.996933
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/glass/height.png"
     },
     {
       "name": "Granite",
@@ -243,7 +256,8 @@
         0.806116,
         0.786809,
         0.762913
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/granite/height.png"
     },
     {
       "name": "Grass",
@@ -257,7 +271,8 @@
         0.741455,
         0.723338,
         0.70104
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/grass/height.png"
     },
     {
       "name": "Ground",
@@ -271,7 +286,8 @@
         0.640396,
         0.637956,
         0.617248
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/ground/height.png"
     },
     {
       "name": "Ice",
@@ -285,7 +301,8 @@
         0.917803,
         0.933422,
         0.944342
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/ice/height.png"
     },
     {
       "name": "LeafyGrass",
@@ -299,7 +316,8 @@
         0.683914,
         0.64521,
         0.63091
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/leafygrass/height.png"
     },
     {
       "name": "Limestone",
@@ -313,7 +331,8 @@
         0.977505,
         0.970707,
         0.95171
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/limestone/height.png"
     },
     {
       "name": "Marble",
@@ -326,7 +345,8 @@
         0.707318,
         0.716991,
         0.754415
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/marble/height.png"
     },
     {
       "name": "Metal",
@@ -339,7 +359,8 @@
         0.890132,
         0.890132,
         0.890132
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/metal/height.png"
     },
     {
       "name": "Mud",
@@ -353,7 +374,8 @@
         0.744417,
         0.740079,
         0.741888
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/mud/height.png"
     },
     {
       "name": "Pavement",
@@ -367,7 +389,8 @@
         0.814255,
         0.814533,
         0.815532
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/pavement/height.png"
     },
     {
       "name": "Pebble",
@@ -380,7 +403,8 @@
         0.7806,
         0.77794,
         0.768634
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/pebble/height.png"
     },
     {
       "name": "Plastic",
@@ -401,7 +425,8 @@
         0.800228,
         0.797776,
         0.79111
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/rock/height.png"
     },
     {
       "name": "RoofShingles",
@@ -414,7 +439,8 @@
         0.756723,
         0.758074,
         0.729189
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/roofshingles/height.png"
     },
     {
       "name": "Rubber",
@@ -441,7 +467,8 @@
         0.973401,
         0.974111,
         0.975499
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/salt/height.png"
     },
     {
       "name": "Sand",
@@ -455,7 +482,8 @@
         0.941167,
         0.910256,
         0.89365
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/sand/height.png"
     },
     {
       "name": "Sandstone",
@@ -469,7 +497,8 @@
         0.941167,
         0.910256,
         0.89365
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/sandstone/height.png"
     },
     {
       "name": "Slate",
@@ -483,7 +512,8 @@
         0.917132,
         0.914783,
         0.918445
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/slate/height.png"
     },
     {
       "name": "SmoothPlastic",
@@ -504,7 +534,8 @@
         0.93659,
         0.940506,
         0.941897
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/snow/height.png"
     },
     {
       "name": "Water",
@@ -525,7 +556,8 @@
         0.834741,
         0.793519,
         0.789885
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/wood/height.png"
     },
     {
       "name": "WoodPlanks",
@@ -539,7 +571,8 @@
         0.792791,
         0.794664,
         0.788706
-      ]
+      ],
+      "heightMap": "Assets/RobloxMaterials/Modern/woodplanks/height.png"
     }
   ],
   "swatches": {

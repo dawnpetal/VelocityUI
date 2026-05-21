@@ -2159,6 +2159,39 @@ const LuaLanguage = (() => {
         decreaseIndentPattern: /^\s*((\b(elseif|else|end|until)\b)|(\})|(\)))/,
       },
     });
+    monaco.languages.registerDocumentFormattingEditProvider('lua', {
+      provideDocumentFormattingEdits(model) {
+        return [
+          {
+            range: model.getFullModelRange(),
+            text: _formatLua(model.getValue()),
+          },
+        ];
+      },
+    });
+    monaco.languages.registerDocumentRangeFormattingEditProvider('lua', {
+      provideDocumentRangeFormattingEdits(model, range) {
+        const startLineNumber = range.startLineNumber;
+        const endLineNumber =
+          range.endColumn === 1 && range.endLineNumber > range.startLineNumber
+            ? range.endLineNumber - 1
+            : range.endLineNumber;
+        const replaceRange = new monaco.Range(
+          startLineNumber,
+          1,
+          endLineNumber,
+          model.getLineMaxColumn(endLineNumber),
+        );
+        const text = model.getValueInRange(replaceRange);
+        const baseIndent = _leadingSpaces(model.getLineContent(startLineNumber));
+        return [
+          {
+            range: replaceRange,
+            text: _formatLua(text, baseIndent),
+          },
+        ];
+      },
+    });
     monaco.languages.registerCompletionItemProvider('lua', {
       triggerCharacters: ['.', ':'],
       provideCompletionItems(model, position) {
@@ -2905,6 +2938,122 @@ const LuaLanguage = (() => {
     monaco.languages.registerDocumentSymbolProvider('lua', symbolProvider);
     return symbolProvider;
   }
+
+  function _formatLua(text, baseIndent = 0) {
+    const normalized = text.replace(/\r\n?/g, '\n');
+    const lines = normalized.split('\n');
+    const trailingNewline = normalized.endsWith('\n');
+    const formatted = [];
+    let indent = Math.max(0, baseIndent);
+    let longBlock = null;
+
+    for (const line of lines) {
+      if (line === '' && !trailingNewline && formatted.length === lines.length - 1) {
+        formatted.push('');
+        continue;
+      }
+
+      const raw = line.trim();
+      if (!raw) {
+        formatted.push('');
+        continue;
+      }
+
+      const stateBefore = longBlock;
+      const code = stateBefore ? '' : _stripLuaLineComment(raw);
+      if (!stateBefore && _luaLineDecreases(code)) indent = Math.max(baseIndent, indent - 2);
+
+      formatted.push(' '.repeat(indent) + raw);
+
+      longBlock = _nextLuaLongBlockState(raw, longBlock);
+      if (!stateBefore && !longBlock && _luaLineIncreases(code)) indent += 2;
+    }
+
+    if (!trailingNewline && formatted[formatted.length - 1] === '') formatted.pop();
+    return formatted.join('\n');
+  }
+
+  function _leadingSpaces(line) {
+    return line.match(/^\s*/)?.[0]?.replace(/\t/g, '  ').length || 0;
+  }
+
+  function _stripLuaLineComment(line) {
+    let quote = '';
+    let escaped = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const next = line[i + 1];
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '-' && next === '-') return line.slice(0, i).trimEnd();
+    }
+    return line.trimEnd();
+  }
+
+  function _nextLuaLongBlockState(line, current) {
+    const closes = (text, eqs) => text.indexOf(']' + eqs + ']') >= 0;
+    if (current) return closes(line, current) ? null : current;
+    const match = line.match(/(?:--)?\[(=*)\[/);
+    if (!match) return null;
+    const after = line.slice((match.index || 0) + match[0].length);
+    return closes(after, match[1]) ? null : match[1];
+  }
+
+  function _luaLineDecreases(code) {
+    const trimmed = code.trim();
+    if (!trimmed) return false;
+    if (trimmed[0] === '}' || trimmed[0] === ')' || trimmed[0] === ']') return true;
+    return /^(?:end\b|else\b|elseif\b.*\bthen\b|until\b)/.test(trimmed);
+  }
+
+  function _luaLineIncreases(code) {
+    const trimmed = code.trim();
+    if (!trimmed) return false;
+    if (/^(?:return|break|continue)\b/.test(trimmed)) return false;
+    if (/^(?:else|elseif\b.*\bthen\b)\s*(?:;)?$/.test(trimmed)) return true;
+    if (/\brepeat\b\s*(?:;)?$/.test(trimmed)) return true;
+    if (/\b(?:then|do)\b\s*(?:;)?$/.test(trimmed)) return true;
+    if (/(?:^|\s)(?:local\s+)?function\b/.test(trimmed) && !/\bend\b/.test(trimmed)) return true;
+    return /(?:\{|\(|\[)\s*$/.test(trimmed) && !_balancedTrailingDelimiter(trimmed);
+  }
+
+  function _balancedTrailingDelimiter(text) {
+    const stack = [];
+    let quote = '';
+    let escaped = false;
+    const pairs = { '{': '}', '(': ')', '[': ']' };
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === quote) quote = '';
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (pairs[ch]) stack.push(pairs[ch]);
+      else if (ch === '}' || ch === ')' || ch === ']') {
+        if (stack[stack.length - 1] === ch) stack.pop();
+      }
+    }
+    return stack.length === 0;
+  }
+
   function _hasMemberOwner(textBefore) {
     return /\b[A-Za-z_]\w*(?:[.:][A-Za-z_]\w*)*\s*[.:]\s*\w*$/.test(textBefore);
   }

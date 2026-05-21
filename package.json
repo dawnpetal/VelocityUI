@@ -1,6 +1,6 @@
 {
   "name": "velocityui",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "scripts": {
     "dev": "cargo tauri dev",
     "build": "cargo tauri build --bundles app",

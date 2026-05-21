@@ -165,16 +165,20 @@ const DataTreeMaterials = (() => {
     if (!material?.colorMap) return null;
     if (material.key === 'glass' || material.key === 'forcefield') return null;
     const style = viewportStyles[material.key] || {};
-    const tile = Math.max(0.25, Number(studsPerTile) || style.tile || 4);
+    const tileBase = Math.max(0.25, Number(studsPerTile) || style.tile || 4);
+    const detail = style.detail ?? 0.72;
+    const detile = style.detile ?? 0;
     return {
       key: `material:${material.key}`,
       localUrl: material.colorMap,
+      heightUrl: material.heightMap || '',
       source: 'Material',
-      detailStrength: style.detail ?? 0.72,
-      detileStrength: style.detile ?? 0,
+      detailStrength: Math.min(1.02, Math.max(0.56, detail * 1.55)),
+      heightStrength: material.heightMap ? Math.min(0.34, Math.max(0.11, detail * 0.27)) : 0,
+      detileStrength: Math.min(0.4, detile * 0.44),
       meanColor: material.colorMean || [1, 1, 1],
-      studsPerTileU: tile,
-      studsPerTileV: tile,
+      studsPerTileU: Math.max(0.25, tileBase * 0.72),
+      studsPerTileV: Math.max(0.25, tileBase * 0.72),
     };
   }
 

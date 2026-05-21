@@ -8,9 +8,130 @@ const appController = (() => {
   let _commandSymbolCache = [];
   const _relayoutEditor = scheduler.delay(() => editor.relayout(), 80);
   const _renderCommandCenterSoon = scheduler.frame(() => _renderCommandCenter(_commandQuery));
+  const ACTIVITY_VIEW_META = [
+    { view: 'explorer', label: 'Explorer', locked: true },
+    { view: 'search', label: 'Search' },
+    { view: 'datatree', label: 'DataTree' },
+    { view: 'accounts', label: 'Accounts' },
+    { view: 'pinboard', label: 'Pinboard' },
+    { view: 'cloud', label: 'Cloud Scripts' },
+    { view: 'settings', label: 'Settings', locked: true },
+  ];
+  const ZOOM_MIN = 0.7;
+  const ZOOM_MAX = 1.5;
+  const ZOOM_STEP = 0.1;
+  const VELOCITY_SITE_URL = 'https://dawnpetal.github.io/VelocitySite';
 
   function _scheduleEditorRelayout() {
     _relayoutEditor();
+  }
+
+  function _clampZoom(value) {
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(value * 100) / 100));
+  }
+
+  async function _applyAppZoom(value, showToast = false) {
+    const zoom = _clampZoom(value);
+    uiState.setAppZoom?.(zoom);
+    try {
+      await window.__TAURI__.core.invoke('set_app_zoom', { scaleFactor: zoom });
+    } catch {}
+    _scheduleEditorRelayout();
+    if (showToast) toast.show(`Zoom ${Math.round(zoom * 100)}%`, 'info', 1200);
+  }
+
+  function _zoomIn() {
+    return _applyAppZoom((uiState.appZoom || 1) + ZOOM_STEP, true);
+  }
+
+  function _zoomOut() {
+    return _applyAppZoom((uiState.appZoom || 1) - ZOOM_STEP, true);
+  }
+
+  function _zoomReset() {
+    return _applyAppZoom(1, true);
+  }
+
+  function _activityLabel(view) {
+    return ACTIVITY_VIEW_META.find((item) => item.view === view)?.label ?? view;
+  }
+
+  function _syncActivityVisibility() {
+    for (const { view } of ACTIVITY_VIEW_META) {
+      const visible = uiState.isActivityViewVisible?.(view) !== false;
+      const btn = document.querySelector(`.activity-btn[data-view="${view}"]`);
+      if (btn) {
+        btn.hidden = !visible;
+        btn.style.display = visible ? '' : 'none';
+        btn.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      }
+    }
+  }
+
+  function _setActivityViewVisible(view, visible, showToast = false) {
+    const meta = ACTIVITY_VIEW_META.find((item) => item.view === view);
+    if (meta?.locked && !visible) return;
+    uiState.setActivityViewVisible?.(view, visible);
+    _syncActivityVisibility();
+    if (showToast) {
+      toast.show(`${_activityLabel(view)} ${visible ? 'shown' : 'hidden'}`, 'info', 1200);
+    }
+  }
+
+  function _toggleActivityViewVisible(view) {
+    const meta = ACTIVITY_VIEW_META.find((item) => item.view === view);
+    if (meta?.locked) {
+      toast.show(`${meta.label} stays visible`, 'info', 1200);
+      return true;
+    }
+    const visible = uiState.toggleActivityViewVisible?.(view);
+    _syncActivityVisibility();
+    toast.show(`${_activityLabel(view)} ${visible ? 'shown' : 'hidden'}`, 'info', 1200);
+  }
+
+  function _openVelocityWebsite() {
+    window.__TAURI__.core.invoke('open_external', { url: VELOCITY_SITE_URL }).catch(() => {});
+  }
+
+  async function _activityMenuItem(MenuItem, CheckMenuItem, view, label, visible) {
+    if (CheckMenuItem?.new) {
+      try {
+        return await CheckMenuItem.new({
+          text: label,
+          checked: visible,
+          enabled: !ACTIVITY_VIEW_META.find((item) => item.view === view)?.locked,
+          action: () => _toggleActivityViewVisible(view),
+        });
+      } catch {}
+    }
+    return MenuItem.new({
+      text: `${visible ? '✓ ' : ''}${label}`,
+      action: () => _toggleActivityViewVisible(view),
+    });
+  }
+
+  async function _showActivityBarContextMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const { Menu, MenuItem, CheckMenuItem, PredefinedMenuItem } = window.__TAURI__.menu;
+    const items = [];
+    for (const { view, label } of ACTIVITY_VIEW_META) {
+      const visible = uiState.isActivityViewVisible?.(view) !== false;
+      items.push(await _activityMenuItem(MenuItem, CheckMenuItem, view, label, visible));
+    }
+    items.push(await PredefinedMenuItem.new({ item: 'Separator' }));
+    items.push(
+      await MenuItem.new({
+        text: 'Show All Tabs',
+        action: () => {
+          for (const { view } of ACTIVITY_VIEW_META) uiState.setActivityViewVisible?.(view, true);
+          _syncActivityVisibility();
+        },
+      }),
+    );
+    const menu = await Menu.new({ items });
+    const at = new window.__TAURI__.dpi.LogicalPosition(event.clientX, event.clientY);
+    await menu.popup(at);
   }
 
   function _initBridge() {
@@ -229,6 +350,9 @@ const appController = (() => {
         key: '⌘B',
         run: () => panelController.toggleSidebar(),
       },
+      { label: 'Zoom in', hint: 'Workbench', key: '⌘+', run: () => _zoomIn() },
+      { label: 'Zoom out', hint: 'Workbench', key: '⌘-', run: () => _zoomOut() },
+      { label: 'Reset zoom', hint: 'Workbench', key: '⌘0', run: () => _zoomReset() },
       {
         label: 'Toggle panel',
         hint: 'Layout',
@@ -279,7 +403,12 @@ const appController = (() => {
       { label: 'Accounts', hint: 'View', run: () => _switchView('accounts') },
       { label: 'Pinboard', hint: 'View', run: () => _switchView('pinboard') },
       { label: 'Settings', hint: 'View', run: () => _switchView('settings') },
-      { label: 'Guide', hint: 'VelocityUI', run: () => guide.start() },
+      ...ACTIVITY_VIEW_META.map(({ view, label }) => ({
+        label: `${uiState.isActivityViewVisible?.(view) === false ? 'Show' : 'Hide'} ${label} tab`,
+        hint: 'Activity Bar',
+        run: () => _toggleActivityViewVisible(view),
+      })),
+      { label: 'Velocity Website', hint: 'VelocityUI', run: () => _openVelocityWebsite() },
       { label: 'Execution history', hint: 'VelocityUI', run: () => historyPanel.show() },
       {
         label: 'Focus Roblox',
@@ -550,7 +679,10 @@ const appController = (() => {
     document
       .getElementById('btnOpenFolder')
       ?.addEventListener('click', () => workspaceController.openFolderDialog());
-    document.getElementById('btnGuide')?.addEventListener('click', () => guide.start());
+    document.getElementById('btnGuide')?.addEventListener('click', () => _openVelocityWebsite());
+    document
+      .getElementById('activityBar')
+      ?.addEventListener('contextmenu', _showActivityBarContextMenu);
     document
       .getElementById('btnRefreshTree')
       ?.addEventListener('click', () => workspaceController.refreshTree());
@@ -578,6 +710,11 @@ const appController = (() => {
     _toggle('wordWrapToggle', 'wordWrap', uiState.setWordWrap.bind(uiState));
     _toggle('minimapToggle', 'minimap', uiState.setMinimap.bind(uiState));
     _toggle('lineNumToggle', 'lineNumbers', uiState.setLineNumbers.bind(uiState));
+    document.getElementById('autoUpdateToggle')?.addEventListener('change', function () {
+      uiState.setAutoUpdate(this.checked);
+      updateChecker.syncAutoUpdateUi?.();
+      if (this.checked) updateChecker.check?.();
+    });
     const sidebarSlider = document.getElementById('sidebarWidthSlider');
     const sidebarWidthVal = document.getElementById('sidebarWidthVal');
     sidebarSlider?.addEventListener('input', () => {
@@ -673,6 +810,8 @@ const appController = (() => {
       panel.classList.remove('hidden');
     }
     executorSettings.init(uiState.executor);
+    _applyAppZoom(uiState.appZoom || 1, false);
+    _syncActivityVisibility();
     const fontSlider = document.getElementById('fontSizeSlider');
     const fontVal = document.getElementById('fontSizeVal');
     if (uiState.fontSize != null && fontSlider) {
@@ -683,6 +822,8 @@ const appController = (() => {
     _restoreToggle('wordWrapToggle', 'wordWrap', uiState.wordWrap);
     _restoreToggle('minimapToggle', 'minimap', uiState.minimap);
     _restoreToggle('lineNumToggle', 'lineNumbers', uiState.lineNumbers);
+    const autoUpdateToggle = document.getElementById('autoUpdateToggle');
+    if (autoUpdateToggle) autoUpdateToggle.checked = uiState.autoUpdate !== false;
     _switchView(uiState.activeView ?? 'explorer');
   }
 
@@ -693,6 +834,96 @@ const appController = (() => {
       el.checked = value;
       editor.updateSettings(key, value);
     }
+  }
+
+  function _focusCommandPalette() {
+    const command = document.getElementById('titlebarCommand');
+    command?.focus();
+    command?.select();
+  }
+
+  async function _saveActiveFile() {
+    const active = state.getActive();
+    if (!active) return;
+    if (pinboard.isSnippetFile(active.id)) {
+      pinboard.handleEditorSave(active.id);
+      state.markSaved(active.id);
+      tabs.render();
+      return;
+    }
+    if (active.path && !active.preview) {
+      if (state.previewTabId === active.id) state.previewTabId = null;
+      await fileManager.save(active.id);
+      editorController.onFileSaved(active.id);
+      tabs.render();
+      toast.show('Saved', 'ok', 1200);
+    }
+  }
+
+  function _setupWorkbenchZoomShortcuts() {
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        const cmd = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+        if (!cmd || e.altKey) return;
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          _zoomIn();
+          return;
+        }
+        if (e.key === '-') {
+          e.preventDefault();
+          _zoomOut();
+          return;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          _zoomReset();
+        }
+      },
+      { capture: true },
+    );
+  }
+
+  function _runAppMenuCommand(id) {
+    if (!id) return;
+    if (id.startsWith('activity:toggle:')) {
+      _toggleActivityViewVisible(id.replace('activity:toggle:', ''));
+      return;
+    }
+    const active = state.getActive();
+    const view = id.startsWith('view:') ? id.replace('view:', '') : '';
+    if (
+      ['explorer', 'search', 'datatree', 'accounts', 'pinboard', 'cloud', 'settings'].includes(view)
+    ) {
+      _switchView(view);
+      return;
+    }
+    const commands = {
+      'file:new': () => editorController.newUntitledFile(),
+      'file:open-folder': () => workspaceController.openFolderDialog(),
+      'file:save': () => _saveActiveFile(),
+      'file:close-tab': () => active?.id && tabs.closeTab(active.id),
+      'edit:format-document': () =>
+        editor.getInstance?.()?.trigger?.('menu', 'editor.action.formatDocument'),
+      'edit:toggle-comment': () =>
+        editor.getInstance?.()?.trigger?.('menu', 'editor.action.commentLine'),
+      'view:command-palette': () => _focusCommandPalette(),
+      'view:toggle-sidebar': () => panelController.toggleSidebar(),
+      'view:toggle-panel': () => panelController.togglePanel(),
+      'view:zoom-in': () => _zoomIn(),
+      'view:zoom-out': () => _zoomOut(),
+      'view:zoom-reset': () => _zoomReset(),
+      'window:minimize': () => window.__TAURI__.core.invoke('minimize_window'),
+      'window:toggle-zoom': () => window.__TAURI__.core.invoke('toggle_maximize_window'),
+      'app:website': () => _openVelocityWebsite(),
+      'app:updates': () => updateChecker.checkManual(),
+      'help:website': () => _openVelocityWebsite(),
+      'help:discord': () =>
+        window.__TAURI__.core.invoke('open_external', { url: 'https://discord.gg/opiumware' }),
+      'help:updates': () => updateChecker.checkManual(),
+    };
+    commands[id]?.();
   }
 
   function _setupGlobalShortcuts() {
@@ -724,21 +955,7 @@ const appController = (() => {
       handler: async () => {
         const currentView = document.querySelector('.activity-btn.active')?.dataset.view;
         if (currentView === 'guide') return;
-        const active = state.getActive();
-        if (!active) return;
-        if (pinboard.isSnippetFile(active.id)) {
-          pinboard.handleEditorSave(active.id);
-          state.markSaved(active.id);
-          tabs.render();
-          return;
-        }
-        if (active.path && !active.preview) {
-          if (state.previewTabId === active.id) state.previewTabId = null;
-          await fileManager.save(active.id);
-          editorController.onFileSaved(active.id);
-          tabs.render();
-          toast.show('Saved', 'ok', 1200);
-        }
+        await _saveActiveFile();
       },
     });
     keyboardManager.registerShortcut({
@@ -782,11 +999,7 @@ const appController = (() => {
       scope: ['global'],
       allowInEditor: true,
       allowInInputs: true,
-      handler: () => {
-        const command = document.getElementById('titlebarCommand');
-        command?.focus();
-        command?.select();
-      },
+      handler: () => _focusCommandPalette(),
     });
     keyboardManager.registerShortcut({
       keys: 'Cmd+Shift+F',
@@ -920,6 +1133,7 @@ const appController = (() => {
       console_.log(`[Bridge] ${message}`, 'fail');
       dataTree.handleBridgeError?.(event.payload);
     });
+    window.__TAURI__.event.listen('app-menu-command', (event) => _runAppMenuCommand(event.payload));
     _suppressNativeSpellcheck();
     _initBridge();
     await paths.init();
@@ -929,6 +1143,7 @@ const appController = (() => {
     _setupTitlebar();
     _setupActivityBar();
     keyboardManager.init();
+    _setupWorkbenchZoomShortcuts();
     _setupGlobalShortcuts();
     _setupSettings();
     StatusBarControls.init();
@@ -946,6 +1161,8 @@ const appController = (() => {
       _restoreUI(ui);
     } else {
       executorSettings.init('opium');
+      _applyAppZoom(1, false);
+      _syncActivityVisibility();
       _switchView('explorer');
     }
     await workspaceController.boot();
@@ -953,7 +1170,9 @@ const appController = (() => {
     multiInstanceUI.mount();
     menuScriptsPanel.mount();
     await menuBar.init();
-    updateChecker.check();
+    updateChecker.syncAutoUpdateUi?.();
+    if (uiState.autoUpdate !== false) updateChecker.check();
+    else updateChecker.populateVersion?.();
   }
 
   return { init };

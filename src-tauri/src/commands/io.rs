@@ -61,34 +61,6 @@ pub fn read_text_file_preview(path: String, max_bytes: u64) -> Result<serde_json
 }
 
 #[tauri::command]
-pub fn read_text_file_from(
-    path: String,
-    offset: u64,
-    max_bytes: u64,
-) -> Result<serde_json::Value, String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-    let size = file.metadata().map_err(|e| e.to_string())?.len();
-    let start = offset.min(size);
-    file.seek(SeekFrom::Start(start))
-        .map_err(|e| e.to_string())?;
-    let limit = max_bytes.min(size.saturating_sub(start)) as usize;
-    let mut bytes = vec![0; limit];
-    if limit > 0 {
-        file.read_exact(&mut bytes).map_err(|e| e.to_string())?;
-    }
-    let next_offset = start + limit as u64;
-    let content = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(serde_json::json!({
-        "content": content,
-        "offset": start,
-        "nextOffset": next_offset,
-        "size": size,
-        "truncated": next_offset < size,
-    }))
-}
-
-#[tauri::command]
 pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if let Some(parent) = p.parent() {

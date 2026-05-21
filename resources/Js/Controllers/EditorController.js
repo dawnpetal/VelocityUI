@@ -100,6 +100,11 @@ const editorController = (() => {
     const bridge = !!options.bridge;
     const sessionId = options.sessionId ?? null;
     try {
+      eventBus.emit('script:executing', {
+        filename,
+        bridge,
+        sessionId,
+      });
       if (bridge) await injector.executeWithClientBridge(script);
       else await injector.execute(script);
       const executor = uiState.executor;
@@ -140,6 +145,10 @@ const editorController = (() => {
       const script = active.content || editor.getContent();
       try {
         const userIds = miTargets.map((t) => t.user_id);
+        eventBus.emit('script:executing', {
+          userIds,
+          filename: active.name,
+        });
         await multiInstance.sendScriptToMany(userIds, script);
         const n = miTargets.length;
         const label =
