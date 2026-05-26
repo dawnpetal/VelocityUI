@@ -257,9 +257,9 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--border-strong);
+  background: color-mix(in srgb, var(--text0) 13%, transparent);
   pointer-events: none;
-  opacity: 0.75;
+  opacity: 1;
 }
 
 .tree-row:hover .tree-guide {
@@ -313,7 +313,8 @@
 
 .tree-label {
   flex: 1;
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 22px;
   color: var(--text1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1278,6 +1279,14 @@
   gap: 10px;
 }
 
+.settings-control--wide {
+  flex: 0 1 min(360px, 48vw);
+}
+
+.ai-settings-input {
+  width: 100%;
+}
+
 .settings-val {
   font-size: 11px;
   color: var(--text2);
@@ -1572,9 +1581,58 @@
   animation: toastIn 0.16s ease forwards;
 }
 
-.toast-message {
+.toast-content {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast-message {
   padding-right: 8px;
+  overflow-wrap: anywhere;
+}
+
+.toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.toast-action {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg3);
+  color: var(--text1);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s,
+    opacity 0.12s;
+}
+
+.toast-action:hover {
+  background: var(--bg4);
+  border-color: var(--border-strong);
+  color: var(--text0);
+}
+
+.toast-action-primary {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg3));
+  color: var(--text0);
+}
+
+.toast-action:disabled {
+  cursor: default;
+  opacity: 0.62;
 }
 
 .toast-dismiss {
@@ -1612,6 +1670,20 @@
   background: var(--accent);
   transform-origin: left;
   opacity: 0.65;
+}
+
+.toast-progress.is-indeterminate {
+  right: auto;
+  width: 42%;
+  transform: translateX(-105%);
+  transform-origin: center;
+  animation: toastProgressSweep 1s ease-in-out infinite;
+}
+
+@keyframes toastProgressSweep {
+  to {
+    transform: translateX(345%);
+  }
 }
 
 .toast.ok {

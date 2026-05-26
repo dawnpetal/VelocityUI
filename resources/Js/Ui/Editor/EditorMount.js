@@ -178,6 +178,7 @@ const EditorMount = (() => {
       theme: 'velocityui',
     });
     LuaIntelligence.register(monaco, editorInstance);
+    AiHelper.init(monaco, editorInstance).catch(() => {});
     return {
       monaco,
       editorInstance,

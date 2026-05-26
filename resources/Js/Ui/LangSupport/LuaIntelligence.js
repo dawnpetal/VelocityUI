@@ -303,6 +303,28 @@ const LuaIntelligence = (() => {
       ${_insideLoopSinceFunction.toString()}
       ${_nearestOpenBlock.toString()}
       ${_functionParams.toString()}
+      const RETURN_CONTINUATION_PREFIX = new Set(${JSON.stringify([
+        'and',
+        'or',
+        '+',
+        '-',
+        '*',
+        '/',
+        '//',
+        '%',
+        '^',
+        '..',
+        '==',
+        '~=',
+        '<=',
+        '>=',
+        '<',
+        '>',
+        ',',
+      ])});
+      const RETURN_CONTINUATION_SUFFIX = new Set([...RETURN_CONTINUATION_PREFIX, '(', '[', '{']);
+      ${_lineContinuesReturnExpression.toString()}
+      ${_returnExpressionEndLine.toString()}
       ${_nextTokenIndex.toString()}
       ${_matchingTokenIndex.toString()}
       ${_nextSiblingBranchToken.toString()}
@@ -2738,7 +2760,7 @@ const LuaIntelligence = (() => {
       const current = stack.at(-1);
       if (
         current?.terminatedBy &&
-        token.line > current.terminatedBy.line &&
+        token.line > (current.terminatedBy.endLine ?? current.terminatedBy.line) &&
         bracketDepth <= current.terminatedBy.depth &&
         _isLikelyStatementStart(tokens, i)
       ) {
@@ -2801,10 +2823,68 @@ const LuaIntelligence = (() => {
         current.terminatedBy = {
           value: token.value,
           line: token.line,
+          endLine: token.value === 'return' ? _returnExpressionEndLine(tokens, i) : token.line,
           depth: bracketDepth,
         };
       }
     }
+  }
+
+  const RETURN_CONTINUATION_PREFIX = new Set([
+    'and',
+    'or',
+    '+',
+    '-',
+    '*',
+    '/',
+    '//',
+    '%',
+    '^',
+    '..',
+    '==',
+    '~=',
+    '<=',
+    '>=',
+    '<',
+    '>',
+    ',',
+  ]);
+  const RETURN_CONTINUATION_SUFFIX = new Set([...RETURN_CONTINUATION_PREFIX, '(', '[', '{']);
+
+  function _returnExpressionEndLine(tokens, returnIndex) {
+    const start = tokens[returnIndex];
+    if (!start) return 0;
+    let endLine = start.line;
+    let depth = 0;
+    let previous = null;
+    for (let i = returnIndex + 1; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (depth === 0 && token.value === ';') break;
+      if (
+        depth === 0 &&
+        token.line > endLine &&
+        !_lineContinuesReturnExpression(tokens, i, previous)
+      ) {
+        break;
+      }
+      if (token.type === 'symbol') {
+        if (token.value === '(' || token.value === '[' || token.value === '{') depth++;
+        else if (token.value === ')' || token.value === ']' || token.value === '}')
+          depth = Math.max(0, depth - 1);
+      }
+      endLine = Math.max(endLine, token.line);
+      previous = token;
+    }
+    return endLine;
+  }
+
+  function _lineContinuesReturnExpression(tokens, index, previous) {
+    const token = tokens[index];
+    if (!token) return false;
+    if (previous && RETURN_CONTINUATION_SUFFIX.has(previous.value)) return true;
+    let firstOnLine = index;
+    while (firstOnLine > 0 && tokens[firstOnLine - 1]?.line === token.line) firstOnLine--;
+    return RETURN_CONTINUATION_PREFIX.has(tokens[firstOnLine]?.value);
   }
 
   function _isLikelyStatementStart(tokens, index) {

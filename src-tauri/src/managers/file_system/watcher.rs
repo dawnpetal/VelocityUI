@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use notify::event::{ModifyKind, RenameMode};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
 
@@ -139,6 +140,73 @@ fn emit_batch(app: &AppHandle, id: u32, changes: Vec<RawChange>) {
     }
 }
 
+fn raw_changes_from_event(event: &notify::Event) -> Vec<RawChange> {
+    match &event.kind {
+        notify::EventKind::Create(_) => event
+            .paths
+            .iter()
+            .filter_map(|p| p.to_str())
+            .map(|path| RawChange {
+                path: path.to_string(),
+                kind: ChangeType::Added,
+            })
+            .collect(),
+        notify::EventKind::Remove(_) => event
+            .paths
+            .iter()
+            .filter_map(|p| p.to_str())
+            .map(|path| RawChange {
+                path: path.to_string(),
+                kind: ChangeType::Removed,
+            })
+            .collect(),
+        notify::EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+            let mut changes = Vec::new();
+            if let Some(path) = event.paths.first().and_then(|p| p.to_str()) {
+                changes.push(RawChange {
+                    path: path.to_string(),
+                    kind: ChangeType::Removed,
+                });
+            }
+            if let Some(path) = event.paths.get(1).and_then(|p| p.to_str()) {
+                changes.push(RawChange {
+                    path: path.to_string(),
+                    kind: ChangeType::Added,
+                });
+            }
+            changes
+        }
+        notify::EventKind::Modify(ModifyKind::Name(RenameMode::From)) => event
+            .paths
+            .iter()
+            .filter_map(|p| p.to_str())
+            .map(|path| RawChange {
+                path: path.to_string(),
+                kind: ChangeType::Removed,
+            })
+            .collect(),
+        notify::EventKind::Modify(ModifyKind::Name(RenameMode::To)) => event
+            .paths
+            .iter()
+            .filter_map(|p| p.to_str())
+            .map(|path| RawChange {
+                path: path.to_string(),
+                kind: ChangeType::Added,
+            })
+            .collect(),
+        notify::EventKind::Modify(_) => event
+            .paths
+            .iter()
+            .filter_map(|p| p.to_str())
+            .map(|path| RawChange {
+                path: path.to_string(),
+                kind: ChangeType::Updated,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub struct WatcherManager {
     map: DashMap<u32, RecommendedWatcher>,
     next_id: AtomicU32,
@@ -160,21 +228,8 @@ impl WatcherManager {
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
 
-            let kind = match &event.kind {
-                notify::EventKind::Create(_) => ChangeType::Added,
-                notify::EventKind::Remove(_) => ChangeType::Removed,
-                notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-                    ChangeType::Updated
-                }
-                _ => return,
-            };
-
-            let path_str = match event.paths.first().and_then(|p| p.to_str()) {
-                Some(p) => p.to_string(),
-                None => return,
-            };
-
-            if is_ignored(&path_str) {
+            let changes = raw_changes_from_event(&event);
+            if changes.is_empty() {
                 return;
             }
 
@@ -183,10 +238,12 @@ impl WatcherManager {
                 Err(_) => return,
             };
 
-            guard.push(RawChange {
-                path: path_str,
-                kind,
-            });
+            for change in changes {
+                if is_ignored(&change.path) {
+                    continue;
+                }
+                guard.push(change);
+            }
 
             if let Some(ready) = guard.flush_if_ready() {
                 let app = guard.app.clone();

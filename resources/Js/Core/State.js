@@ -26,6 +26,8 @@ const state = (() => {
       indentSize: opts.indentSize ?? 2,
       insertSpaces: opts.insertSpaces ?? true,
       languageOverride: opts.languageOverride ?? null,
+      languageOverrideLabel: opts.languageOverrideLabel ?? null,
+      readonly: opts.readonly ?? false,
       largePreview: opts.largePreview ?? false,
       truncated: opts.truncated ?? false,
       preview: opts.preview ?? false,

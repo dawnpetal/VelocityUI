@@ -78,7 +78,13 @@ fn has_external_mesh(node: &SnapshotNode, child_indexes: &[usize], nodes: &[Snap
     }
     if asset_id(first_prop(
         &node.properties,
-        &["MeshId", "MeshID", "MeshContent", "MeshData", "ModelMeshData"],
+        &[
+            "MeshId",
+            "MeshID",
+            "MeshContent",
+            "MeshData",
+            "ModelMeshData",
+        ],
     ))
     .is_some()
     {
@@ -98,7 +104,13 @@ fn has_external_mesh(node: &SnapshotNode, child_indexes: &[usize], nodes: &[Snap
     }
     asset_id(first_prop(
         &mesh_child.properties,
-        &["MeshId", "MeshID", "MeshContent", "MeshData", "ModelMeshData"],
+        &[
+            "MeshId",
+            "MeshID",
+            "MeshContent",
+            "MeshData",
+            "ModelMeshData",
+        ],
     ))
     .is_some()
 }
@@ -115,7 +127,9 @@ fn embedded_mesh(props: &serde_json::Map<String, Value>) -> Option<&str> {
         ],
     )?;
     let lower = raw.to_ascii_lowercase();
-    if lower.starts_with("rbxasset") || lower.starts_with("http://") || lower.starts_with("https://")
+    if lower.starts_with("rbxasset")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
     {
         None
     } else {
@@ -134,7 +148,9 @@ fn first_prop<'a>(props: &'a serde_json::Map<String, Value>, keys: &[&str]) -> O
     }
     for key in keys {
         let wanted = key.to_ascii_lowercase();
-        if let Some((_, value)) = props.iter().find(|(name, _)| name.to_ascii_lowercase() == wanted)
+        if let Some((_, value)) = props
+            .iter()
+            .find(|(name, _)| name.to_ascii_lowercase() == wanted)
         {
             if let Some(value) = value.as_str() {
                 let trimmed = value.trim();
@@ -195,10 +211,25 @@ mod tests {
             nodes: vec![
                 node(1, None, "Model", json!({})),
                 node(2, Some(1), "Part", json!({})),
-                node(3, Some(1), "MeshPart", json!({ "MeshId": "rbxassetid://123456" })),
+                node(
+                    3,
+                    Some(1),
+                    "MeshPart",
+                    json!({ "MeshId": "rbxassetid://123456" }),
+                ),
                 node(4, Some(1), "Part", json!({})),
-                node(5, Some(4), "SpecialMesh", json!({ "MeshId": "rbxassetid://999999" })),
-                node(6, Some(1), "MeshPart", json!({ "MeshData": "embedded payload" })),
+                node(
+                    5,
+                    Some(4),
+                    "SpecialMesh",
+                    json!({ "MeshId": "rbxassetid://999999" }),
+                ),
+                node(
+                    6,
+                    Some(1),
+                    "MeshPart",
+                    json!({ "MeshData": "embedded payload" }),
+                ),
             ],
         };
 

@@ -3,8 +3,13 @@ const uiState = (() => {
   let _sidebarHidden = false;
   let _sidebarLocked = false;
   let _panelVisible = false;
+  let _aiPanelVisible = false;
+  let _aiPanelWidth = 340;
   let _sbBottomHeight = 100;
   let _activeView = 'explorer';
+  let _fileTreeCollapsed = false;
+  let _aiChatsCollapsed = true;
+  let _autoexecCollapsed = false;
   let _outlineCollapsed = true;
   let _timelineCollapsed = true;
   let _fontSize = 12;
@@ -13,7 +18,8 @@ const uiState = (() => {
   let _lineNumbers = null;
   let _executor = 'opium';
   let _autoUpdate = true;
-  let _appZoom = 1;
+  let _appZoom = 1.2;
+  let _windowState = null;
   let _hiddenActivityViews = new Set();
   const VALID_EXECUTORS = new Set(['hydrogen', 'opium']);
   const VALID_ACTIVITY_VIEWS = new Set(['search', 'datatree', 'accounts', 'pinboard', 'cloud']);
@@ -23,8 +29,13 @@ const uiState = (() => {
       sidebarHidden: _sidebarHidden,
       sidebarLocked: _sidebarLocked,
       panelVisible: _panelVisible,
+      aiPanelVisible: _aiPanelVisible,
+      aiPanelWidth: _aiPanelWidth,
       sbBottomHeight: _sbBottomHeight,
       activeView: _activeView === 'datatree' ? 'explorer' : _activeView,
+      fileTreeCollapsed: _fileTreeCollapsed,
+      aiChatsCollapsed: _aiChatsCollapsed,
+      autoexecCollapsed: _autoexecCollapsed,
       outlineCollapsed: _outlineCollapsed,
       timelineCollapsed: _timelineCollapsed,
       settings: {
@@ -37,6 +48,7 @@ const uiState = (() => {
         appZoom: _appZoom,
         hiddenActivityViews: [..._hiddenActivityViews],
       },
+      windowState: _windowState,
     };
   }
   function applyLoaded(loaded) {
@@ -46,8 +58,15 @@ const uiState = (() => {
     if (loaded.sidebarLocked != null) _sidebarLocked = loaded.sidebarLocked;
     if (loaded.sbBottomHeight != null) _sbBottomHeight = loaded.sbBottomHeight;
     if (loaded.panelVisible != null) _panelVisible = loaded.panelVisible;
+    _aiPanelVisible = false;
+    if (loaded.aiPanelWidth != null)
+      _aiPanelWidth = Math.max(260, Math.min(520, loaded.aiPanelWidth));
     if (loaded.activeView)
       _activeView = loaded.activeView === 'datatree' ? 'explorer' : loaded.activeView;
+    if (loaded.fileTreeCollapsed != null) _fileTreeCollapsed = !!loaded.fileTreeCollapsed;
+    if (loaded.aiChatsCollapsed != null) _aiChatsCollapsed = !!loaded.aiChatsCollapsed;
+    if (loaded.autoexecCollapsed != null) _autoexecCollapsed = !!loaded.autoexecCollapsed;
+    if (loaded.windowState) _windowState = loaded.windowState;
     if (loaded.outlineCollapsed != null) _outlineCollapsed = !!loaded.outlineCollapsed;
     if (loaded.timelineCollapsed != null) _timelineCollapsed = !!loaded.timelineCollapsed;
     const s = loaded.settings ?? {};
@@ -57,7 +76,7 @@ const uiState = (() => {
     if (s.lineNumbers != null) _lineNumbers = s.lineNumbers;
     if (s.executor && VALID_EXECUTORS.has(s.executor)) _executor = s.executor;
     if (s.autoUpdate != null) _autoUpdate = !!s.autoUpdate;
-    if (s.appZoom != null) _appZoom = Math.max(0.7, Math.min(1.5, Number(s.appZoom) || 1));
+    if (s.appZoom != null) _appZoom = Math.max(0.7, Math.min(1.5, Number(s.appZoom) || 1.2));
     if (Array.isArray(s.hiddenActivityViews)) {
       _hiddenActivityViews = new Set(
         s.hiddenActivityViews.filter((view) => VALID_ACTIVITY_VIEWS.has(view)),
@@ -89,6 +108,14 @@ const uiState = (() => {
     _panelVisible = v;
     save();
   }
+  function setAiPanelVisible(v) {
+    _aiPanelVisible = !!v;
+    save();
+  }
+  function setAiPanelWidth(px) {
+    _aiPanelWidth = Math.max(260, Math.min(520, px));
+    save();
+  }
   function setSbBottomHeight(px) {
     _sbBottomHeight = px;
     save();
@@ -97,8 +124,20 @@ const uiState = (() => {
     _activeView = v === 'datatree' ? 'explorer' : v;
     save();
   }
+  function setFileTreeCollapsed(v) {
+    _fileTreeCollapsed = !!v;
+    save();
+  }
   function setOutlineCollapsed(v) {
     _outlineCollapsed = !!v;
+    save();
+  }
+  function setAiChatsCollapsed(v) {
+    _aiChatsCollapsed = !!v;
+    save();
+  }
+  function setAutoexecCollapsed(v) {
+    _autoexecCollapsed = !!v;
     save();
   }
   function setTimelineCollapsed(v) {
@@ -134,6 +173,18 @@ const uiState = (() => {
     _appZoom = Math.max(0.7, Math.min(1.5, Number(v) || 1));
     save();
   }
+  function setWindowState(state, saveNow = true) {
+    if (!state) return;
+    const prev = _windowState || {};
+    _windowState = {
+      width: Math.max(960, Number(state.width) || Number(prev.width) || 1100),
+      height: Math.max(600, Number(state.height) || Number(prev.height) || 720),
+      x: Number.isFinite(Number(state.x)) ? Number(state.x) : prev.x,
+      y: Number.isFinite(Number(state.y)) ? Number(state.y) : prev.y,
+      maximized: !!state.maximized,
+    };
+    if (saveNow) save();
+  }
   function isActivityViewVisible(view) {
     if (!VALID_ACTIVITY_VIEWS.has(view)) return true;
     return !_hiddenActivityViews.has(view);
@@ -163,8 +214,23 @@ const uiState = (() => {
     get panelVisible() {
       return _panelVisible;
     },
+    get aiPanelVisible() {
+      return _aiPanelVisible;
+    },
+    get aiPanelWidth() {
+      return _aiPanelWidth;
+    },
     get activeView() {
       return _activeView;
+    },
+    get fileTreeCollapsed() {
+      return _fileTreeCollapsed;
+    },
+    get aiChatsCollapsed() {
+      return _aiChatsCollapsed;
+    },
+    get autoexecCollapsed() {
+      return _autoexecCollapsed;
     },
     get outlineCollapsed() {
       return _outlineCollapsed;
@@ -193,14 +259,22 @@ const uiState = (() => {
     get hiddenActivityViews() {
       return [..._hiddenActivityViews];
     },
+    get windowState() {
+      return _windowState;
+    },
     setSidebarHidden,
     getSidebarHidden,
     setSidebarLocked,
     getSidebarLocked,
     setSidebarWidth,
     setPanelVisible,
+    setAiPanelVisible,
+    setAiPanelWidth,
     setSbBottomHeight,
     setActiveView,
+    setFileTreeCollapsed,
+    setAiChatsCollapsed,
+    setAutoexecCollapsed,
     setOutlineCollapsed,
     setTimelineCollapsed,
     setFontSize,
@@ -210,6 +284,7 @@ const uiState = (() => {
     setExecutor,
     setAutoUpdate,
     setAppZoom,
+    setWindowState,
     isActivityViewVisible,
     setActivityViewVisible,
     toggleActivityViewVisible,

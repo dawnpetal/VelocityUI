@@ -135,6 +135,97 @@ pub fn remove_path(path: String) -> Result<(), String> {
     }
 }
 
+fn trash_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return dirs::home_dir()
+            .map(|home| home.join(".Trash"))
+            .ok_or_else(|| "Could not resolve the macOS Trash folder".to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return dirs::home_dir()
+            .map(|home| home.join(".local/share/Trash/files"))
+            .ok_or_else(|| "Could not resolve the Trash folder".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Err("Move to Recycle Bin is not available in this build".to_string())
+    }
+}
+
+fn unique_trash_path(
+    source: &std::path::Path,
+    trash: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Path has no valid filename".to_string())?;
+    let mut candidate = trash.join(name);
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+    for index in 1..=9999 {
+        candidate = trash.join(format!("{} (VelocityUI {})", name, index));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("Could not find a free Trash filename".to_string())
+}
+
+fn copy_dir_all(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let child_dest = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &child_dest)?;
+        } else {
+            std::fs::copy(entry.path(), child_dest).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn move_or_copy_remove(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    match std::fs::rename(src, dest) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let meta = std::fs::metadata(src).map_err(|e| e.to_string())?;
+            if meta.is_dir() {
+                copy_dir_all(src, dest)?;
+                std::fs::remove_dir_all(src).map_err(|e| e.to_string())
+            } else {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::copy(src, dest).map_err(|e| e.to_string())?;
+                std::fs::remove_file(src).map_err(|e| e.to_string())
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn trash_path(path: String) -> Result<serde_json::Value, String> {
+    let source = std::path::Path::new(&path);
+    if !source.exists() {
+        return Err("Path does not exist".to_string());
+    }
+    let trash = trash_dir()?;
+    std::fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
+    let dest = unique_trash_path(source, &trash)?;
+    move_or_copy_remove(source, &dest)?;
+    Ok(serde_json::json!({
+        "trashPath": path_to_string(dest, "trash")?,
+    }))
+}
+
 #[tauri::command]
 pub fn rename_path(src: String, dest: String) -> Result<(), String> {
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())

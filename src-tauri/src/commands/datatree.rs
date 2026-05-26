@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{BufReader, BufWriter},
     path::{Path, PathBuf},
@@ -14,6 +14,7 @@ use quick_xml::{
     events::{BytesStart, Event},
     Reader,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
@@ -106,6 +107,102 @@ pub struct DataTreeExplorerSnapshot {
     storage_path: String,
     source_path: String,
     source_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptScanHit {
+    id: u32,
+    name: String,
+    class_name: String,
+    path: String,
+    matches: usize,
+    source_len: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogicWeb {
+    version: u32,
+    generated_at: u64,
+    summary: LogicWebSummary,
+    systems: Vec<LogicWebSystem>,
+    nodes: Vec<LogicWebNode>,
+    edges: Vec<LogicWebEdge>,
+    remote_calls: Vec<LogicWebRemoteCall>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogicWebSummary {
+    script_count: usize,
+    module_count: usize,
+    local_script_count: usize,
+    server_script_count: usize,
+    remote_count: usize,
+    config_count: usize,
+    edge_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogicWebSystem {
+    id: String,
+    name: String,
+    node_ids: Vec<String>,
+    script_count: usize,
+    remote_count: usize,
+    edge_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogicWebNode {
+    id: String,
+    node_id: Option<u32>,
+    kind: String,
+    class_name: String,
+    name: String,
+    path: String,
+    parent_path: String,
+    system_id: String,
+    source_len: usize,
+    exports: Vec<String>,
+    config_keys: Vec<String>,
+    services: Vec<String>,
+    remote_events: Vec<String>,
+    score: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogicWebEdge {
+    id: String,
+    from: String,
+    to: String,
+    kind: String,
+    label: String,
+    evidence: String,
+    confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogicWebRemoteCall {
+    id: String,
+    remote_key: String,
+    remote_name: String,
+    remote_path: String,
+    remote_class_name: String,
+    caller_id: String,
+    caller_path: String,
+    method: String,
+    direction: String,
+    args: Vec<String>,
+    arg_signature: String,
+    evidence: String,
+    line: usize,
+    confidence: f32,
 }
 
 #[derive(Debug, Serialize)]
@@ -1004,6 +1101,1255 @@ pub async fn datatree_node_detail(path: String, node_id: u32) -> Result<DataTree
     .map_err(|e| e.to_string())?
 }
 
+fn map_get_case_insensitive<'a>(map: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
+    map.get(key).or_else(|| {
+        map.iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(key))
+            .map(|(_, value)| value)
+    })
+}
+
+fn script_source(node: &DataTreeNode) -> &str {
+    map_get_case_insensitive(&node.properties, "Source")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+fn is_script_class(class_name: &str) -> bool {
+    matches!(
+        class_name.to_ascii_lowercase().as_str(),
+        "script" | "localscript" | "modulescript"
+    )
+}
+
+fn is_lua_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn roblox_path_segment(name: &str) -> String {
+    if is_lua_identifier(name) {
+        format!(".{name}")
+    } else {
+        format!(
+            "[{}]",
+            serde_json::to_string(name).unwrap_or_else(|_| "\"Instance\"".into())
+        )
+    }
+}
+
+fn roblox_node_path(
+    snapshot: &DataTreeSnapshot,
+    index: usize,
+    node_index: &HashMap<u32, usize>,
+) -> String {
+    let mut chain = Vec::new();
+    let mut current = Some(index);
+    while let Some(idx) = current {
+        let Some(node) = snapshot.nodes.get(idx) else {
+            break;
+        };
+        chain.push(node);
+        current = node
+            .parent_id
+            .and_then(|parent_id| node_index.get(&parent_id).copied());
+        if chain.len() > 160 {
+            break;
+        }
+    }
+    chain.reverse();
+    if chain.first().is_some_and(|node| {
+        node.class_name.eq_ignore_ascii_case("DataModel") || node.name.eq_ignore_ascii_case("game")
+    }) {
+        chain.remove(0);
+    }
+    let mut path = String::from("game");
+    for node in chain {
+        path.push_str(&roblox_path_segment(&node.name));
+    }
+    path
+}
+
+fn count_plain_occurrences(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut pos = 0;
+    while let Some(found) = haystack[pos..].find(needle) {
+        count += 1;
+        pos += found + needle.len();
+        if pos >= haystack.len() {
+            break;
+        }
+    }
+    count
+}
+
+#[tauri::command]
+pub async fn datatree_scan_scripts(
+    path: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<ScriptScanHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = PathBuf::from(path);
+        let cached = read_snapshot_cached(&path)?;
+        let snapshot = &cached.snapshot;
+        let terms: Vec<String> = query
+            .to_lowercase()
+            .split(';')
+            .map(str::trim)
+            .filter(|term| !term.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        let include_all = terms.is_empty();
+        let max = limit.unwrap_or(500).clamp(1, 2000);
+        let mut hits = Vec::new();
+
+        for (index, node) in snapshot.nodes.iter().enumerate() {
+            if !is_script_class(&node.class_name) {
+                continue;
+            }
+            let source = script_source(node);
+            let path = roblox_node_path(snapshot, index, &cached.node_index);
+            let haystack = format!("{}\n{}\n{}", node.name, path, source).to_lowercase();
+            let matches = terms
+                .iter()
+                .map(|term| count_plain_occurrences(&haystack, term))
+                .sum();
+            if !include_all && matches == 0 {
+                continue;
+            }
+            hits.push(ScriptScanHit {
+                id: node.id,
+                name: node.name.clone(),
+                class_name: node.class_name.clone(),
+                path,
+                matches,
+                source_len: source.len(),
+            });
+        }
+
+        if include_all {
+            hits.sort_by(|a, b| a.path.cmp(&b.path));
+        } else {
+            hits.sort_by(|a, b| b.matches.cmp(&a.matches).then_with(|| a.path.cmp(&b.path)));
+        }
+        hits.truncate(max);
+        Ok(hits)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn logic_regex(pattern: &str) -> &'static Regex {
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static Regex>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("logic regex cache poisoned");
+    if let Some(regex) = guard.get(pattern) {
+        return regex;
+    }
+    let regex = Box::leak(Box::new(Regex::new(pattern).expect("valid logic regex")));
+    guard.insert(pattern.to_string(), regex);
+    regex
+}
+
+fn parent_roblox_path(path: &str) -> String {
+    path.rsplit_once('.')
+        .map(|(parent, _)| parent.to_string())
+        .unwrap_or_else(|| "game".to_string())
+}
+
+fn logic_system_name(path: &str, name: &str) -> String {
+    let lower_name = name.to_ascii_lowercase();
+    for key in [
+        "combat",
+        "weapon",
+        "inventory",
+        "shop",
+        "round",
+        "quest",
+        "data",
+        "profile",
+        "pet",
+        "trade",
+        "ui",
+        "admin",
+        "remote",
+        "character",
+        "vehicle",
+        "tool",
+    ] {
+        if lower_name.contains(key) || path.to_ascii_lowercase().contains(key) {
+            return key
+                .split('_')
+                .map(|part| {
+                    let mut chars = part.chars();
+                    chars
+                        .next()
+                        .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+    }
+    let parts: Vec<&str> = path.split('.').collect();
+    for part in parts.iter().rev().skip(1) {
+        if !matches!(
+            *part,
+            "game"
+                | "ReplicatedStorage"
+                | "ServerScriptService"
+                | "ServerStorage"
+                | "StarterPlayer"
+                | "StarterGui"
+                | "Workspace"
+                | "Players"
+                | "Modules"
+                | "ModuleScripts"
+                | "Scripts"
+                | "LocalScripts"
+                | "Config"
+                | "Configs"
+                | "Remotes"
+        ) {
+            return (*part).to_string();
+        }
+    }
+    "General".to_string()
+}
+
+fn logic_node_kind(class_name: &str, config_keys: &[String]) -> String {
+    if class_name.eq_ignore_ascii_case("ModuleScript") && !config_keys.is_empty() {
+        "Config".to_string()
+    } else if class_name.eq_ignore_ascii_case("ModuleScript") {
+        "ModuleScript".to_string()
+    } else if class_name.eq_ignore_ascii_case("LocalScript") {
+        "LocalScript".to_string()
+    } else if class_name.eq_ignore_ascii_case("Script") {
+        "Script".to_string()
+    } else if class_name.to_ascii_lowercase().contains("remote") {
+        "Remote".to_string()
+    } else {
+        class_name.to_string()
+    }
+}
+
+fn capture_unique(source: &str, pattern: &str, group: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for cap in logic_regex(pattern).captures_iter(source) {
+        let Some(value) = cap.get(group).map(|m| m.as_str().trim().to_string()) else {
+            continue;
+        };
+        if value.is_empty() || !seen.insert(value.clone()) {
+            continue;
+        }
+        out.push(value);
+    }
+    out
+}
+
+fn service_vars(source: &str) -> HashMap<String, String> {
+    let mut vars = HashMap::new();
+    for cap in logic_regex(
+        r#"(?m)\blocal\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*game:GetService\s*\(\s*["']([^"']+)["']\s*\)"#,
+    )
+    .captures_iter(source)
+    {
+        if let (Some(var), Some(service)) = (cap.get(1), cap.get(2)) {
+            vars.insert(var.as_str().to_string(), service.as_str().to_string());
+        }
+    }
+    vars
+}
+
+fn require_vars(
+    source: &str,
+    current_path: &str,
+    base_vars: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for cap in logic_regex(
+        r#"(?m)\blocal\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*require\s*\(\s*([^\n\r]+?)\s*\)"#,
+    )
+    .captures_iter(source)
+    {
+        let Some(var) = cap.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        let Some(expr) = cap.get(2).map(|m| m.as_str()) else {
+            continue;
+        };
+        if let Some(path) = resolve_require_path(expr, current_path, base_vars) {
+            out.insert(var.to_string(), path);
+        }
+    }
+    out
+}
+
+fn instance_vars(
+    source: &str,
+    current_path: &str,
+    base_vars: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut vars = base_vars.clone();
+    for _ in 0..4 {
+        let mut changed = false;
+        for cap in logic_regex(r#"(?m)\b(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n\r]+)"#)
+            .captures_iter(source)
+        {
+            let Some(var) = cap.get(1).map(|m| m.as_str()) else {
+                continue;
+            };
+            let Some(raw_expr) = cap.get(2).map(|m| m.as_str().trim()) else {
+                continue;
+            };
+            if matches!(var, "if" | "for" | "while" | "return" | "local") {
+                continue;
+            }
+            if raw_expr.starts_with("require")
+                || raw_expr.starts_with("function")
+                || raw_expr.starts_with('{')
+                || raw_expr.starts_with("nil")
+                || raw_expr.starts_with("true")
+                || raw_expr.starts_with("false")
+            {
+                continue;
+            }
+            let expr = raw_expr
+                .split("--")
+                .next()
+                .unwrap_or(raw_expr)
+                .trim()
+                .trim_end_matches(';')
+                .trim();
+            if let Some(path) = resolve_require_path(expr, current_path, &vars) {
+                if vars.get(var) != Some(&path) {
+                    vars.insert(var.to_string(), path);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    vars
+}
+
+fn normalize_roblox_path(path: String) -> String {
+    let mut value = path;
+    while value.starts_with("game.game.") {
+        value = value.replacen("game.game.", "game.", 1);
+    }
+    value
+}
+
+fn normalize_lua_instance_expr(expr: &str) -> String {
+    let mut value = expr.trim().trim_end_matches(';').trim().to_string();
+
+    for method in [
+        "WaitForChild",
+        "FindFirstChild",
+        "FindFirstChildWhichIsA",
+        "FindFirstChildOfClass",
+    ] {
+        let pattern = format!(r#"[:.]{}\s*\(\s*["']([^"']+)["']\s*\)"#, method);
+        let replacement = ".$1";
+        value = logic_regex(&pattern)
+            .replace_all(&value, replacement)
+            .to_string();
+    }
+
+    value = logic_regex(r#"\[\s*["']([^"']+)["']\s*\]"#)
+        .replace_all(&value, ".$1")
+        .to_string();
+    value = value.replace(['"', '\''], "");
+    value
+        .split('.')
+        .filter_map(|part| {
+            let trimmed = part.trim();
+            if trimmed.is_empty()
+                || matches!(
+                    trimmed,
+                    "WaitForChild"
+                        | "FindFirstChild"
+                        | "FindFirstChildWhichIsA"
+                        | "FindFirstChildOfClass"
+                )
+            {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn source_line_at(source: &str, byte_index: usize) -> usize {
+    source[..byte_index.min(source.len())]
+        .bytes()
+        .filter(|b| *b == b'\n')
+        .count()
+        + 1
+}
+
+fn find_matching_paren(source: &str, open_index: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut depth = 0i32;
+    let mut i = open_index;
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'\'' || b == b'"' {
+            quote = Some(b);
+        } else if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_lua_args(args: &str) -> Vec<String> {
+    let bytes = args.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut paren = 0i32;
+    let mut brace = 0i32;
+    let mut bracket = 0i32;
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' => quote = Some(b),
+            b'(' => paren += 1,
+            b')' => paren -= 1,
+            b'{' => brace += 1,
+            b'}' => brace -= 1,
+            b'[' => bracket += 1,
+            b']' => bracket -= 1,
+            b',' if paren == 0 && brace == 0 && bracket == 0 => {
+                let arg = args[start..i].trim();
+                if !arg.is_empty() {
+                    out.push(arg.to_string());
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let tail = args[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail.to_string());
+    }
+    out
+}
+
+fn infer_lua_expr_type(
+    expr: &str,
+    local_types: &HashMap<String, String>,
+    module_vars: &HashMap<String, String>,
+    module_function_returns: &HashMap<String, String>,
+) -> String {
+    let value = expr.trim();
+    if let Some(known) = local_types.get(value) {
+        return known.clone();
+    }
+    if let Some(cap) =
+        logic_regex(r#"^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\("#).captures(value)
+    {
+        let module_var = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let function_name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+        if let Some(module_path) = module_vars.get(module_var) {
+            let key = format!("{}.{}", module_path.to_ascii_lowercase(), function_name);
+            if let Some(return_type) = module_function_returns.get(&key) {
+                return return_type.clone();
+            }
+        }
+    }
+    if let Some(name) = logic_regex(r#":FindFirstAncestorWhichIsA\s*\(\s*["']([^"']+)["']"#)
+        .captures(value)
+        .and_then(|cap| cap.get(1))
+    {
+        return name.as_str().to_string();
+    }
+    if value.contains("RadiusHitbox(")
+        || value.contains("BoxHitbox(")
+        || value.contains("PartHitbox(")
+        || value.contains(".Hitbox(")
+    {
+        return "HitboxResult[]".to_string();
+    }
+    if value.contains(":GetAttributes(") {
+        return "table".to_string();
+    }
+    if value.contains(":GetChildren(") || value.contains(":GetDescendants(") {
+        return "Instance[]".to_string();
+    }
+    if value.contains(":WaitForChild(")
+        || value.contains(":FindFirstChild(")
+        || value.contains(":FindFirstChildOfClass(")
+        || value.contains(":FindFirstChildWhichIsA(")
+    {
+        return "Instance".to_string();
+    }
+    infer_lua_arg_type(value)
+}
+
+fn local_lua_value_types(
+    source: &str,
+    current_path: &str,
+    base_vars: &HashMap<String, String>,
+    module_function_returns: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut types = HashMap::new();
+    let module_vars = require_vars(source, current_path, base_vars);
+    for _ in 0..3 {
+        let mut changed = false;
+        for cap in logic_regex(r#"(?m)\b(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n\r]+)"#)
+            .captures_iter(source)
+        {
+            let Some(var) = cap.get(1).map(|m| m.as_str()) else {
+                continue;
+            };
+            let Some(raw_expr) = cap.get(2).map(|m| m.as_str()) else {
+                continue;
+            };
+            if matches!(var, "if" | "for" | "while" | "return" | "local") {
+                continue;
+            }
+            let expr = raw_expr
+                .split("--")
+                .next()
+                .unwrap_or(raw_expr)
+                .trim()
+                .trim_end_matches(';')
+                .trim();
+            let inferred = infer_lua_expr_type(expr, &types, &module_vars, module_function_returns);
+            if inferred != "unknown" && types.get(var) != Some(&inferred) {
+                types.insert(var.to_string(), inferred);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    types
+}
+
+fn infer_lua_arg_type(arg: &str) -> String {
+    let value = arg.trim();
+    if value.eq_ignore_ascii_case("nil") {
+        "nil".to_string()
+    } else if value == "true" || value == "false" {
+        "boolean".to_string()
+    } else if value.starts_with('"') || value.starts_with('\'') {
+        "string".to_string()
+    } else if logic_regex(r#"^-?\d+(?:\.\d+)?$"#).is_match(value) {
+        "number".to_string()
+    } else if value.starts_with("function") {
+        "Function".to_string()
+    } else if value.starts_with('{') {
+        "table".to_string()
+    } else if value.contains("CFrame.") || value.contains(":ToWorldSpace(") {
+        "CFrame".to_string()
+    } else if value.contains("Vector3.") {
+        "Vector3".to_string()
+    } else if value.contains("Vector2.") {
+        "Vector2".to_string()
+    } else if value.contains("Color3.") {
+        "Color3".to_string()
+    } else if value.contains("Enum.") {
+        "EnumItem".to_string()
+    } else if value.contains(":GetPivot(") {
+        "CFrame".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+fn infer_module_return_type(body: &str, first_return: &str) -> String {
+    let value = first_return.trim();
+    if value.is_empty() {
+        return "nil".to_string();
+    }
+    if value.starts_with('{') {
+        return "table".to_string();
+    }
+    if let Some(var) = logic_regex(r#"^([A-Za-z_][A-Za-z0-9_]*)$"#)
+        .captures(value)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str())
+    {
+        let table_insert_pattern = format!(r#"table\.insert\s*\(\s*{}\s*,"#, regex::escape(var));
+        if logic_regex(&table_insert_pattern).is_match(body) {
+            let lower = body.to_ascii_lowercase();
+            if lower.contains("findfirstchild(\"humanoid\")")
+                || lower.contains("findfirstchild('humanoid')")
+                || lower.contains("findfirstchild(\"mockhumanoid\")")
+                || lower.contains("findfirstchild('mockhumanoid')")
+            {
+                return "Model[]".to_string();
+            }
+            if lower.contains("getpartbounds")
+                || lower.contains("getpartsinpart")
+                || lower.contains("basepart")
+            {
+                return "BasePart[]".to_string();
+            }
+            return "table[]".to_string();
+        }
+        let local_table_pattern = format!(r#"(?m)\blocal\s+{}\s*=\s*\{{"#, regex::escape(var));
+        if logic_regex(&local_table_pattern).is_match(body) {
+            return "table".to_string();
+        }
+    }
+    infer_lua_arg_type(value)
+}
+
+fn module_function_returns(module_path: &str, source: &str) -> Vec<(String, String)> {
+    let mut functions = Vec::new();
+    for cap in
+        logic_regex(r#"(?m)\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\("#)
+            .captures_iter(source)
+    {
+        let Some(start) = cap.get(0).map(|m| m.start()) else {
+            continue;
+        };
+        let Some(end) = cap.get(0).map(|m| m.end()) else {
+            continue;
+        };
+        let Some(name) = cap.get(2).map(|m| m.as_str().to_string()) else {
+            continue;
+        };
+        functions.push((start, end, name));
+    }
+
+    let mut out = Vec::new();
+    for (index, (_start, body_start, name)) in functions.iter().enumerate() {
+        let body_end = functions
+            .get(index + 1)
+            .map(|(next_start, _, _)| *next_start)
+            .unwrap_or(source.len());
+        let body = &source[*body_start..body_end];
+        let Some(return_cap) = logic_regex(r#"(?m)^\s*return\s+([^\n\r,]+)"#).captures(body) else {
+            continue;
+        };
+        let first_return = return_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let return_type = infer_module_return_type(body, first_return);
+        if return_type != "unknown" {
+            out.push((
+                format!("{}.{}", module_path.to_ascii_lowercase(), name),
+                return_type,
+            ));
+        }
+    }
+    out
+}
+
+fn remote_direction(method: &str) -> &'static str {
+    match method {
+        "FireServer" | "InvokeServer" => "client_to_server",
+        "FireClient" | "FireAllClients" | "InvokeClient" => "server_to_client",
+        "OnServerEvent" | "OnServerInvoke" => "server_listener",
+        "OnClientEvent" | "OnClientInvoke" => "client_listener",
+        _ => "unknown",
+    }
+}
+
+fn remote_calls_in_source(
+    source: &str,
+    script_id: &str,
+    script_path: &str,
+    vars: &HashMap<String, String>,
+    remote_classes: &HashMap<String, String>,
+    module_function_returns: &HashMap<String, String>,
+) -> Vec<LogicWebRemoteCall> {
+    let mut calls = Vec::new();
+    let local_types = local_lua_value_types(source, script_path, vars, module_function_returns);
+    for cap in logic_regex(
+        r#"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:\s*(FireServer|FireClient|FireAllClients|InvokeServer|InvokeClient|OnServerEvent|OnClientEvent|OnServerInvoke|OnClientInvoke|OnInvoke)\s*\("#,
+    )
+    .captures_iter(source)
+    {
+        let Some(target_match) = cap.get(1) else {
+            continue;
+        };
+        let target_expr = target_match.as_str();
+        let method = cap.get(2).map(|m| m.as_str()).unwrap_or("Remote");
+        let Some(open_index) = cap.get(0).map(|m| m.end() - 1) else {
+            continue;
+        };
+        let Some(close_index) = find_matching_paren(source, open_index) else {
+            continue;
+        };
+        let args_raw = &source[open_index + 1..close_index];
+        let args = split_lua_args(args_raw)
+            .iter()
+            .map(|arg| {
+                infer_lua_expr_type(
+                    arg,
+                    &local_types,
+                    &require_vars(source, script_path, vars),
+                    module_function_returns,
+                )
+            })
+            .collect::<Vec<_>>();
+        let arg_signature = format!("{{{}}}", args.join(", "));
+        let remote_path = resolve_require_path(target_expr, script_path, vars)
+            .unwrap_or_else(|| target_expr.to_string());
+        let remote_name = remote_path
+            .rsplit('.')
+            .next()
+            .unwrap_or(target_expr)
+            .to_string();
+        let remote_class_name = remote_classes
+            .get(&remote_path.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_else(|| "RemoteRef".to_string());
+        let line = source_line_at(source, target_match.start());
+        let evidence = format!("{target_expr}:{method}({})", args_raw.trim());
+        calls.push(LogicWebRemoteCall {
+            id: String::new(),
+            remote_key: remote_path.to_ascii_lowercase(),
+            remote_name,
+            remote_path,
+            remote_class_name,
+            caller_id: script_id.to_string(),
+            caller_path: script_path.to_string(),
+            method: method.to_string(),
+            direction: remote_direction(method).to_string(),
+            args,
+            arg_signature,
+            evidence,
+            line,
+            confidence: 0.5,
+        });
+    }
+    calls
+}
+
+fn resolve_require_path(
+    expr: &str,
+    current_path: &str,
+    services: &HashMap<String, String>,
+) -> Option<String> {
+    let value = normalize_lua_instance_expr(expr);
+    if value.starts_with("game.") {
+        return Some(normalize_roblox_path(value));
+    }
+    if value == "script" {
+        return Some(normalize_roblox_path(current_path.to_string()));
+    }
+    if let Some(rest) = value.strip_prefix("script.") {
+        let mut base = normalize_roblox_path(current_path.to_string());
+        let mut remaining = rest;
+        while let Some(next) = remaining.strip_prefix("Parent") {
+            base = parent_roblox_path(&base);
+            remaining = next.strip_prefix('.').unwrap_or(next);
+        }
+        if remaining.is_empty() {
+            return Some(normalize_roblox_path(base));
+        }
+        return Some(normalize_roblox_path(format!("{base}.{remaining}")));
+    }
+    if let Some((head, tail)) = value.split_once('.') {
+        if let Some(service) = services.get(head) {
+            return Some(normalize_roblox_path(format!("game.{service}.{tail}")));
+        }
+    } else if let Some(service) = services.get(&value) {
+        return Some(normalize_roblox_path(format!("game.{service}")));
+    }
+    None
+}
+
+fn config_keys(source: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut seen = HashSet::new();
+    for cap in logic_regex(r#"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{"#).captures_iter(source) {
+        let Some(key) = cap.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        if matches!(key, "local" | "function" | "return") {
+            continue;
+        }
+        if seen.insert(key.to_string()) {
+            keys.push(key.to_string());
+        }
+        if keys.len() >= 40 {
+            break;
+        }
+    }
+    keys
+}
+
+fn exported_symbols(source: &str, module_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let escaped = regex::escape(module_name);
+    for pattern in [
+        format!(
+            r#"(?m)\bfunction\s+{}\s*[.:]\s*([A-Za-z_][A-Za-z0-9_]*)\s*\("#,
+            escaped
+        ),
+        format!(r#"(?m)\b{}\s*[.]\s*([A-Za-z_][A-Za-z0-9_]*)\s*="#, escaped),
+    ] {
+        if let Ok(re) = Regex::new(&pattern) {
+            for cap in re.captures_iter(source) {
+                let Some(name) = cap.get(1).map(|m| format!("{module_name}.{}", m.as_str())) else {
+                    continue;
+                };
+                if seen.insert(name.clone()) {
+                    out.push(name);
+                }
+            }
+        }
+    }
+    if out.is_empty() && logic_regex(r#"(?m)^\s*return\s+\{"#).is_match(source) {
+        out.push("anonymous table".to_string());
+    }
+    out.truncate(48);
+    out
+}
+
+fn edge_key(from: &str, to: &str, kind: &str, label: &str) -> String {
+    format!("{from}|{to}|{kind}|{label}")
+}
+
+#[tauri::command]
+pub async fn datatree_build_logic_web(path: String) -> Result<LogicWeb, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = PathBuf::from(path);
+        let cached = read_snapshot_cached(&path)?;
+        let snapshot = &cached.snapshot;
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        let mut seen_edges = HashSet::new();
+        let mut path_to_node = HashMap::<String, String>::new();
+        let mut remote_path_to_node = HashMap::<String, String>::new();
+        let mut remote_classes = HashMap::<String, String>::new();
+        let mut script_records = Vec::new();
+        let mut remote_calls = Vec::new();
+        let mut module_function_return_types = HashMap::<String, String>::new();
+        let mut module_count = 0;
+        let mut local_script_count = 0;
+        let mut server_script_count = 0;
+        let mut config_count = 0;
+
+        for (index, node) in snapshot.nodes.iter().enumerate() {
+            if !is_script_class(&node.class_name) {
+                continue;
+            }
+            let path = roblox_node_path(snapshot, index, &cached.node_index);
+            let source = script_source(node).to_string();
+            let services = capture_unique(
+                &source,
+                r#"game:GetService\s*\(\s*["']([^"']+)["']\s*\)"#,
+                1,
+            );
+            let cfg_keys = config_keys(&source);
+            let exports = exported_symbols(&source, &node.name);
+            let system_name = logic_system_name(&path, &node.name);
+            let system_id = format!(
+                "system:{}",
+                system_name.to_ascii_lowercase().replace(' ', "-")
+            );
+            let kind = logic_node_kind(&node.class_name, &cfg_keys);
+            if node.class_name.eq_ignore_ascii_case("ModuleScript") {
+                module_count += 1;
+            } else if node.class_name.eq_ignore_ascii_case("LocalScript") {
+                local_script_count += 1;
+            } else {
+                server_script_count += 1;
+            }
+            if kind == "Config" {
+                config_count += 1;
+            }
+            let id = format!("script:{}", node.id);
+            path_to_node.insert(path.to_ascii_lowercase(), id.clone());
+            script_records.push((id.clone(), path.clone(), source.clone(), services.clone()));
+            nodes.push(LogicWebNode {
+                id,
+                node_id: Some(node.id),
+                kind,
+                class_name: node.class_name.clone(),
+                name: node.name.clone(),
+                path: path.clone(),
+                parent_path: parent_roblox_path(&path),
+                system_id,
+                source_len: source.len(),
+                exports,
+                config_keys: cfg_keys,
+                services,
+                remote_events: Vec::new(),
+                score: source.len() / 200,
+            });
+        }
+
+        for (_id, script_path, source, _services) in &script_records {
+            if !source.contains("function") || !source.contains("return") {
+                continue;
+            }
+            for (key, return_type) in module_function_returns(script_path, source) {
+                module_function_return_types.insert(key, return_type);
+            }
+        }
+
+        for (index, node) in snapshot.nodes.iter().enumerate() {
+            let class = node.class_name.to_ascii_lowercase();
+            if !matches!(
+                class.as_str(),
+                "remoteevent" | "remotefunction" | "bindableevent" | "bindablefunction"
+            ) {
+                continue;
+            }
+            let path = roblox_node_path(snapshot, index, &cached.node_index);
+            let system_name = logic_system_name(&path, &node.name);
+            let system_id = format!(
+                "system:{}",
+                system_name.to_ascii_lowercase().replace(' ', "-")
+            );
+            let id = format!("remote:{}", node.id);
+            remote_path_to_node.insert(path.to_ascii_lowercase(), id.clone());
+            remote_classes.insert(path.to_ascii_lowercase(), node.class_name.clone());
+            nodes.push(LogicWebNode {
+                id,
+                node_id: Some(node.id),
+                kind: "Remote".to_string(),
+                class_name: node.class_name.clone(),
+                name: node.name.clone(),
+                path: path.clone(),
+                parent_path: parent_roblox_path(&path),
+                system_id,
+                source_len: 0,
+                exports: Vec::new(),
+                config_keys: Vec::new(),
+                services: Vec::new(),
+                remote_events: Vec::new(),
+                score: 4,
+            });
+        }
+
+        let mut node_remote_events = HashMap::<String, Vec<String>>::new();
+        for (script_id, script_path, source, services) in &script_records {
+            for service in services {
+                let service_id = format!("service:{service}");
+                if !nodes.iter().any(|node| node.id == service_id) {
+                    nodes.push(LogicWebNode {
+                        id: service_id.clone(),
+                        node_id: None,
+                        kind: "Service".to_string(),
+                        class_name: "Service".to_string(),
+                        name: service.clone(),
+                        path: format!("game.{service}"),
+                        parent_path: "game".to_string(),
+                        system_id: "system:services".to_string(),
+                        source_len: 0,
+                        exports: Vec::new(),
+                        config_keys: Vec::new(),
+                        services: Vec::new(),
+                        remote_events: Vec::new(),
+                        score: 1,
+                    });
+                }
+                let key = edge_key(script_id, &service_id, "uses_service", service);
+                if seen_edges.insert(key) {
+                    edges.push(LogicWebEdge {
+                        id: format!("edge:{}", edges.len() + 1),
+                        from: script_id.clone(),
+                        to: service_id,
+                        kind: "uses_service".to_string(),
+                        label: format!("uses {service}"),
+                        evidence: format!("game:GetService(\"{service}\")"),
+                        confidence: 0.98,
+                    });
+                }
+            }
+
+            let base_vars = service_vars(source);
+            let vars = instance_vars(source, script_path, &base_vars);
+            for cap in logic_regex(r#"require\s*\(\s*([^)]+?)\s*\)"#).captures_iter(source) {
+                let raw = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                if let Some(target_path) = resolve_require_path(raw, script_path, &vars) {
+                    let target_id = path_to_node.get(&target_path.to_ascii_lowercase());
+                    let to = target_id
+                        .cloned()
+                        .unwrap_or_else(|| format!("external:{}", target_path));
+                    if target_id.is_none() && !nodes.iter().any(|node| node.id == to) {
+                        nodes.push(LogicWebNode {
+                            id: to.clone(),
+                            node_id: None,
+                            kind: "Unresolved".to_string(),
+                            class_name: "RequireTarget".to_string(),
+                            name: target_path
+                                .rsplit('.')
+                                .next()
+                                .unwrap_or("Require")
+                                .to_string(),
+                            path: target_path.clone(),
+                            parent_path: parent_roblox_path(&target_path),
+                            system_id: "system:unresolved".to_string(),
+                            source_len: 0,
+                            exports: Vec::new(),
+                            config_keys: Vec::new(),
+                            services: Vec::new(),
+                            remote_events: Vec::new(),
+                            score: 1,
+                        });
+                    }
+                    let key = edge_key(script_id, &to, "requires", &target_path);
+                    if seen_edges.insert(key) {
+                        edges.push(LogicWebEdge {
+                            id: format!("edge:{}", edges.len() + 1),
+                            from: script_id.clone(),
+                            to,
+                            kind: "requires".to_string(),
+                            label: "requires".to_string(),
+                            evidence: raw.to_string(),
+                            confidence: if target_id.is_some() { 0.92 } else { 0.55 },
+                        });
+                    }
+                }
+            }
+
+            for mut call in remote_calls_in_source(
+                source,
+                script_id,
+                script_path,
+                &vars,
+                &remote_classes,
+                &module_function_return_types,
+            ) {
+                let action = call.method.clone();
+                let resolved = call.remote_path.clone();
+                let to = remote_path_to_node
+                    .get(&resolved.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| format!("remote-ref:{resolved}"));
+                if !nodes.iter().any(|node| node.id == to) {
+                    nodes.push(LogicWebNode {
+                        id: to.clone(),
+                        node_id: None,
+                        kind: "RemoteRef".to_string(),
+                        class_name: "RemoteRef".to_string(),
+                        name: resolved.rsplit('.').next().unwrap_or("Remote").to_string(),
+                        path: resolved.clone(),
+                        parent_path: parent_roblox_path(&resolved),
+                        system_id: "system:remotes".to_string(),
+                        source_len: 0,
+                        exports: Vec::new(),
+                        config_keys: Vec::new(),
+                        services: Vec::new(),
+                        remote_events: Vec::new(),
+                        score: 3,
+                    });
+                }
+                node_remote_events
+                    .entry(script_id.clone())
+                    .or_default()
+                    .push(format!(
+                        "{}.{action} {}",
+                        resolved.rsplit('.').next().unwrap_or(&resolved),
+                        call.arg_signature
+                    ));
+                let kind = if action.starts_with("On") {
+                    "listens_remote"
+                } else {
+                    "fires_remote"
+                };
+                let key = edge_key(
+                    script_id,
+                    &to,
+                    kind,
+                    &format!("{}:{}", action, call.arg_signature),
+                );
+                if seen_edges.insert(key) {
+                    edges.push(LogicWebEdge {
+                        id: format!("edge:{}", edges.len() + 1),
+                        from: script_id.clone(),
+                        to,
+                        kind: kind.to_string(),
+                        label: action.to_string(),
+                        evidence: call.evidence.clone(),
+                        confidence: 0.72,
+                    });
+                }
+                call.id = format!("remote-call:{}", remote_calls.len() + 1);
+                remote_calls.push(call);
+            }
+        }
+
+        let mut signature_counts = HashMap::<String, HashMap<String, usize>>::new();
+        let mut remote_counts = HashMap::<String, usize>::new();
+        for call in &remote_calls {
+            *remote_counts.entry(call.remote_key.clone()).or_insert(0) += 1;
+            *signature_counts
+                .entry(call.remote_key.clone())
+                .or_default()
+                .entry(format!("{} {}", call.method, call.arg_signature))
+                .or_insert(0) += 1;
+        }
+        for call in &mut remote_calls {
+            let total = *remote_counts.get(&call.remote_key).unwrap_or(&1) as f32;
+            let matching = signature_counts
+                .get(&call.remote_key)
+                .and_then(|counts| counts.get(&format!("{} {}", call.method, call.arg_signature)))
+                .copied()
+                .unwrap_or(1) as f32;
+            let resolved_bonus = if call.remote_path.starts_with("game.") {
+                0.18
+            } else {
+                0.0
+            };
+            let class_bonus = if call.remote_class_name != "RemoteRef" {
+                0.14
+            } else {
+                0.0
+            };
+            let repeat_bonus = (matching / total) * 0.28;
+            let volume_bonus = (total.min(8.0) / 8.0) * 0.12;
+            call.confidence = (0.28 + resolved_bonus + class_bonus + repeat_bonus + volume_bonus)
+                .clamp(0.05, 0.98);
+        }
+
+        for node in &mut nodes {
+            if let Some(events) = node_remote_events.remove(&node.id) {
+                let mut seen = HashSet::new();
+                node.remote_events = events
+                    .into_iter()
+                    .filter(|event| seen.insert(event.clone()))
+                    .collect();
+            }
+            node.score += node.exports.len() * 2
+                + node.config_keys.len()
+                + node.remote_events.len() * 3
+                + edges
+                    .iter()
+                    .filter(|edge| edge.from == node.id || edge.to == node.id)
+                    .count();
+        }
+
+        let mut system_map: HashMap<String, LogicWebSystem> = HashMap::new();
+        for node in &nodes {
+            let system =
+                system_map
+                    .entry(node.system_id.clone())
+                    .or_insert_with(|| LogicWebSystem {
+                        id: node.system_id.clone(),
+                        name: node
+                            .system_id
+                            .strip_prefix("system:")
+                            .unwrap_or(&node.system_id)
+                            .replace('-', " ")
+                            .split_whitespace()
+                            .map(|part| {
+                                let mut chars = part.chars();
+                                chars
+                                    .next()
+                                    .map(|first| {
+                                        first.to_ascii_uppercase().to_string() + chars.as_str()
+                                    })
+                                    .unwrap_or_default()
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        node_ids: Vec::new(),
+                        script_count: 0,
+                        remote_count: 0,
+                        edge_count: 0,
+                    });
+            system.node_ids.push(node.id.clone());
+            if is_script_class(&node.class_name) {
+                system.script_count += 1;
+            }
+            if node.kind.contains("Remote") {
+                system.remote_count += 1;
+            }
+        }
+        for edge in &edges {
+            if let Some(from_node) = nodes.iter().find(|node| node.id == edge.from) {
+                if let Some(system) = system_map.get_mut(&from_node.system_id) {
+                    system.edge_count += 1;
+                }
+            }
+        }
+        let mut systems: Vec<_> = system_map.into_values().collect();
+        systems.sort_by(|a, b| {
+            b.script_count
+                .cmp(&a.script_count)
+                .then_with(|| b.edge_count.cmp(&a.edge_count))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        nodes.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+
+        Ok(LogicWeb {
+            version: 1,
+            generated_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or_default(),
+            summary: LogicWebSummary {
+                script_count: script_records.len(),
+                module_count,
+                local_script_count,
+                server_script_count,
+                remote_count: remote_path_to_node.len(),
+                config_count,
+                edge_count: edges.len(),
+            },
+            systems,
+            nodes,
+            edges,
+            remote_calls,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn decode_terrain_grid(raw: &str) -> Vec<TerrainCell> {
     let compact: String = raw
         .trim()
@@ -1447,11 +2793,17 @@ pub async fn datatree_import_dialog(
     use tauri_plugin_dialog::DialogExt;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
+    let default_dir = dirs::home_dir().map(|h| h.join("Opiumware").join("Workspace"));
+    let mut dialog = app.dialog()
         .file()
         .set_title("Import RBXLX or RBXMX")
-        .add_filter("Roblox XML model", &["rbxlx", "rbxmx", "xml"])
-        .pick_file(move |path| {
+        .add_filter("Roblox XML model", &["rbxlx", "rbxmx", "xml"]);
+    if let Some(dir) = default_dir {
+        if dir.exists() {
+            dialog = dialog.set_directory(dir);
+        }
+    }
+    dialog.pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
 
@@ -1460,6 +2812,101 @@ pub async fn datatree_import_dialog(
     };
 
     datatree_import_file(app, path, import_id).map(Some)
+}
+
+fn saved_game_names(file_name: &str) -> Vec<String> {
+    let raw = Path::new(file_name.trim())
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(file_name)
+        .trim();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    let mut names = vec![raw.to_string()];
+    if Path::new(raw).extension().is_none() {
+        names.push(format!("{raw}.rbxlx"));
+        names.push(format!("{raw}.rbxmx"));
+        names.push(format!("{raw}.xml"));
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn saved_game_dirs() -> Vec<(PathBuf, usize)> {
+    let Ok(home) = crate::paths::home_dir() else {
+        return Vec::new();
+    };
+    vec![
+        (home.join("Opiumware").join("workspace"), 3),
+        (home.join("Opiumware"), 2),
+        (home.join("Hydrogen").join("workspace"), 3),
+        (home.join("Hydrogen"), 2),
+        (home.join("Downloads"), 1),
+        (
+            crate::paths::default_workspace_dir().unwrap_or_else(|_| home.join("VelocityUI")),
+            1,
+        ),
+    ]
+}
+
+fn newest_matching_file(
+    dir: &Path,
+    names: &[String],
+    depth: usize,
+    best: &mut Option<(SystemTime, PathBuf)>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_file() {
+            let matches = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| names.iter().any(|candidate| candidate == name))
+                .unwrap_or(false);
+            if !matches {
+                continue;
+            }
+            let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+            if best
+                .as_ref()
+                .map(|(best_modified, _)| modified > *best_modified)
+                .unwrap_or(true)
+            {
+                *best = Some((modified, path));
+            }
+        } else if meta.is_dir() && depth > 0 {
+            newest_matching_file(&path, names, depth - 1, best);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn datatree_find_saved_game_file(file_name: String) -> Result<Option<String>, String> {
+    let names = saved_game_names(&file_name);
+    if names.is_empty() {
+        return Ok(None);
+    }
+
+    let direct = PathBuf::from(file_name.trim());
+    if direct.is_absolute() && direct.is_file() {
+        let path = direct.canonicalize().unwrap_or(direct);
+        return Ok(Some(path.to_string_lossy().into_owned()));
+    }
+
+    let mut best = None;
+    for (dir, depth) in saved_game_dirs() {
+        newest_matching_file(&dir, &names, depth, &mut best);
+    }
+
+    Ok(best.map(|(_, path)| path.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]
@@ -1542,6 +2989,40 @@ mod tests {
             node.attribute_types.get("Speed"),
             Some(&Value::String("int".to_string()))
         );
+    }
+
+    #[test]
+    fn normalizes_wait_for_child_without_dropping_closing_paren() {
+        let normalized = normalize_lua_instance_expr(r#"v_u_7:WaitForChild("HitTargets")"#);
+
+        assert_eq!(normalized, "v_u_7.HitTargets");
+    }
+
+    #[test]
+    fn resolves_wait_for_child_remote_call_targets() {
+        let source = r#"
+local v_u_7 = script.Parent
+local v_u_12 = v_u_7:WaitForChild("HitTargets")
+v_u_12:FireServer(v27)
+"#;
+        let current_path = "game.ReplicatedStorage.Tools.Melee.Sword.MeleeClient".to_string();
+        let base_vars = service_vars(source);
+        let vars = instance_vars(source, &current_path, &base_vars);
+        let calls = remote_calls_in_source(
+            source,
+            "script:1",
+            &current_path,
+            &vars,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].remote_path,
+            "game.ReplicatedStorage.Tools.Melee.Sword.HitTargets"
+        );
+        assert_eq!(calls[0].remote_name, "HitTargets");
     }
 
     #[test]

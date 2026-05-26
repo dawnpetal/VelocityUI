@@ -124,6 +124,7 @@ const tabs = (() => {
       if (choice === 'Save') await fileManager.save(id).catch(console.error);
       else state.markSaved(id);
     }
+    if (file.path) workspaceHistory.recordTabClose?.(file.path);
     editor.destroyTab(id);
     state.closeTab(id);
     render();

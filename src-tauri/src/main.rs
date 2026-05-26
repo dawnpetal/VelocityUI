@@ -379,6 +379,7 @@ fn main() {
 
             let menu = build_app_menu(app)?;
             app.set_menu(menu)?;
+            commands::window::restore_main_window_state(app.handle());
             app.on_menu_event(|app, event| {
                 let id = event.id().0.clone();
                 if id == "app:quit" {
@@ -438,6 +439,10 @@ fn main() {
             commands::accounts::accounts_kill_all,
             commands::accounts::accounts_set_default,
             commands::accounts::accounts_is_launching,
+            commands::ai::ai_get_config,
+            commands::ai::ai_save_config,
+            commands::ai::ai_generate,
+            commands::ai::ai_cancel_request,
             commands::console::console_monitor_set_streaming,
             commands::console::console_monitor_watch_errors,
             commands::io::get_app_paths,
@@ -450,6 +455,7 @@ fn main() {
             commands::io::create_dir,
             commands::io::stat_path,
             commands::io::remove_path,
+            commands::io::trash_path,
             commands::io::rename_path,
             commands::io::copy_file,
             commands::io::watch_path,
@@ -482,9 +488,13 @@ fn main() {
             commands::datatree::datatree_load_explorer_snapshot,
             commands::datatree::datatree_node_detail,
             commands::datatree::datatree_node_value,
+            commands::datatree::datatree_scan_scripts,
+            commands::datatree::datatree_build_logic_web,
             commands::datatree::datatree_render_snapshot,
             commands::datatree::datatree_decode_terrain_grid,
             commands::datatree::datatree_import_dialog,
+            commands::datatree::datatree_import_file,
+            commands::datatree::datatree_find_saved_game_file,
             commands::viewport::viewport_summary,
             commands::network::http_fetch,
             commands::network::http_fetch_binary,
@@ -500,6 +510,7 @@ fn main() {
             commands::icon_theme::icon_theme_uninstall,
             commands::icon_theme::icon_theme_load_installed_icons,
             commands::file_system::build_file_tree,
+            commands::file_system::load_folder_children,
             commands::file_system::generate_unique_filename,
             commands::file_system::copy_path_recursive,
             commands::persistence::save_tree_state_cmd,

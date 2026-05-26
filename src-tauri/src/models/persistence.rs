@@ -15,6 +15,10 @@ pub struct SessionData {
     pub work_dir: Option<String>,
     #[serde(rename = "lastFolder")]
     pub last_folder: Option<String>,
+    #[serde(rename = "rootPaths", default)]
+    pub root_paths: Vec<String>,
+    #[serde(rename = "activeFile", default)]
+    pub active_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,11 +27,31 @@ pub struct UiState {
     pub sidebar_width: Option<u32>,
     #[serde(rename = "panelVisible")]
     pub panel_visible: bool,
+    #[serde(rename = "aiPanelVisible", default)]
+    pub ai_panel_visible: Option<bool>,
+    #[serde(rename = "aiPanelWidth", default)]
+    pub ai_panel_width: Option<u32>,
+    #[serde(rename = "windowState", default)]
+    pub window_state: Option<WindowState>,
     #[serde(rename = "sbBottomHeight")]
     pub sb_bottom_height: Option<u32>,
     #[serde(rename = "activeView")]
     pub active_view: String,
+    #[serde(rename = "aiChatsCollapsed", default)]
+    pub ai_chats_collapsed: Option<bool>,
     pub settings: UiSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowState {
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub maximized: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,6 +4,7 @@ const ExplorerDnd = (() => {
   let _autoExpandTargetId = null;
   let _ghostEl = null;
   let _currentDragOverEl = null;
+  let _nativeDropReady = false;
   function _getIndicator() {
     const tree = document.getElementById('fileTree');
     if (!tree) return null;
@@ -59,8 +60,9 @@ const ExplorerDnd = (() => {
     if (_autoExpandTargetId === node.id) return;
     _clearAutoExpand();
     _autoExpandTargetId = node.id;
-    _autoExpandTimer = setTimeout(() => {
+    _autoExpandTimer = setTimeout(async () => {
       if (!node.open) {
+        await fileManager.ensureChildren?.(node);
         node.open = true;
         ExplorerTree.render();
       }
@@ -101,6 +103,12 @@ const ExplorerDnd = (() => {
       if (_isAncestorOf(root, node.id)) return root;
     }
     return null;
+  }
+  function _destinationForNode(node, preferNodeFolder = true) {
+    if (!node) return null;
+    if (preferNodeFolder && node.type === 'folder') return node.path;
+    const parent = _getParent(node);
+    return parent ? parent.path : (_getContainingRoot(node)?.path ?? null);
   }
   function _resolveZone(e, row, node) {
     const rect = row.getBoundingClientRect();
@@ -197,13 +205,7 @@ const ExplorerDnd = (() => {
         _handlingDrop = true;
         try {
           const zone = _resolveZone(e, row, node);
-          let destDir;
-          if (zone === 'into' && node.type === 'folder') {
-            destDir = node.path;
-          } else {
-            const parent = _getParent(node);
-            destDir = parent ? parent.path : (_getContainingRoot(node)?.path ?? null);
-          }
+          const destDir = _destinationForNode(node, zone === 'into');
           await _externalDrop(e.dataTransfer, destDir);
         } finally {
           _handlingDrop = false;
@@ -301,7 +303,9 @@ const ExplorerDnd = (() => {
         if (!ok) continue;
       }
       try {
+        const oldPath = dragNode.path;
         await fileManager.rename(dragNode.path, newPath);
+        workspaceHistory.recordMove?.(oldPath, newPath, dragNode.type === 'folder');
         dragNode.path = newPath;
         if (dragNode.type === 'file') {
           const f = state.getFile(dragNode.id);
@@ -315,21 +319,45 @@ const ExplorerDnd = (() => {
     }
     if (moved > 0) eventBus.emit('ui:refresh-tree');
   }
-  async function _externalDrop(dt, destDir) {
+  function _dedupeSources(sources) {
+    const sourcePaths = new Set();
+    return sources.filter((source) => {
+      if (!source?.path || sourcePaths.has(source.path)) return false;
+      sourcePaths.add(source.path);
+      return true;
+    });
+  }
+  function _pathSource(path) {
+    return {
+      name: helpers.basename(path),
+      path,
+    };
+  }
+  async function _externalDropSources(sources, destDir) {
     if (!destDir) {
       toast.show('Open a folder first', 'warn');
       return;
     }
 
-    const items = Array.from(dt.items ?? []);
-    const sources = items.map((item) => item.getAsFile()).filter((f) => f?.path);
-    if (!sources.length) return;
+    sources = _dedupeSources(sources);
+    if (!sources.length) {
+      if (!_nativeDropReady) toast.show('Could not read that dropped item', 'warn', 2400);
+      return;
+    }
     const autoexecDrop = autoexec.isInsideProtectedArea(destDir);
-    toast.show(`Copying ${sources.length} item${sources.length > 1 ? 's' : ''}…`, 'info', 2000);
+    const progress = toast.progress?.(
+      `Importing ${sources.length} item${sources.length > 1 ? 's' : ''}...`,
+    );
+    workspaceController.suppressWatcher?.(1800 + sources.length * 150);
     let copied = 0;
+    let processed = 0;
     for (const file of sources) {
       const srcPath = file.path;
       const dest = `${destDir}/${file.name}`;
+      progress?.update(
+        `Importing ${file.name}...`,
+        sources.length > 1 ? processed / sources.length : null,
+      );
       try {
         const stat = await window.__TAURI__.core.invoke('stat_path', { path: srcPath });
         if (autoexecDrop && (stat.isDirectory || !file.name.endsWith('.lua'))) {
@@ -338,23 +366,125 @@ const ExplorerDnd = (() => {
         }
         if (stat.isDirectory) {
           await window.__TAURI__.core.invoke('copy_path_recursive', { src: srcPath, dest });
+          workspaceHistory.recordCreate?.(dest, true, '');
         } else {
           await window.__TAURI__.core.invoke('copy_file', { src: srcPath, dest });
+          workspaceHistory.recordCreate?.(dest, false, '');
         }
         copied++;
       } catch (err) {
         console.error('External drop failed:', file.name, err);
         toast.show(`Failed to copy ${file.name}`, 'warn', 3000);
+      } finally {
+        processed++;
       }
     }
     eventBus.emit('ui:refresh-tree');
-    toast.show(
-      `Copied ${copied}${copied < sources.length ? ` of ${sources.length}` : ''} item${copied !== 1 ? 's' : ''}`,
-      copied === sources.length ? 'ok' : 'warn',
-      2500,
-    );
+    const message = `Imported ${copied}${copied < sources.length ? ` of ${sources.length}` : ''} item${copied !== 1 ? 's' : ''}`;
+    if (copied === sources.length) progress?.finish(message);
+    else progress?.fail(message);
+    if (!progress) toast.show(message, copied === sources.length ? 'ok' : 'warn', 2500);
+  }
+  async function _externalDrop(dt, destDir) {
+    const droppedFiles = [
+      ...Array.from(dt.files ?? []),
+      ...Array.from(dt.items ?? []).map((item) => item.getAsFile()),
+    ].filter((f) => f?.path);
+    await _externalDropSources(droppedFiles, destDir);
+  }
+  function _elementAtDropPosition(position) {
+    const x = Number(position?.x);
+    const y = Number(position?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const points = [[x, y]];
+    if (window.devicePixelRatio > 1)
+      points.push([x / window.devicePixelRatio, y / window.devicePixelRatio]);
+    for (const [pointX, pointY] of points) {
+      const el = document.elementFromPoint(pointX, pointY);
+      if (el?.closest('#fileTree')) return el;
+    }
+    return null;
+  }
+  function _nativeDropDestination(position) {
+    const el = _elementAtDropPosition(position);
+    const tree = document.getElementById('fileTree');
+    if (!el || !tree?.contains(el)) return undefined;
+    const row = el.closest('.tree-row');
+    if (row) return _destinationForNode(ExplorerTree.findNode(row.dataset.id), true);
+    const rootHeader = el.closest('.tree-root-header');
+    if (rootHeader) return ExplorerTree.findNode(rootHeader.dataset.id)?.path ?? null;
+    return state.roots.at(-1)?.path ?? null;
+  }
+  async function _nativeExternalDrop(paths, destDir) {
+    if (_handlingDrop) return;
+    _handlingDrop = true;
+    const progress = toast.progress?.('Reading dropped items...');
+    try {
+      const folders = [];
+      const files = [];
+      const sources = (paths ?? []).map(_pathSource);
+      for (let index = 0; index < sources.length; index++) {
+        const source = sources[index];
+        progress?.update?.(
+          `Reading ${source.name}...`,
+          sources.length > 1 ? index / sources.length : null,
+        );
+        try {
+          const stat = await window.__TAURI__.core.invoke('stat_path', { path: source.path });
+          (stat.isDirectory ? folders : files).push(source);
+        } catch (err) {
+          console.error('Could not inspect dropped item:', source.path, err);
+        }
+      }
+      const added = await workspaceController.addFoldersToWorkspace?.(
+        folders.map((folder) => folder.path),
+        progress,
+      );
+      if (files.length) {
+        progress?.dismiss?.();
+        await _externalDropSources(files, destDir);
+      } else if (added === folders.length && folders.length) {
+        progress?.finish?.(`Added ${added} folder${added === 1 ? '' : 's'} to workspace`);
+      } else if (folders.length) {
+        progress?.fail?.(`Added ${added} of ${folders.length} folders`);
+      } else {
+        progress?.fail?.('Nothing to import');
+      }
+    } finally {
+      _handlingDrop = false;
+    }
+  }
+  async function _attachNativeDrop(rootEl) {
+    if (!rootEl || rootEl._nativeDropBound) return;
+    rootEl._nativeDropBound = true;
+    const webview = window.__TAURI__?.webview?.getCurrentWebview?.();
+    if (!webview?.onDragDropEvent) return;
+    try {
+      await webview.onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload?.type === 'over') {
+          rootEl.classList.toggle(
+            'tree-drop-target',
+            _nativeDropDestination(payload.position) !== undefined,
+          );
+          return;
+        }
+        rootEl.classList.remove('tree-drop-target');
+        if (payload?.type !== 'drop') return;
+        const destDir = _nativeDropDestination(payload.position);
+        if (destDir === undefined) return;
+        _nativeExternalDrop(payload.paths, destDir).catch((err) => {
+          console.error('Native external drop failed:', err);
+          toast.show('Import failed', 'warn', 2600);
+        });
+      });
+      _nativeDropReady = true;
+    } catch (err) {
+      console.warn('Native drop listener unavailable:', err);
+    }
   }
   function attachRootDrop(rootEl) {
+    _attachNativeDrop(rootEl);
     rootEl.addEventListener('dragenter', (e) => {
       e.preventDefault();
     });

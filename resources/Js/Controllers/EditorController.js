@@ -17,7 +17,10 @@ const editorController = (() => {
       const match = state.findByPath(id);
       if (match) fileId = match.id;
     }
+    const file = state.getFile(fileId);
+    const wasOpen = state.openTabIds.includes(fileId);
     state.setActive(fileId);
+    if (file?.path && !wasOpen) workspaceHistory.recordTabOpen?.(file.path);
     tabs.render();
     renderEditor();
     ExplorerTree.render();
@@ -174,6 +177,40 @@ const editorController = (() => {
       if (btn) btn.disabled = false;
     }
   }
+  async function executeFile(id) {
+    const file = state.getFile(id) || state.findByPath(id);
+    if (!file) {
+      toast.show('Could not find that script', 'fail', 2200);
+      return;
+    }
+    if (file.content === null) await fileManager.ensureContent(file.id);
+    const script = file.content ?? '';
+    const miTargets = multiInstanceUI.getTargetsForRun?.();
+    if (miTargets && miTargets.length) {
+      try {
+        const userIds = miTargets.map((t) => t.user_id);
+        eventBus.emit('script:executing', {
+          userIds,
+          filename: file.name,
+        });
+        await multiInstance.sendScriptToMany(userIds, script);
+        const n = miTargets.length;
+        const label =
+          n === 1 ? miTargets[0].display_name || miTargets[0].username : `${n} instances`;
+        toast.show(`Sent to ${label}`, 'ok');
+        await execHistory.push(script, file.name);
+        eventBus.emit('script:executed', {
+          userIds,
+          filename: file.name,
+        });
+      } catch (err) {
+        toast.show(err.message, 'fail', 3000);
+      }
+      return;
+    }
+    _setConnectionStatus('warn connecting', 'Scanning…', 'warn');
+    await _execScript(script, file.name);
+  }
   async function executeScriptWithBridge() {
     const active = state.getActive();
     if (!active) {
@@ -195,6 +232,7 @@ const editorController = (() => {
     newUntitledFile,
     onFileSaved,
     executeScript,
+    executeFile,
     executeScriptWithBridge,
     rerunScript,
   };

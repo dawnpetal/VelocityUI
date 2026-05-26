@@ -20,6 +20,29 @@ const dataTree = (() => {
   const MAX_ASSET_BLOB_CACHE_ENTRIES = 64;
   const MAX_TERRAIN_CELL_CACHE_ENTRIES = 4;
   const MAX_READY_MESH_CACHE_ENTRIES = 96;
+  const LOGIC_WEB_INDEX_VERSION = 2;
+  const PLACE_ANALYSIS_STEPS = [
+    {
+      id: 'configs',
+      title: 'Configs and data tables',
+      hint: 'Find gameplay data that is not obvious from world clones.',
+    },
+    {
+      id: 'remotes',
+      title: 'Remotes and argument guesses',
+      hint: 'Infer remote payloads from call sites and nearby configs.',
+    },
+    {
+      id: 'mechanisms',
+      title: 'Gameplay mechanisms',
+      hint: 'Group scripts into user-facing game systems.',
+    },
+    {
+      id: 'map',
+      title: 'Mechanism map',
+      hint: 'Assemble a clean center-out map for the UI.',
+    },
+  ];
   const MAX_SCENE_LIGHTS = 192;
   const VIEWPORT_PERFORMANCE_MODE = false;
   const MAX_VIEWPORT_LIGHTS = 8;
@@ -53,8 +76,47 @@ const dataTree = (() => {
     snapshots: [],
     activeSnapshotId: null,
     activeNodeId: null,
+    viewMode: 'explorer',
+    analysisMode: 'remote',
     expanded: new Set(),
     query: '',
+    moduleScanner: {
+      query: '',
+      results: [],
+      busy: false,
+      error: '',
+      snapshotId: null,
+      scannedQuery: null,
+      scannedAt: 0,
+    },
+    logicWeb: {
+      graph: null,
+      busy: false,
+      error: '',
+      snapshotId: null,
+      indexVersion: null,
+      aiScanBusy: false,
+      aiPlan: null,
+    },
+    remoteScan: {
+      query: '',
+      busy: false,
+      error: '',
+      snapshotId: null,
+      result: null,
+      lastRunAt: 0,
+    },
+    placeAnalysis: {
+      busy: false,
+      error: '',
+      snapshotId: null,
+      activeStepId: null,
+      results: {},
+      plan: null,
+      lastRunAt: 0,
+      pan: { x: 0, y: 0, scale: 1 },
+    },
+    saveGameCooldownUntil: 0,
     propertyQuery: '',
     railExplorerHeight: null,
     railWidth: null,
@@ -103,9 +165,12 @@ const dataTree = (() => {
       totalBytes: 0,
     },
   };
+  let _activeContainerId = 'dataTreeView';
   let _inited = false;
   let _initPromise = null;
   let _searchTimer = null;
+  let _moduleScanTimer = null;
+  let _moduleScanRun = 0;
   let _saveTimer = null;
   let _previewWarmupTimer = null;
   let _activeRowEl = null;
@@ -125,7 +190,7 @@ const dataTree = (() => {
     WrapTarget: 'LayerCollector',
   };
 
-  const _container = () => document.getElementById('dataTreeView');
+  const _container = () => document.getElementById(_activeContainerId);
   const _storePath = () => `${paths.internals}/${STORE_FILE}`;
   const _legacyStorePath = () => `${paths.internals}/${LEGACY_STORE_FILE}`;
   const _assetCachePath = (id) => {
@@ -408,6 +473,12 @@ const dataTree = (() => {
     _saveTimer = setTimeout(() => _save().catch(() => {}), 220);
   }
 
+  async function flushSave() {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+    await _save();
+  }
+
   async function _save() {
     _log.info(`Saving ${state_.snapshots.length} snapshot(s) to disk`);
     await window.__TAURI__.core.invoke('write_text_file', {
@@ -419,7 +490,9 @@ const dataTree = (() => {
     });
   }
 
-  function show() {
+  function show(mode = null) {
+    _activeContainerId = 'dataTreeView';
+    state_.viewMode = mode || 'explorer';
     state_.visible = true;
     if (!_inited) {
       const root = _container();
@@ -432,6 +505,24 @@ const dataTree = (() => {
     render();
     if (!state_.memoryUnloaded) requestAnimationFrame(_loadActiveSnapshotForView);
     if (activeSnapshot()?.byId && !state_.previewReady) _schedulePreviewWarmup();
+  }
+
+  function showAnalysis(mode = null) {
+    _activeContainerId = 'analysisView';
+    state_.viewMode = 'analysis-workspace';
+    state_.analysisMode = 'remote';
+    state_.visible = true;
+    if (!_inited) {
+      const root = _container();
+      if (root) root.replaceChildren(_analysisSkeleton('Preparing Analysis'));
+      init()
+        .then(() => requestAnimationFrame(_loadActiveSnapshotForView))
+        .catch((err) => toast.show(err?.message || 'Analysis failed to load', 'fail', 3200));
+      return;
+    }
+    render();
+    if (!state_.memoryUnloaded) requestAnimationFrame(_loadActiveSnapshotForView);
+    requestAnimationFrame(_prepareRemoteScan);
   }
 
   function hide() {
@@ -485,11 +576,12 @@ const dataTree = (() => {
     if (state_.importing) return;
     _log.info('Importing RBXLX via native Tauri parser');
     const importId = helpers.uid();
+    const directPath = typeof file === 'string' ? file : file?.path || '';
     state_.importing = true;
     state_.importProgress = {
       importId,
       progress: 0.02,
-      message: 'Waiting for file selection',
+      message: directPath ? 'Preparing saved game import' : 'Waiting for file selection',
       nodeCount: 0,
       bytesRead: 0,
       totalBytes: 0,
@@ -511,7 +603,9 @@ const dataTree = (() => {
       })
       .catch?.(() => null);
     try {
-      const snapshot = await window.__TAURI__.core.invoke('datatree_import_dialog', { importId });
+      const snapshot = directPath
+        ? await window.__TAURI__.core.invoke('datatree_import_file', { path: directPath, importId })
+        : await window.__TAURI__.core.invoke('datatree_import_dialog', { importId });
       if (!snapshot) return;
       await _hydrateAsync(snapshot);
       state_.snapshots.unshift(snapshot);
@@ -740,6 +834,13 @@ const dataTree = (() => {
     return shell;
   }
 
+  function _analysisSkeleton(message = 'Loading Analysis') {
+    const shell = document.createElement('div');
+    shell.className = 'analysis-shell';
+    shell.innerHTML = `<header class="analysis-topbar"><div class="analysis-title"><h2>Analysis</h2><p>${_escape(message)}</p></div></header><main class="analysis-content"><div class="analysis-empty"><span class="dt-busy-spinner"></span><strong>Preparing Analysis</strong><p>Loading saved RBXLX snapshots and local script indexes.</p></div></main>`;
+    return shell;
+  }
+
   function _rememberScroll(root) {
     state_.scroll.tree = root.querySelector('.dt-tree-list')?.scrollTop ?? state_.scroll.tree;
     state_.scroll.details = root.querySelector('.dt-details')?.scrollTop ?? state_.scroll.details;
@@ -755,9 +856,38 @@ const dataTree = (() => {
   }
 
   function _view() {
+    if (state_.viewMode === 'analysis-workspace') return _analysisWorkspace();
     const shell = document.createElement('div');
     shell.className = `dt-shell${state_.importing ? ' is-importing' : ''}${state_.treeLoading ? ' is-tree-loading' : ''}`;
     shell.append(_topbar(), _content());
+    if (state_.importing) shell.appendChild(_importOverlay());
+    else if (state_.treeLoading) shell.appendChild(_treeLoadOverlay());
+    return shell;
+  }
+
+  function _analysisWorkspace() {
+    const shell = document.createElement('div');
+    shell.className = `analysis-shell${state_.importing ? ' is-importing' : ''}${state_.treeLoading ? ' is-tree-loading' : ''}`;
+    const snapshot = activeSnapshot();
+    const busy = state_.importing;
+    const mode = 'remote';
+    const subtitle = busy
+      ? 'Importing RBXLX'
+      : snapshot?.storagePath
+        ? `${(snapshot.nodeCount || 0).toLocaleString()} instances ready`
+        : 'Load a DataTree import first';
+    const header = document.createElement('header');
+    header.className = 'analysis-topbar';
+    header.innerHTML = `<div class="analysis-title"><h2>Remote Scan</h2><p>${_escape(subtitle)}</p></div><div class="analysis-actions"><span class="analysis-bound-source" title="Remote Scan uses the DataTree that is currently loaded in the main DataTree tab.">Uses main DataTree</span></div>`;
+    const content = document.createElement('main');
+    content.className = `analysis-content analysis-content--${mode}`;
+    if (!snapshot?.storagePath) {
+      content.innerHTML = `<div class="analysis-empty"><strong>No DataTree loaded</strong><p>Remote Scan follows the active place from the main DataTree tab. Import or select an RBXLX there first.</p></div>`;
+    } else {
+      content.appendChild(_remoteScanPane());
+      requestAnimationFrame(_prepareRemoteScan);
+    }
+    shell.append(header, content);
     if (state_.importing) shell.appendChild(_importOverlay());
     else if (state_.treeLoading) shell.appendChild(_treeLoadOverlay());
     return shell;
@@ -769,7 +899,15 @@ const dataTree = (() => {
     const snapshot = activeSnapshot();
     const busy = state_.importing;
     bar.setAttribute('aria-busy', String(busy));
-    bar.innerHTML = `<div class="dt-title-block"><h2>DataTree</h2><p>${busy ? 'Importing RBXLX' : 'RBXLX Explorer'}</p></div><div class="dt-actions"><select class="dt-snapshot-select" aria-label="Saved DataTrees"${busy ? ' disabled' : ''}>${state_.snapshots.map((item) => `<option value="${_escape(item.id)}"${item.id === state_.activeSnapshotId ? ' selected' : ''}>${_escape(item.name || 'Untitled DataTree')}</option>`).join('') || '<option>No imports</option>'}</select><button class="dt-icon-action dt-memory-action" type="button" data-action="${state_.memoryUnloaded ? 'reload-memory' : 'unload-memory'}" title="${state_.memoryUnloaded ? 'Reload this DataTree into memory' : 'Unload this DataTree from memory when you are done inspecting it'}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>${state_.memoryUnloaded ? 'Reload' : 'Unload'}</button><button class="dt-icon-action" type="button" data-action="delete" title="Delete import"${busy ? ' disabled' : ''}>Delete</button><button class="dt-btn dt-btn-primary" data-action="import"${busy ? ' disabled' : ''}>${busy ? 'Importing RBXLX' : 'Import RBXLX'}</button></div>`;
+    const saveCooldownLeft = Math.ceil(
+      Math.max(0, state_.saveGameCooldownUntil - Date.now()) / 1000,
+    );
+    const subtitle = busy
+      ? 'Importing RBXLX'
+      : state_.viewMode === 'scanner'
+        ? 'Script Scanner'
+        : 'RBXLX Explorer';
+    bar.innerHTML = `<div class="dt-title-block"><h2>DataTree</h2><p>${subtitle}</p></div><div class="dt-actions"><div class="dt-mode-switch" role="tablist" aria-label="DataTree view"><button type="button" data-mode="explorer" class="${state_.viewMode === 'explorer' ? 'active' : ''}">Explorer</button><button type="button" data-mode="scanner" class="${state_.viewMode === 'scanner' ? 'active' : ''}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>Scanner</button></div><select class="dt-snapshot-select" aria-label="Saved DataTrees"${busy ? ' disabled' : ''}>${state_.snapshots.map((item) => `<option value="${_escape(item.id)}"${item.id === state_.activeSnapshotId ? ' selected' : ''}>${_escape(item.name || 'Untitled DataTree')}</option>`).join('') || '<option>No imports</option>'}</select><button class="dt-icon-action dt-memory-action" type="button" data-action="${state_.memoryUnloaded ? 'reload-memory' : 'unload-memory'}" title="${state_.memoryUnloaded ? 'Reload this DataTree into memory' : 'Unload this DataTree from memory when you are done inspecting it'}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>${state_.memoryUnloaded ? 'Reload' : 'Unload'}</button><button class="dt-icon-action" type="button" data-action="delete" title="Delete import"${busy ? ' disabled' : ''}>Delete</button><button class="dt-icon-action dt-save-game-action" type="button" data-action="save-current-game" title="${saveCooldownLeft ? `Save current game is cooling down for ${saveCooldownLeft}s` : 'Save current game with optimized USSI preset'}"${busy || saveCooldownLeft ? ' disabled' : ''}>${saveCooldownLeft ? `Save in ${saveCooldownLeft}s` : 'Save current game'}</button><button class="dt-btn dt-btn-primary" data-action="import"${busy ? ' disabled' : ''}>${busy ? 'Importing RBXLX' : 'Import RBXLX'}</button></div>`;
     const select = bar.querySelector('.dt-snapshot-select');
     select?.addEventListener('change', async () => {
       if (state_.importing) return;
@@ -781,7 +919,19 @@ const dataTree = (() => {
     bar.querySelector('[data-action="unload-memory"]')?.addEventListener('click', unloadMemory);
     bar.querySelector('[data-action="reload-memory"]')?.addEventListener('click', reloadMemory);
     bar.querySelector('[data-action="delete"]')?.addEventListener('click', deleteSnapshot);
+    bar
+      .querySelector('[data-action="save-current-game"]')
+      ?.addEventListener('click', saveCurrentGame);
     bar.querySelector('[data-action="import"]')?.addEventListener('click', () => importRbxlx());
+    bar.querySelectorAll('[data-mode]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const mode = button.dataset.mode === 'scanner' ? 'scanner' : 'explorer';
+        if (state_.viewMode === mode) return;
+        state_.viewMode = mode;
+        render();
+        if (mode === 'scanner') _scheduleModuleScanner(0);
+      });
+    });
     if (!snapshot) {
       bar.querySelector('[data-action="delete"]')?.setAttribute('disabled', '');
     }
@@ -844,6 +994,11 @@ const dataTree = (() => {
       wrap.append(_memoryUnloadedPane(), _sideSplitter(wrap), _memoryUnloadedSide());
       return wrap;
     }
+    if (state_.viewMode === 'scanner') {
+      wrap.classList.add('dt-content--scanner');
+      wrap.appendChild(_moduleScannerPane());
+      return wrap;
+    }
     const side = document.createElement('section');
     side.className = `dt-side${state_.treeLoading ? ' dt-side--loading' : ''}`;
     if (state_.railExplorerHeight) {
@@ -873,6 +1028,1997 @@ const dataTree = (() => {
     side.innerHTML =
       '<main class="dt-tree-pane"><div class="dt-tree-toolbar"><div><span class="dt-tree-title">Data Model Explorer</span><small>Memory unloaded</small></div></div><div class="dt-tree-list"><div class="dt-empty">Reload DataTree to restore the explorer.</div></div></main><aside class="dt-details"><div class="dt-empty">Inspector is sleeping.</div></aside>';
     return side;
+  }
+
+  function _logicWebPane() {
+    const logic = state_.logicWeb;
+    const graph = logic.graph;
+    const pane = document.createElement('main');
+    pane.className = 'dt-logic-web';
+    if (logic.busy) {
+      pane.innerHTML = `<div class="dt-logic-empty"><span class="dt-busy-spinner"></span><strong>Building local logic web</strong><p>Reading scripts, resolving requires, remotes, services, and config tables.</p></div>`;
+      return pane;
+    }
+    if (logic.error) {
+      pane.innerHTML = `<div class="dt-logic-empty"><strong>Logic web failed</strong><p>${_escape(logic.error)}</p><button class="dt-btn dt-btn-primary" data-action="logic-rebuild">Rebuild</button></div>`;
+      pane
+        .querySelector('[data-action="logic-rebuild"]')
+        ?.addEventListener('click', () => _ensureLogicWeb({ force: true }));
+      return pane;
+    }
+    if (!graph) {
+      pane.innerHTML = `<div class="dt-logic-empty"><strong>Local Logic Web</strong><p>Build a clean local map of scripts, modules, remotes, services, configs, and require chains.</p><button class="dt-btn dt-btn-primary" data-action="logic-build">Build Logic Web</button></div>`;
+      pane
+        .querySelector('[data-action="logic-build"]')
+        ?.addEventListener('click', () => _ensureLogicWeb({ force: true }));
+      return pane;
+    }
+
+    const summary = graph.summary || {};
+    const learning = _logicLearning(graph);
+    const humanGraph = _logicHumanGraph(graph, learning);
+    const aiLabel = logic.aiScanBusy ? 'Waiting for AI...' : 'Analyze place with AI';
+    pane.innerHTML = `<section class="dt-logic-head"><div><span>Local Logic Web</span><strong>${humanGraph.groups.length.toLocaleString()} groups · ${Number(summary.edgeCount || 0).toLocaleString()} raw relations</strong></div><div class="dt-logic-learning"><span>Local view</span><strong>Grouped by repeated script patterns</strong><small>${_escape(
+      learning.topSystems
+        .map((item) => item.name)
+        .slice(0, 3)
+        .join(' · ') || 'No systems scored',
+    )}</small></div><div class="dt-logic-stats"><span>${Number(summary.scriptCount || 0).toLocaleString()} scripts</span><span>${Number(summary.remoteCount || 0).toLocaleString()} remotes</span><span>${Number(summary.configCount || 0).toLocaleString()} configs</span></div><button class="dt-btn dt-btn-primary dt-logic-ai-btn${logic.aiScanBusy ? ' is-busy' : ''}" type="button" data-action="logic-ai-recheck"${logic.aiScanBusy ? ' disabled' : ''}>${aiLabel}</button><button class="dt-icon-action" data-action="logic-rebuild">Rebuild</button></section><section class="dt-logic-body${logic.aiPlan ? ' has-ai-plan' : ''}"><aside class="dt-logic-tree">${logic.aiPlan ? _logicAiTreeMarkup(logic.aiPlan) : _logicGroupsListMarkup(graph, humanGraph)}</aside><section class="dt-logic-map">${_logicMapMarkup(graph, humanGraph, learning)}</section><aside class="dt-logic-inspector">${logic.aiPlan ? _logicAiPlanMarkup(logic.aiPlan) : _logicInspectorMarkup(graph, learning, humanGraph)}</aside></section>`;
+    pane
+      .querySelector('[data-action="logic-rebuild"]')
+      ?.addEventListener('click', () => _ensureLogicWeb({ force: true }));
+    pane
+      .querySelector('[data-action="logic-ai-recheck"]')
+      ?.addEventListener('click', () => _logicAiRecheck(graph, humanGraph, learning));
+    return pane;
+  }
+
+  function _logicDegreeMap(graph) {
+    const degree = new Map();
+    (graph.edges || []).forEach((edge) => {
+      degree.set(edge.from, (degree.get(edge.from) || 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) || 0) + 1);
+    });
+    return degree;
+  }
+
+  function _logicLearning(graph) {
+    if (graph.__learning) return graph.__learning;
+    const nodes = graph.nodes || [];
+    const edges = graph.edges || [];
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const degree = new Map();
+    const outgoing = new Map();
+    const incoming = new Map();
+    for (const edge of edges) {
+      degree.set(edge.from, (degree.get(edge.from) || 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) || 0) + 1);
+      if (!outgoing.has(edge.from)) outgoing.set(edge.from, []);
+      if (!incoming.has(edge.to)) incoming.set(edge.to, []);
+      outgoing.get(edge.from).push(edge.to);
+      incoming.get(edge.to).push(edge.from);
+    }
+    const n = Math.max(1, nodes.length);
+    let rank = new Map(nodes.map((node) => [node.id, 1 / n]));
+    for (let i = 0; i < 28; i++) {
+      const next = new Map(nodes.map((node) => [node.id, 0.15 / n]));
+      for (const node of nodes) {
+        const outs = outgoing.get(node.id) || [];
+        const share = (rank.get(node.id) || 0) / Math.max(1, outs.length);
+        if (!outs.length) continue;
+        for (const target of outs) next.set(target, (next.get(target) || 0) + 0.85 * share);
+      }
+      rank = next;
+    }
+    const maxDegree = Math.max(1, ...nodes.map((node) => degree.get(node.id) || 0));
+    const maxRank = Math.max(0.000001, ...nodes.map((node) => rank.get(node.id) || 0));
+    const scores = new Map();
+    for (const node of nodes) {
+      const d = (degree.get(node.id) || 0) / maxDegree;
+      const pr = (rank.get(node.id) || 0) / maxRank;
+      const sourceWeight = Math.min(1, Number(node.sourceLen || 0) / 30000);
+      const incomingCount = incoming.get(node.id)?.length || 0;
+      const outgoingCount = outgoing.get(node.id)?.length || 0;
+      const bridgeWeight = Math.min(1, Math.min(incomingCount, outgoingCount) / 8);
+      const relationBoost = Math.min(
+        0.42,
+        (node.remoteEvents?.length || 0) * 0.022 + (node.exports?.length || 0) * 0.016,
+      );
+      const lowerPath = `${node.name || ''} ${node.path || ''}`.toLowerCase();
+      const gameplayHint =
+        /(controller|server|manager|system|handler|combat|weapon|craft|map|round|game|main|inventory|quest|damage|spawn|interact)/.test(
+          lowerPath,
+        )
+          ? 0.13
+          : 0;
+      const utilityPenalty =
+        /(utility|utils|quicknet|signal|maid|trove|promise|janitor|table|string|number|math)/.test(
+          lowerPath,
+        )
+          ? -0.18
+          : 0;
+      const uiPenalty =
+        /(gui|ui|interface|screen|button|frame|menu|hud|prompt|tooltip|startergui|playergui|textlabel|imagelabel)/.test(
+          lowerPath,
+        )
+          ? -0.48
+          : 0;
+      const kindPenalty = /service/i.test(node.kind)
+        ? -0.7
+        : /config/i.test(node.kind)
+          ? -0.44
+          : /remote/i.test(node.kind)
+            ? -0.08
+            : 0;
+      const kindBoost = /local|script/i.test(node.kind)
+        ? 0.15
+        : /module/i.test(node.kind)
+          ? 0.08
+          : 0;
+      scores.set(
+        node.id,
+        d * 0.38 +
+          pr * 0.3 +
+          bridgeWeight * 0.14 +
+          sourceWeight * 0.07 +
+          relationBoost +
+          kindBoost +
+          kindPenalty +
+          gameplayHint +
+          utilityPenalty +
+          uiPenalty,
+      );
+    }
+    const ranked = [...nodes].sort((a, b) => (scores.get(b.id) || 0) - (scores.get(a.id) || 0));
+    const mainElements = ranked
+      .filter((node) => !/service|config|remote/i.test(node.kind))
+      .slice(0, 12);
+    const systemScores = new Map();
+    for (const node of nodes) {
+      const current = systemScores.get(node.systemId) || {
+        score: 0,
+        nodes: 0,
+        name: node.systemId,
+      };
+      current.score += Math.max(0, scores.get(node.id) || 0);
+      current.nodes += 1;
+      systemScores.set(node.systemId, current);
+    }
+    for (const system of graph.systems || []) {
+      const item = systemScores.get(system.id) || { score: 0, nodes: 0 };
+      item.name = system.name;
+      item.score += Number(system.edgeCount || 0) * 0.04 + Number(system.scriptCount || 0) * 0.025;
+      item.id = system.id;
+      systemScores.set(system.id, item);
+    }
+    const topSystems = [...systemScores.values()].sort((a, b) => b.score - a.score).slice(0, 8);
+    graph.__learning = {
+      byId,
+      degree,
+      incoming,
+      outgoing,
+      rank,
+      scores,
+      ranked,
+      mainElements,
+      topSystems,
+    };
+    return graph.__learning;
+  }
+
+  function _logicHumanGroupKey(node, counts) {
+    const base = `${node.systemId || 'system'}:${node.kind}:${node.name}`;
+    if ((counts.get(base) || 0) > 1) return `group:${base}`;
+    return `node:${node.id}`;
+  }
+
+  function _logicLooksUi(value = '') {
+    return /(gui|ui|interface|screen|button|frame|menu|hud|prompt|tooltip|startergui|playergui|textlabel|imagelabel)/i.test(
+      String(value || ''),
+    );
+  }
+
+  function _logicHumanGraph(graph, learning = _logicLearning(graph)) {
+    if (graph.__humanGraph) return graph.__humanGraph;
+    const nodes = graph.nodes || [];
+    const systems = graph.systems || [];
+    const systemById = new Map(systems.map((system) => [system.id, system]));
+    const nameCounts = new Map();
+    for (const node of nodes) {
+      const base = `${node.systemId || 'system'}:${node.kind}:${node.name}`;
+      nameCounts.set(base, (nameCounts.get(base) || 0) + 1);
+    }
+    const groupMap = new Map();
+    const nodeToGroup = new Map();
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    for (const node of nodes) {
+      if (node.kind === 'Service' && !(learning.degree.get(node.id) || 0)) continue;
+      const key = _logicHumanGroupKey(node, nameCounts);
+      const system = systemById.get(node.systemId);
+      const group = groupMap.get(key) || {
+        id: key,
+        name: node.name || node.kind,
+        kind: node.kind,
+        systemId: node.systemId,
+        systemName: system?.name || node.systemId || 'General',
+        members: [],
+        memberIds: new Set(),
+        score: 0,
+        maxScore: 0,
+        relationCount: 0,
+        remoteCount: 0,
+        uiNoise: _logicLooksUi(`${node.name} ${node.path} ${system?.name || ''}`),
+        exports: new Set(),
+        configKeys: new Set(),
+        primary: node,
+      };
+      const score = learning.scores.get(node.id) || 0;
+      group.members.push(node);
+      group.memberIds.add(node.id);
+      group.score += Math.max(0, score);
+      group.maxScore = Math.max(group.maxScore, score);
+      group.remoteCount += node.remoteEvents?.length || 0;
+      group.uiNoise =
+        group.uiNoise || _logicLooksUi(`${node.name} ${node.path} ${system?.name || ''}`);
+      node.exports?.slice(0, 10).forEach((item) => group.exports.add(item));
+      node.configKeys?.slice(0, 10).forEach((item) => group.configKeys.add(item));
+      if (score >= (learning.scores.get(group.primary?.id) || 0)) group.primary = node;
+      groupMap.set(key, group);
+      nodeToGroup.set(node.id, key);
+    }
+    const edgeMap = new Map();
+    for (const edge of graph.edges || []) {
+      const from = nodeToGroup.get(edge.from);
+      const to = nodeToGroup.get(edge.to);
+      if (!from || !to || from === to) continue;
+      const key = `${from}->${to}:${edge.kind}`;
+      const item = edgeMap.get(key) || {
+        id: key,
+        from,
+        to,
+        kind: edge.kind,
+        label: edge.label || edge.kind,
+        evidence: edge.evidence || '',
+        count: 0,
+      };
+      item.count += 1;
+      edgeMap.set(key, item);
+      const a = groupMap.get(from);
+      const b = groupMap.get(to);
+      if (a) a.relationCount += 1;
+      if (b) b.relationCount += 1;
+    }
+    const groups = [...groupMap.values()]
+      .map((group) => ({
+        ...group,
+        count: group.members.length,
+        exports: [...group.exports],
+        configKeys: [...group.configKeys],
+        score:
+          group.score +
+          group.relationCount * 0.015 +
+          Math.log2(group.members.length + 1) * 0.18 -
+          (group.uiNoise ? 0.42 : 0),
+      }))
+      .sort((a, b) => b.score - a.score);
+    const groupById = new Map(groups.map((group) => [group.id, group]));
+    const groupEdges = [...edgeMap.values()].sort((a, b) => b.count - a.count);
+    graph.__humanGraph = { groups, groupEdges, groupById, nodeToGroup, byId };
+    return graph.__humanGraph;
+  }
+
+  function _logicGroupsListMarkup(graph, humanGraph) {
+    const bySystem = new Map();
+    humanGraph.groups.forEach((group) => {
+      const arr = bySystem.get(group.systemId) || [];
+      arr.push(group);
+      bySystem.set(group.systemId, arr);
+    });
+    const systems = [...(graph.systems || [])].sort((a, b) => {
+      const ac = bySystem.get(a.id)?.length || 0;
+      const bc = bySystem.get(b.id)?.length || 0;
+      return bc - ac || Number(b.edgeCount || 0) - Number(a.edgeCount || 0);
+    });
+    return systems
+      .map((system) => {
+        const groups = (bySystem.get(system.id) || []).slice(0, 26);
+        if (!groups.length) return '';
+        const rows = groups
+          .map((group) => {
+            return `<div class="dt-logic-tree-node"><span>${_escape(_logicKindGlyph(group.kind))}</span><div><strong>${_escape(group.name)}</strong><small>${_escape(group.kind)} group · ${group.count.toLocaleString()} member${group.count === 1 ? '' : 's'}</small></div><em>${Math.round(group.score * 100)}</em></div>`;
+          })
+          .join('');
+        return `<section class="dt-logic-system"><div class="dt-logic-system-head"><span>${_escape(system.name)}</span><small>${Number(system.scriptCount || 0)} scripts · ${groups.length} groups</small></div>${rows}</section>`;
+      })
+      .join('');
+  }
+
+  function _logicMapMarkup(graph, humanGraph, learning = _logicLearning(graph)) {
+    const important = humanGraph.groups.filter((group) => !group.uiNoise).slice(0, 72);
+    const noise = humanGraph.groups.filter((group) => group.uiNoise).slice(0, 18);
+    const nodes = [...important, ...noise];
+    const visibleIds = new Set(nodes.map((node) => node.id));
+    const visibleEdges = humanGraph.groupEdges
+      .filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to))
+      .slice(0, 140);
+    if (!nodes.length) return '<div class="dt-logic-empty-inline">No nodes in graph.</div>';
+    const centerX = 600;
+    const centerY = 390;
+    const positions = new Map();
+    const systems = (
+      graph.systems?.length ? graph.systems : [{ id: 'system:general', name: 'General' }]
+    )
+      .filter((system) => nodes.some((node) => node.systemId === system.id))
+      .slice(0, 18);
+    const systemIndex = new Map(systems.map((system, index) => [system.id, index]));
+    const grouped = new Map();
+    for (const node of nodes) {
+      const key = node.systemId || 'system:general';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(node);
+    }
+    for (const [systemId, group] of grouped.entries()) {
+      group.sort((a, b) => b.score - a.score);
+      const sysIndex = systemIndex.get(systemId) ?? systemIndex.size;
+      const angle = (Math.PI * 2 * sysIndex) / Math.max(1, systems.length) - Math.PI / 2;
+      const clusterRadius = 78 + Math.min(145, group.length * 1.25);
+      const cx = centerX + Math.cos(angle) * 330;
+      const cy = centerY + Math.sin(angle) * 218;
+      group.forEach((node, index) => {
+        const inner = index * 2.399963229728653;
+        const ring = Math.min(clusterRadius, 10 + Math.sqrt(index + 1) * 13);
+        positions.set(node.id, {
+          x: cx + Math.cos(inner) * Math.min(clusterRadius, ring),
+          y: cy + Math.sin(inner) * Math.min(clusterRadius * 0.72, ring * 0.72),
+        });
+      });
+    }
+    const labelMarkup = systems
+      .map((system, index) => {
+        const angle = (Math.PI * 2 * index) / Math.max(1, systems.length) - Math.PI / 2;
+        const x = centerX + Math.cos(angle) * 330;
+        const y = centerY + Math.sin(angle) * 218;
+        return `<text class="dt-logic-system-label" x="${x}" y="${y - 92}">${_escape(system.name)}</text>`;
+      })
+      .join('');
+    const edgeMarkup = visibleEdges
+      .map((edge) => {
+        const a = positions.get(edge.from);
+        const b = positions.get(edge.to);
+        if (!a || !b) return '';
+        return `<line class="dt-logic-edge dt-logic-edge--${_escape(edge.kind)}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"><title>${_escape(edge.label || edge.kind)}</title></line>`;
+      })
+      .join('');
+    const nodeMarkup = nodes
+      .map((node, index) => {
+        const pos = positions.get(node.id);
+        const noise = node.uiNoise ? ' noise' : '';
+        const c = Math.max(0, Math.min(1, node.maxScore || node.score || 0));
+        const baseRadius =
+          12 +
+          Math.min(58, Math.sqrt(node.count) * 8 + c * 20 + Math.log2(node.relationCount + 1) * 4);
+        const r = node.uiNoise ? Math.max(9, baseRadius * 0.58) : baseRadius;
+        const label = node.count > 1 ? `${node.name} (${node.count})` : node.name;
+        const showLabel = !node.uiNoise && index < 34 && r >= 22;
+        return `<g class="dt-logic-map-node dt-logic-bubble${noise}" transform="translate(${pos.x} ${pos.y})"><circle r="${r}"></circle><text y="-2">${_escape(_logicKindGlyph(node.kind))}</text>${showLabel ? `<text class="dt-logic-bubble-label" y="${r + 15}">${_escape(label)}</text>` : ''}<title>${_escape(node.name)} · ${node.count} member${node.count === 1 ? '' : 's'} · ${_escape(node.systemName)}</title></g>`;
+      })
+      .join('');
+    return `<svg viewBox="0 0 1200 780" role="img" aria-label="Logic web graph">${labelMarkup}${edgeMarkup}${nodeMarkup}</svg><div class="dt-logic-map-caption"><span>Showing ${nodes.length.toLocaleString()} of ${humanGraph.groups.length.toLocaleString()} groups · ${visibleEdges.length.toLocaleString()} grouped relations · simplified overview</span></div>`;
+  }
+
+  function _logicInspectorMarkup(
+    graph,
+    learning = _logicLearning(graph),
+    humanGraph = _logicHumanGraph(graph, learning),
+  ) {
+    return _logicOverviewMarkup(graph, learning, humanGraph);
+  }
+
+  function _logicOverviewMarkup(
+    graph,
+    learning = _logicLearning(graph),
+    humanGraph = _logicHumanGraph(graph, learning),
+  ) {
+    const summary = graph.summary || {};
+    const mainRows = humanGraph.groups
+      .slice(0, 8)
+      .map(
+        (item, index) =>
+          `<div class="dt-logic-row"><span>#${index + 1}</span><strong>${_escape(item.name)}</strong><small>${_escape(item.kind)} · ${item.count.toLocaleString()} member${item.count === 1 ? '' : 's'} · weight ${Math.round(item.score * 100)}</small></div>`,
+      )
+      .join('');
+    const systemRows = learning.topSystems
+      .slice(0, 5)
+      .map(
+        (item, index) =>
+          `<div class="dt-logic-row"><span>#${index + 1}</span><strong>${_escape(item.name)}</strong><small>${Math.round(item.score)} local weight · ${Number(item.nodes || 0)} nodes</small></div>`,
+      )
+      .join('');
+    return `<div class="dt-logic-card dt-logic-card--overview"><span>Local overview</span><h3>Grouped script systems</h3><p>${Number(summary.scriptCount || 0).toLocaleString()} scripts compressed into ${humanGraph.groups.length.toLocaleString()} readable groups. UI-looking names are down-weighted locally; use AI analysis for the real game-mechanism pass.</p></div><div class="dt-logic-relations dt-logic-main-elements"><strong>Prominent grouped elements</strong>${mainRows || '<div class="dt-logic-muted">No scored script groups.</div>'}</div><div class="dt-logic-relations"><strong>Dense systems</strong>${systemRows || '<div class="dt-logic-muted">No systems scored.</div>'}</div>`;
+  }
+
+  function _logicAiPacket(graph, humanGraph, learning) {
+    const snapshot = activeSnapshot();
+    const topGroups = humanGraph.groups.slice(0, 32).map((group) => ({
+      name: group.name,
+      kind: group.kind,
+      system: group.systemName,
+      members: group.count,
+      score: Math.round(group.score * 100),
+      uiNoise: Boolean(group.uiNoise),
+      primaryPath: group.primary?.path || '',
+      exports: group.exports.slice(0, 10),
+      configKeys: group.configKeys.slice(0, 10),
+    }));
+    const topRelations = humanGraph.groupEdges.slice(0, 80).map((edge) => ({
+      from: humanGraph.groupById.get(edge.from)?.name || edge.from,
+      to: humanGraph.groupById.get(edge.to)?.name || edge.to,
+      kind: edge.kind,
+      count: edge.count,
+      evidence: edge.evidence || edge.label || '',
+    }));
+    const remotes = (graph.nodes || [])
+      .filter((node) => /remote/i.test(node.kind) || node.remoteEvents?.length)
+      .slice(0, 50)
+      .map((node) => ({
+        name: node.name,
+        kind: node.kind,
+        path: node.path,
+        events: node.remoteEvents?.slice(0, 12) || [],
+      }));
+    return {
+      dataTree: {
+        name: snapshot?.name || '',
+        nodeCount: snapshot?.nodeCount || snapshot?.nodes?.length || 0,
+        source: snapshot?.sourcePath ? helpers.basename(snapshot.sourcePath) : '',
+      },
+      summary: graph.summary,
+      denseSystems: learning.topSystems.slice(0, 8).map((item) => ({
+        name: item.name,
+        localWeight: Math.round(item.score),
+        nodes: Number(item.nodes || 0),
+      })),
+      topGroups,
+      topRelations,
+      remotes,
+    };
+  }
+
+  function _logicParseAiPlan(text = '') {
+    const clean = String(text || '').trim();
+    if (!clean) return null;
+    const fencedJson = clean.match(/```json\s*([\s\S]*?)```/i);
+    if (fencedJson) {
+      try {
+        const parsed = JSON.parse(fencedJson[1]);
+        if (Array.isArray(parsed?.systems)) return parsed;
+      } catch {}
+    }
+    const sections = [];
+    const lines = clean.split('\n');
+    let current = null;
+    const push = () => {
+      if (current && (current.body.length || current.items.length)) sections.push(current);
+    };
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const heading =
+        line.match(/^\*\*(?:\d+\.\s*)?([^*]+)\*\*$/) || line.match(/^(?:#{1,3}|\d+\.)\s*([^:]+)$/);
+      if (heading) {
+        push();
+        current = { title: heading[1].trim(), body: [], items: [] };
+        continue;
+      }
+      if (!current) current = { title: 'AI analysis', body: [], items: [] };
+      const item = line.match(/^[-*]\s*(.+)$/);
+      if (item) current.items.push(item[1].trim());
+      else current.body.push(line);
+    }
+    push();
+    return {
+      generatedAt: Date.now(),
+      sections: sections.slice(0, 12),
+      raw: clean,
+    };
+  }
+
+  function _logicAiTreeMarkup(plan) {
+    const sections = Array.isArray(plan?.systems)
+      ? plan.systems.map((system) => ({
+          title: system.label || system.id || 'System',
+          items: [
+            system.kind,
+            system.confidence,
+            ...(system.entrypoints || []),
+            ...(system.remotes || []),
+          ].filter(Boolean),
+        }))
+      : plan?.sections || [];
+    return `<section class="dt-logic-system"><div class="dt-logic-system-head"><span>AI Structure</span><small>${sections.length} sections</small></div>${sections
+      .slice(0, 18)
+      .map(
+        (section) =>
+          `<div class="dt-logic-tree-node dt-logic-ai-section"><span>AI</span><div><strong>${_escape(section.title || 'System')}</strong><small>${_escape((section.items || []).slice(0, 2).join(' · ') || 'AI discovered section')}</small></div><em>${(section.items || []).length}</em></div>`,
+      )
+      .join('')}</section>`;
+  }
+
+  function _logicAiPlanMarkup(plan) {
+    const sections = Array.isArray(plan?.systems)
+      ? plan.systems.map((system) => ({
+          title: system.label || system.id || 'System',
+          body: [
+            system.kind ? `Kind: ${system.kind}` : '',
+            system.confidence ? `Confidence: ${system.confidence}` : '',
+            system.repeatPattern ? `Pattern: ${system.repeatPattern}` : '',
+          ].filter(Boolean),
+          items: [
+            ...(system.entrypoints || []).map((item) => `Entrypoint: ${item}`),
+            ...(system.clientControllers || []).map((item) => `Client: ${item}`),
+            ...(system.serverAuthority || []).map((item) => `Server: ${item}`),
+            ...(system.modules || []).map((item) => `Module: ${item}`),
+            ...(system.remotes || []).map((item) => `Remote: ${item}`),
+            ...(system.configs || []).map((item) => `Config: ${item}`),
+          ],
+        }))
+      : plan?.sections || [];
+    return `<div class="dt-logic-card dt-logic-card--overview"><span>AI analysis</span><h3>Discovered game systems</h3><p>The chat answer is now captured here as a modular structure. Use this view as the readable Logic Web; the bubble map stays a lightweight local index.</p></div>${sections
+      .slice(0, 10)
+      .map(
+        (section) =>
+          `<div class="dt-logic-ai-block"><strong>${_escape(section.title || 'Section')}</strong>${(
+            section.body || []
+          )
+            .slice(0, 2)
+            .map((line) => `<p>${_escape(line)}</p>`)
+            .join('')}${
+            (section.items || []).length
+              ? `<div>${section.items
+                  .slice(0, 10)
+                  .map((item) => `<span>${_escape(item)}</span>`)
+                  .join('')}</div>`
+              : ''
+          }</div>`,
+      )
+      .join('')}`;
+  }
+
+  function _logicRenderIfVisible() {
+    if (
+      state_.visible &&
+      state_.viewMode === 'analysis-workspace' &&
+      state_.analysisMode === 'logic'
+    )
+      _replace('.dt-logic-web', _logicWebPane());
+  }
+
+  function _delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function _waitForAiHelperReady(helper, timeoutMs = 30_000) {
+    const startedAt = Date.now();
+    while (helper?.isBusy?.()) {
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(
+          'AI is still busy after 30s. Try again when the current response finishes.',
+        );
+      }
+      await _delay(250);
+    }
+  }
+
+  async function _logicAiRecheck(graph, humanGraph, learning) {
+    const logic = state_.logicWeb;
+    if (logic.aiScanBusy) {
+      toast.show('Place analysis is already waiting/running.', 'info', 1800);
+      return;
+    }
+    const helper = globalThis.AiHelper || (typeof AiHelper !== 'undefined' ? AiHelper : null);
+    if (!helper?.sendChat) {
+      toast.show('Open/enable AI Helper to recheck this logic web.', 'warn', 2800);
+      return;
+    }
+    logic.aiScanBusy = true;
+    _logicRenderIfVisible();
+    const packet = _logicAiPacket(graph, humanGraph, learning);
+    const prompt = `Read the selected DataTree/RBXLX place context and rebuild the logic understanding from the real place data.
+
+The local Logic Web is only a rough grouping pass. Do not treat any single node as the center of the game. Use the grouping packet as an index, then inspect the actual RBXLX/DataTree content as needed.
+
+Goal: discover important gameplay mechanisms, server/client control points, module dependencies, remotes, configs, and frequency patterns. Ignore GUI-only/UI presentation code unless it controls real gameplay. Treat repeated same-name scripts as grouped clones; explain the pattern instead of listing every duplicate.
+
+Make the output modular and future-proof so the app can later render it as a better tree with sections that can accept new categories without rewriting the whole model.
+
+Return a short human-readable summary, then a fenced json block with this exact shape:
+{
+  "systems": [
+    {
+      "id": "StableId",
+      "label": "Readable name",
+      "kind": "gameplay | control | data | presentation | infrastructure",
+      "confidence": "verified | inferred | unresolved",
+      "entrypoints": [],
+      "runtimeClones": [],
+      "templates": [],
+      "serverAuthority": [],
+      "clientControllers": [],
+      "modules": [],
+      "remotes": [],
+      "configs": [],
+      "worldInstances": [],
+      "repeatPattern": "",
+      "ignoreChildrenMatching": [],
+      "nextInspection": []
+    }
+  ]
+}
+
+Local grouping packet:
+\`\`\`json
+${JSON.stringify(packet, null, 2)}
+\`\`\``;
+    try {
+      helper.togglePanel?.(true);
+      await _waitForAiHelperReady(helper, 30_000);
+      const result = await helper.sendChat(prompt);
+      const plan = _logicParseAiPlan(result);
+      if (!plan) throw new Error('AI response did not contain a usable Logic Web structure.');
+      logic.aiPlan = plan;
+      toast.show('AI Logic Web structure captured.', 'ok', 2200);
+    } catch (err) {
+      toast.show(err?.message || 'Could not start AI place analysis', 'fail', 3600);
+    } finally {
+      logic.aiScanBusy = false;
+      _logicRenderIfVisible();
+    }
+  }
+
+  function _logicPills(items = []) {
+    return items?.length
+      ? `<div>${items
+          .slice(0, 28)
+          .map((item) => `<span>${_escape(item)}</span>`)
+          .join('')}</div>`
+      : '<small class="dt-logic-muted">None detected</small>';
+  }
+
+  function _logicKindGlyph(kind = '') {
+    if (/config/i.test(kind)) return '{}';
+    if (/remote/i.test(kind)) return '<>';
+    if (/service/i.test(kind)) return 'S';
+    if (/module/i.test(kind)) return 'M';
+    if (/local/i.test(kind)) return 'L';
+    return 'S';
+  }
+
+  async function _ensureLogicWeb({ force = false } = {}) {
+    const snapshot = activeSnapshot();
+    const logic = state_.logicWeb;
+    if (!snapshot?.storagePath || logic.busy) return;
+    if (
+      !force &&
+      logic.graph &&
+      logic.snapshotId === snapshot.id &&
+      logic.indexVersion === LOGIC_WEB_INDEX_VERSION
+    )
+      return;
+    logic.busy = true;
+    logic.error = '';
+    logic.snapshotId = snapshot.id;
+    logic.indexVersion = null;
+    if (
+      state_.visible &&
+      state_.viewMode === 'analysis-workspace' &&
+      state_.analysisMode === 'logic'
+    )
+      _replace('.dt-logic-web', _logicWebPane());
+    try {
+      const graph = await window.__TAURI__.core.invoke('datatree_build_logic_web', {
+        path: snapshot.storagePath,
+      });
+      if (activeSnapshot()?.id !== snapshot.id) return;
+      logic.graph = graph;
+      logic.indexVersion = LOGIC_WEB_INDEX_VERSION;
+    } catch (err) {
+      logic.error = err?.message || String(err) || 'Could not build logic web';
+      logic.graph = null;
+    } finally {
+      logic.busy = false;
+      if (
+        state_.visible &&
+        state_.viewMode === 'analysis-workspace' &&
+        state_.analysisMode === 'logic'
+      )
+        _replace('.dt-logic-web', _logicWebPane());
+    }
+  }
+
+  function _remoteScanForSnapshot(snapshot = activeSnapshot()) {
+    const scan = state_.remoteScan;
+    if (scan.snapshotId !== snapshot?.id) {
+      scan.query = '';
+      scan.busy = false;
+      scan.error = '';
+      scan.snapshotId = snapshot?.id || null;
+      scan.result = null;
+      scan.lastRunAt = 0;
+    }
+    return scan;
+  }
+
+  async function _prepareRemoteScan() {
+    const snapshot = activeSnapshot();
+    if (!snapshot?.storagePath) return;
+    _remoteScanForSnapshot(snapshot);
+    if (
+      state_.logicWeb.busy ||
+      (state_.logicWeb.graph &&
+        state_.logicWeb.snapshotId === snapshot.id &&
+        state_.logicWeb.indexVersion === LOGIC_WEB_INDEX_VERSION)
+    )
+      return;
+    await _ensureLogicWeb();
+    if (
+      state_.visible &&
+      state_.viewMode === 'analysis-workspace' &&
+      state_.analysisMode === 'remote'
+    )
+      _replace('.dt-remote-scan', _remoteScanPane());
+  }
+
+  function _remoteLocalItems(graph, learning = _logicLearning(graph)) {
+    if (Array.isArray(graph?.remoteCalls) && graph.remoteCalls.length) {
+      return _remoteItemsFromCalls(graph.remoteCalls, graph);
+    }
+    const byId = learning.byId || new Map();
+    const remoteMap = new Map();
+    const put = (key, patch) => {
+      const safeKey = String(key || patch.name || patch.path || helpers.uid());
+      const current = remoteMap.get(safeKey) || {
+        name: patch.name || safeKey,
+        path: patch.path || '',
+        kind: patch.kind || 'Remote',
+        direction: 'unknown',
+        callers: new Set(),
+        listeners: new Set(),
+        evidence: new Set(),
+        linkedSystems: new Set(),
+      };
+      Object.assign(current, {
+        name: patch.name || current.name,
+        path: patch.path || current.path,
+        kind: patch.kind || current.kind,
+        direction: patch.direction || current.direction,
+      });
+      (patch.callers || []).forEach((item) => current.callers.add(item));
+      (patch.listeners || []).forEach((item) => current.listeners.add(item));
+      (patch.evidence || []).forEach((item) => current.evidence.add(item));
+      (patch.linkedSystems || []).forEach((item) => current.linkedSystems.add(item));
+      remoteMap.set(safeKey, current);
+    };
+    for (const node of graph.nodes || []) {
+      if (/remote/i.test(node.kind || '') || node.remoteEvents?.length) {
+        put(node.path || node.name, {
+          name: node.name,
+          path: node.path,
+          kind: node.kind,
+          evidence: node.remoteEvents || [],
+          linkedSystems: [node.systemId].filter(Boolean),
+        });
+      }
+    }
+    for (const edge of graph.edges || []) {
+      if (!/remote/i.test(`${edge.kind || ''} ${edge.label || ''} ${edge.evidence || ''}`))
+        continue;
+      const from = byId.get(edge.from);
+      const to = byId.get(edge.to);
+      const remote = /remote/i.test(to?.kind || '')
+        ? to
+        : /remote/i.test(from?.kind || '')
+          ? from
+          : null;
+      const other = remote === to ? from : to;
+      const direction = /listen|client/i.test(edge.kind || edge.label || '')
+        ? 'server_to_client'
+        : /fire|invoke/i.test(edge.kind || edge.label || '')
+          ? 'client_to_server'
+          : 'unknown';
+      put(remote?.path || edge.label || edge.evidence || `${edge.from}:${edge.to}`, {
+        name: remote?.name || edge.label || 'Remote usage',
+        path: remote?.path || '',
+        kind: remote?.kind || edge.kind || 'Remote',
+        direction,
+        callers: other?.path ? [other.path] : [],
+        evidence: [edge.evidence || edge.label || edge.kind].filter(Boolean),
+        linkedSystems: [remote?.systemId, other?.systemId].filter(Boolean),
+      });
+    }
+    return [...remoteMap.values()]
+      .map((item) => ({
+        ...item,
+        callers: [...item.callers],
+        listeners: [...item.listeners],
+        evidence: [...item.evidence],
+        linkedSystems: [...item.linkedSystems],
+        score: item.evidence.size + item.callers.size * 2 + item.listeners.size,
+      }))
+      .sort((a, b) => b.score - a.score || String(a.name).localeCompare(String(b.name)))
+      .map((item, index) => _remoteAliasItem(item, index));
+  }
+
+  function _remoteItemsFromCalls(calls = [], graph = null) {
+    const map = new Map();
+    const remoteNodesByPath = new Map();
+    for (const node of graph?.nodes || []) {
+      if (!/remote/i.test(`${node.kind || ''} ${node.className || ''}`)) continue;
+      if (node.path && node.nodeId != null) remoteNodesByPath.set(node.path.toLowerCase(), node);
+    }
+    for (const call of calls) {
+      const key = call.remoteKey || call.remotePath || call.remoteName || call.evidence;
+      const remoteNode = call.remotePath
+        ? remoteNodesByPath.get(String(call.remotePath).toLowerCase())
+        : null;
+      const current = map.get(key) || {
+        name: call.remoteName || 'Remote',
+        path: call.remotePath || '',
+        nodeId: remoteNode?.nodeId || null,
+        kind: call.remoteClassName || 'RemoteRef',
+        className: call.remoteClassName || 'RemoteRef',
+        direction: call.direction || 'unknown',
+        callers: new Set(),
+        listeners: new Set(),
+        evidence: new Set(),
+        linkedSystems: new Set(),
+        signatures: new Map(),
+        methods: new Set(),
+        calls: [],
+        confidenceTotal: 0,
+      };
+      current.name = call.remoteName || current.name;
+      current.path = call.remotePath || current.path;
+      current.nodeId = current.nodeId || remoteNode?.nodeId || null;
+      current.kind = call.remoteClassName || current.kind;
+      current.className = call.remoteClassName || current.className;
+      current.direction =
+        current.direction === 'unknown' ? call.direction || 'unknown' : current.direction;
+      if (call.callerPath) current.callers.add(call.callerPath);
+      if (/listener/i.test(call.direction || '')) current.listeners.add(call.callerPath);
+      if (call.evidence) current.evidence.add(call.evidence);
+      if (call.method) current.methods.add(call.method);
+      const signature = call.argSignature || `{${(call.args || []).join(', ')}}`;
+      current.signatures.set(signature, (current.signatures.get(signature) || 0) + 1);
+      current.calls.push(call);
+      current.confidenceTotal += Number(call.confidence || 0);
+      map.set(key, current);
+    }
+    return [...map.values()]
+      .map((item) => {
+        const signatures = [...item.signatures.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([signature, count]) => ({ signature, count }));
+        const topSignature = signatures[0]?.signature || '{}';
+        const count = item.calls.length || 1;
+        return {
+          ...item,
+          callers: [...item.callers],
+          listeners: [...item.listeners],
+          evidence: [...item.evidence],
+          linkedSystems: [...item.linkedSystems],
+          methods: [...item.methods],
+          signatures,
+          args: topSignature,
+          argSignature: topSignature,
+          confidence: Math.round((item.confidenceTotal / count) * 100),
+          score: count * 3 + item.callers.size * 2 + signatures.length,
+        };
+      })
+      .sort((a, b) => b.score - a.score || String(a.name).localeCompare(String(b.name)))
+      .map((item, index) => _remoteAliasItem(item, index));
+  }
+
+  function _remoteAliasItem(item, index) {
+    const ordinal = index + 1;
+    const displayName = String(item.name || `Remote_${ordinal}`);
+    const safeName =
+      displayName
+        .replace(/[^A-Za-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^([^A-Za-z_])/, '_$1') || 'Remote';
+    return {
+      ...item,
+      remoteIndex: ordinal,
+      displayName,
+      displayAlias: `${displayName} · Remote_${ordinal}`,
+      aiAlias: `Remote_${ordinal}_${safeName}`,
+    };
+  }
+
+  function _remoteFilteredItems(graph, query = '') {
+    if (!graph) return [];
+    const learning = _logicLearning(graph);
+    const q = String(query || '')
+      .trim()
+      .toLowerCase();
+    return _remoteLocalItems(graph, learning).filter((item) => {
+      if (!q) return true;
+      return `${item.name} ${item.displayAlias} ${item.aiAlias} ${item.path} ${item.kind} ${item.evidence.join(' ')} ${item.callers.join(' ')}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }
+
+  function _remoteScanPane() {
+    const snapshot = activeSnapshot();
+    const scan = _remoteScanForSnapshot(snapshot);
+    const logic = state_.logicWeb;
+    const graph = logic.graph;
+    const items = _remoteFilteredItems(graph, scan.query);
+    const aiRemotes = scan.result?.remotes || [];
+    const pane = document.createElement('main');
+    pane.className = `dt-remote-scan${scan.busy ? ' is-busy' : ''}`;
+    if (!snapshot?.storagePath) {
+      pane.innerHTML = `<div class="dt-logic-empty"><strong>Remote Scan</strong><p>Import an RBXLX file before scanning remotes.</p></div>`;
+      return pane;
+    }
+    if (logic.busy || !graph) {
+      pane.innerHTML = `<div class="dt-logic-empty"><span class="dt-busy-spinner"></span><strong>Preparing remote scan</strong><p>Building the local script, config, and remote index first.</p></div>`;
+      return pane;
+    }
+    pane.innerHTML = `<section class="dt-remote-head"><div><span>Remote Scan</span><strong>${items.length.toLocaleString()} remote entr${items.length === 1 ? 'y' : 'ies'}</strong><small>Local call tracing from scripts, requires, and ModuleScript returns</small></div><label class="dt-remote-search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input placeholder="Search remotes, callers, evidence" value="${_escape(scan.query)}" spellcheck="false"></label><button class="dt-btn dt-btn-primary dt-remote-ai-btn" data-action="remote-ai"${scan.busy ? ' disabled' : ''}>${scan.busy ? 'Scanning...' : 'AI refine'}</button></section><section class="dt-remote-body"><aside class="dt-remote-list">${_remoteListMarkup(items)}</aside><section class="dt-remote-mini">${_remoteMiniMarkup(items, aiRemotes, scan)}</section></section>`;
+    const input = pane.querySelector('.dt-remote-search input');
+    input?.addEventListener('input', () => {
+      scan.query = input.value;
+      _replace('.dt-remote-scan', _remoteScanPane());
+      requestAnimationFrame(() => {
+        const next = _container()?.querySelector('.dt-remote-search input');
+        next?.focus();
+        next?.setSelectionRange(next.value.length, next.value.length);
+      });
+    });
+    pane
+      .querySelector('[data-action="remote-ai"]')
+      ?.addEventListener('click', () => _runRemoteAiScan(graph, items));
+    _bindRemoteContextMenus(pane, items);
+    return pane;
+  }
+
+  function _remoteListMarkup(items) {
+    if (!items.length) return '<div class="dt-module-empty">No remotes matched this filter.</div>';
+    return items
+      .slice(0, 220)
+      .map((item) => {
+        const icon = _iconMarkup(
+          _classIcon(item.className || item.kind || 'RemoteEvent'),
+          'dt-render-icon',
+        );
+        return `<div class="dt-remote-row" data-remote-index="${Number(item.remoteIndex || 0)}"><span class="dt-remote-row-icon">${icon}</span><div><strong>${_escape(item.displayName || item.name || 'Remote')}</strong><small>${_escape(item.path || item.aiAlias || item.kind || 'Remote usage')}</small></div><em>${Number(item.confidence || 0) ? `${Number(item.confidence).toLocaleString()}%` : `R${Number(item.remoteIndex || 0).toLocaleString()}`}</em></div>`;
+      })
+      .join('');
+  }
+
+  function _bindRemoteContextMenus(pane, items) {
+    const byIndex = new Map(items.map((item) => [String(item.remoteIndex || ''), item]));
+    pane.querySelectorAll('[data-remote-index]').forEach((row) => {
+      row.addEventListener('contextmenu', (event) => {
+        const item = byIndex.get(String(row.dataset.remoteIndex || ''));
+        if (!item) return;
+        ctxMenu.showItems(event, [
+          {
+            label: 'Jump to node',
+            action: () => _jumpToDataTreeNode(item.nodeId, item),
+          },
+          { separator: true },
+          {
+            label: 'Copy Remote Path',
+            action: () => _copyNodeText(item.path || item.displayName, 'Remote path copied'),
+          },
+          {
+            label: 'Copy Stable Name',
+            action: () => _copyNodeText(item.aiAlias || item.displayName, 'Remote name copied'),
+          },
+        ]);
+      });
+    });
+  }
+
+  function _remoteMiniMarkup(items, aiRemotes, scan = null) {
+    const clientToServer = items.filter((item) => item.direction === 'client_to_server').length;
+    const serverToClient = items.filter((item) => item.direction === 'server_to_client').length;
+    const unknown = Math.max(0, items.length - clientToServer - serverToClient);
+    const error = scan?.error
+      ? `<section class="dt-remote-panel dt-remote-panel--error"><span>AI refine failed</span><p>${_escape(scan.error)}</p></section>`
+      : '';
+    const aiRows = aiRemotes
+      .slice(0, 18)
+      .map(
+        (remote) =>
+          `<div class="dt-remote-prediction"><strong>${_escape(remote.displayName || remote.name || remote.remote || 'Remote')}</strong><p>${_escape(remote.args || remote.arguments || remote.predictedArgs || 'Args unknown')}</p><small>${_escape(remote.aiAlias || `Remote_${remote.remoteIndex || '?'}`)} · ${_escape(remote.confidence || 'unverified')} · ${_escape(remote.direction || 'unknown')}</small></div>`,
+      )
+      .join('');
+    const localRows = items
+      .slice(0, 12)
+      .map(
+        (item) =>
+          `<div class="dt-remote-prediction" data-remote-index="${Number(item.remoteIndex || 0)}"><strong>${_escape(item.displayName)}</strong><p>${_escape(item.argSignature || item.args || '{}')}</p><small>${_escape(item.aiAlias)} · ${Number(item.confidence || 0)}% · ${(item.signatures?.[0]?.count || item.calls?.length || 0).toLocaleString()} matching call${(item.signatures?.[0]?.count || item.calls?.length || 0) === 1 ? '' : 's'}</small></div>`,
+      )
+      .join('');
+    return `<div class="dt-remote-summaryline"><span>${clientToServer.toLocaleString()} client to server</span><span>${serverToClient.toLocaleString()} server to client</span><span>${unknown.toLocaleString()} unknown</span></div>${error}<section class="dt-remote-panel"><span>Local predictions</span>${localRows || '<p>No callsite predictions yet.</p>'}</section><section class="dt-remote-panel"><span>AI refinement</span>${aiRows || '<p>Optional. Use it only when local evidence is not enough.</p>'}</section>`;
+  }
+
+  function _remoteDetailMarkup(scan, items, aiRemotes) {
+    if (scan.error) {
+      return `<div class="dt-analysis-card dt-analysis-card--error"><span>Remote scan failed</span><h3>AI could not finish</h3><p>${_escape(scan.error)}</p></div>`;
+    }
+    const topEvidence = items
+      .slice(0, 10)
+      .map(
+        (item) =>
+          `<div class="dt-analysis-mini-row"><b>${_escape(item.displayAlias || item.name)}</b><small>${_escape((item.evidence || []).slice(0, 2).join(' · ') || item.path || item.kind)}</small></div>`,
+      )
+      .join('');
+    const unknownRows = aiRemotes
+      .filter((remote) =>
+        /unknown|unverified/i.test(String(remote.confidence || remote.args || '')),
+      )
+      .slice(0, 8)
+      .map((remote) => {
+        const nextInspection = Array.isArray(remote.nextInspection) ? remote.nextInspection : [];
+        const evidence = Array.isArray(remote.evidence) ? remote.evidence : [];
+        return `<div class="dt-analysis-mini-row"><b>${_escape(remote.displayName || remote.name || remote.remote || 'Remote')}</b><small>${_escape(remote.aiAlias || nextInspection.join(' · ') || evidence.join(' · ') || 'Needs more evidence')}</small></div>`;
+      })
+      .join('');
+    return `<div class="dt-analysis-card"><span>Source</span><h3>Main DataTree snapshot</h3><p>Remote Scan follows the currently loaded DataTree. Import and switch places from DataTree, then come back here to inspect remotes.</p></div><section class="dt-analysis-section"><strong>Highest signal entries</strong>${topEvidence || '<p>No local remote evidence.</p>'}</section><section class="dt-analysis-section"><strong>Needs verification</strong>${unknownRows || '<p>No AI unknowns yet.</p>'}</section>`;
+  }
+
+  async function _runRemoteAiScan(graph, items) {
+    const scan = _remoteScanForSnapshot();
+    if (scan.busy) return;
+    if (Date.now() - scan.lastRunAt < 1600) return;
+    const helper = globalThis.AiHelper || (typeof AiHelper !== 'undefined' ? AiHelper : null);
+    if (!helper?.sendChat) {
+      toast.show('Open/enable AI Helper before running remote arg scan.', 'warn', 2800);
+      return;
+    }
+    scan.busy = true;
+    scan.error = '';
+    scan.lastRunAt = Date.now();
+    _remoteRenderIfVisible();
+    const learning = _logicLearning(graph);
+    const humanGraph = _logicHumanGraph(graph, learning);
+    const packet = {
+      ..._analysisLocalPacket(graph, humanGraph, learning),
+      remoteEntries: items.slice(0, 120).map((item) => ({
+        name: item.name,
+        displayName: item.displayName,
+        displayAlias: item.displayAlias,
+        aiAlias: item.aiAlias,
+        remoteIndex: item.remoteIndex,
+        path: item.path,
+        kind: item.kind,
+        direction: item.direction,
+        args: item.argSignature || item.args || '',
+        confidence: item.confidence || 0,
+        signatures: (item.signatures || []).slice(0, 8),
+        callers: item.callers.slice(0, 12),
+        evidence: item.evidence.slice(0, 18),
+      })),
+    };
+    const prompt = `Run a focused Remote Scan for this Roblox RBXLX/DataTree snapshot.
+
+This is not the full place-analysis pass. Only inspect remotes, callers/listeners, nearby ModuleScripts, and config/data tables that help infer arguments. Predict payloads only when evidence supports it. Mark weak guesses as inferred or unknown.
+
+Remote naming rule: every remote entry has displayName, displayAlias, remoteIndex, and aiAlias. Use displayName for human-facing labels. Use aiAlias as the stable variable/key in JSON so duplicate remote names at different paths do not collide. The aiAlias must be Remote_<i>_<Name>, never <Name>_<i>_<Name>, and never a decompiler-obfuscated variable.
+
+Return a short summary, then fenced JSON:
+{
+  "summary": "",
+  "remotes": [
+    {
+      "name": "",
+      "displayName": "",
+      "remoteIndex": 0,
+      "aiAlias": "",
+      "path": "",
+      "direction": "client_to_server | server_to_client | bindable | unknown",
+      "args": "",
+      "confidence": "verified | inferred | unknown",
+      "evidence": [],
+      "callers": [],
+      "linkedSystems": [],
+      "nextInspection": []
+    }
+  ]
+}
+
+Remote mini-scan packet:
+\`\`\`json
+${JSON.stringify(packet, null, 2)}
+\`\`\``;
+    try {
+      helper.togglePanel?.(true);
+      await _waitForAiHelperReady(helper, 30_000);
+      const result = await helper.sendChat(prompt);
+      const data = _analysisParseJson(result);
+      if (!data || !Array.isArray(data.remotes)) {
+        throw new Error('Remote AI scan did not return a usable remotes JSON block.');
+      }
+      scan.result = {
+        ...data,
+        summary: data.summary || _analysisSummary(result, data),
+        raw: result,
+        completedAt: Date.now(),
+      };
+      toast.show('Remote argument scan captured.', 'ok', 2200);
+    } catch (err) {
+      scan.error = err?.message || 'Remote AI scan failed';
+      toast.show(scan.error, 'fail', 3600);
+    } finally {
+      scan.busy = false;
+      _remoteRenderIfVisible();
+    }
+  }
+
+  function _remoteRenderIfVisible() {
+    if (
+      state_.visible &&
+      state_.viewMode === 'analysis-workspace' &&
+      state_.analysisMode === 'remote'
+    )
+      _replace('.dt-remote-scan', _remoteScanPane());
+  }
+
+  function _analysisForSnapshot(snapshot = activeSnapshot()) {
+    const analysis = state_.placeAnalysis;
+    if (analysis.snapshotId !== snapshot?.id) {
+      analysis.busy = false;
+      analysis.error = '';
+      analysis.snapshotId = snapshot?.id || null;
+      analysis.activeStepId = null;
+      analysis.results = {};
+      analysis.plan = null;
+      analysis.lastRunAt = 0;
+      analysis.pan = { x: 0, y: 0, scale: 1 };
+    }
+    return analysis;
+  }
+
+  function _analysisStepStatus(analysis, step) {
+    if (analysis.activeStepId === step.id && analysis.busy) return 'running';
+    if (analysis.results?.[step.id]?.status === 'done') return 'done';
+    if (analysis.results?.[step.id]?.status === 'failed') return 'failed';
+    return 'pending';
+  }
+
+  function _analysisFirstPending(analysis) {
+    return (
+      PLACE_ANALYSIS_STEPS.find((step) => _analysisStepStatus(analysis, step) !== 'done') || null
+    );
+  }
+
+  async function _preparePlaceAnalysis() {
+    const snapshot = activeSnapshot();
+    if (!snapshot?.storagePath) return;
+    _analysisForSnapshot(snapshot);
+    if (state_.logicWeb.busy || state_.logicWeb.snapshotId === snapshot.id) return;
+    await _ensureLogicWeb();
+    if (state_.visible && state_.viewMode === 'analysis')
+      _replace('.dt-place-analysis', _placeAnalysisPane());
+  }
+
+  function _placeAnalysisPane() {
+    const snapshot = activeSnapshot();
+    const analysis = _analysisForSnapshot(snapshot);
+    const logic = state_.logicWeb;
+    const graph = logic.graph;
+    const learning = graph ? _logicLearning(graph) : null;
+    const humanGraph = graph ? _logicHumanGraph(graph, learning) : null;
+    const pending = _analysisFirstPending(analysis);
+    const doneCount = PLACE_ANALYSIS_STEPS.filter(
+      (step) => _analysisStepStatus(analysis, step) === 'done',
+    ).length;
+    const pane = document.createElement('main');
+    pane.className = `dt-place-analysis${analysis.busy ? ' is-busy' : ''}`;
+    if (!snapshot?.storagePath) {
+      pane.innerHTML = `<div class="dt-logic-empty"><strong>Place Analysis</strong><p>Import an RBXLX file before running AI analysis.</p></div>`;
+      return pane;
+    }
+    const localStatus = logic.busy
+      ? 'Building local index'
+      : graph
+        ? `${Number(graph.summary?.scriptCount || 0).toLocaleString()} scripts indexed`
+        : 'Local index needed';
+    const runLabel = analysis.busy
+      ? 'Analyzing...'
+      : pending
+        ? doneCount
+          ? 'Continue analysis'
+          : 'Run AI analysis'
+        : 'Analysis complete';
+    pane.innerHTML = `<section class="dt-analysis-head"><div><span>AI Place Analysis</span><strong>${_escape(snapshot.name || 'Saved place')}</strong><small>${_escape(localStatus)} · ${doneCount}/${PLACE_ANALYSIS_STEPS.length} stages complete</small></div><button class="dt-btn dt-btn-primary dt-analysis-run" data-action="analysis-run"${analysis.busy || !graph || !pending ? ' disabled' : ''}>${_escape(runLabel)}</button><button class="dt-icon-action" data-action="analysis-next"${analysis.busy || !graph || !pending ? ' disabled' : ''}>Next stage</button><button class="dt-icon-action" data-action="analysis-reset"${analysis.busy ? ' disabled' : ''}>Reset</button></section><section class="dt-analysis-body"><aside class="dt-analysis-steps">${_analysisStepsMarkup(analysis)}</aside><section class="dt-analysis-map">${_analysisMapMarkup(analysis, graph, humanGraph)}</section><aside class="dt-analysis-details">${_analysisDetailsMarkup(analysis, graph, humanGraph)}</aside></section>`;
+    pane
+      .querySelector('[data-action="analysis-run"]')
+      ?.addEventListener('click', () => _runPlaceAnalysis({ all: true }));
+    pane
+      .querySelector('[data-action="analysis-next"]')
+      ?.addEventListener('click', () => _runPlaceAnalysis({ all: false }));
+    pane.querySelector('[data-action="analysis-reset"]')?.addEventListener('click', () => {
+      analysis.error = '';
+      analysis.activeStepId = null;
+      analysis.results = {};
+      analysis.plan = null;
+      analysis.pan = { x: 0, y: 0, scale: 1 };
+      _analysisRenderIfVisible();
+    });
+    _attachAnalysisMapPan(pane);
+    if (!graph && !logic.busy) requestAnimationFrame(_preparePlaceAnalysis);
+    return pane;
+  }
+
+  function _analysisStepsMarkup(analysis) {
+    return `<div class="dt-analysis-card"><span>Resumable scan</span><h3>Runs in stages</h3><p>If the model stops or the token limit hits, completed stages stay saved for this session and the next run resumes from the first unfinished stage.</p></div>${PLACE_ANALYSIS_STEPS.map(
+      (step, index) => {
+        const status = _analysisStepStatus(analysis, step);
+        const result = analysis.results?.[step.id];
+        return `<div class="dt-analysis-step is-${status}"><span>${index + 1}</span><div><strong>${_escape(step.title)}</strong><small>${_escape(result?.summary || result?.error || step.hint)}</small></div><em>${_escape(status)}</em></div>`;
+      },
+    ).join('')}`;
+  }
+
+  function _analysisCombinedPlan(analysis) {
+    if (analysis.plan) return analysis.plan;
+    const map = analysis.results?.map?.data;
+    if (Array.isArray(map?.systems)) return map;
+    const mechanisms = analysis.results?.mechanisms?.data?.mechanisms;
+    if (Array.isArray(mechanisms)) {
+      return {
+        summary: analysis.results.mechanisms.summary || 'Gameplay mechanisms',
+        systems: mechanisms.map((item) => ({
+          id: item.id || item.label,
+          label: item.label || item.id || 'Mechanism',
+          kind: item.kind || 'gameplay',
+          confidence: item.confidence || 'inferred',
+          description: item.notes || item.summary || '',
+          children: [
+            ...(item.controllers || []).map((label) => ({ label, kind: 'controller' })),
+            ...(item.modules || []).map((label) => ({ label, kind: 'module' })),
+            ...(item.remotes || []).map((label) => ({ label, kind: 'remote' })),
+            ...(item.configs || []).map((label) => ({ label, kind: 'config' })),
+          ],
+        })),
+      };
+    }
+    return null;
+  }
+
+  function _analysisMapMarkup(analysis, graph, humanGraph) {
+    const plan = _analysisCombinedPlan(analysis);
+    const systems = Array.isArray(plan?.systems)
+      ? plan.systems.slice(0, 14)
+      : (humanGraph?.groups || [])
+          .filter((group) => !group.uiNoise)
+          .slice(0, 10)
+          .map((group) => ({
+            id: group.id,
+            label: group.name,
+            kind: group.kind,
+            confidence: 'local',
+            description: `${group.count.toLocaleString()} grouped member${group.count === 1 ? '' : 's'} in ${group.systemName}`,
+            children: [
+              ...group.configKeys.slice(0, 4).map((label) => ({ label, kind: 'config' })),
+              ...group.exports.slice(0, 4).map((label) => ({ label, kind: 'export' })),
+            ],
+          }));
+    if (!graph) {
+      return `<div class="dt-analysis-map-empty"><span class="dt-busy-spinner"></span><strong>Preparing local index</strong><p>Scripts, modules, configs, and remotes are being grouped before AI analysis starts.</p></div>`;
+    }
+    if (!systems.length) {
+      return `<div class="dt-analysis-map-empty"><strong>Ready for analysis</strong><p>Run the AI stages to build a center-out mechanism map.</p></div>`;
+    }
+    const pan = analysis.pan || { x: 0, y: 0, scale: 1 };
+    const cx = 700;
+    const cy = 450;
+    const radius = 275;
+    const branches = systems
+      .map((system, index) => {
+        const angle = (Math.PI * 2 * index) / Math.max(1, systems.length) - Math.PI / 2;
+        const x = cx + Math.cos(angle) * radius;
+        const y = cy + Math.sin(angle) * radius * 0.72;
+        const children = (system.children || [])
+          .slice(0, 6)
+          .map((child, childIndex) => {
+            const childAngle =
+              angle + (childIndex - Math.min(5, (system.children || []).length - 1) / 2) * 0.22;
+            const childX = x + Math.cos(childAngle) * 112;
+            const childY = y + Math.sin(childAngle) * 76;
+            return `<line class="dt-analysis-link dt-analysis-link--child" x1="${x}" y1="${y}" x2="${childX}" y2="${childY}"></line><g class="dt-analysis-node dt-analysis-node--child" transform="translate(${childX} ${childY})"><circle r="22"></circle><text>${_escape(_analysisKindGlyph(child.kind))}</text><title>${_escape(child.label || child.kind || 'Detail')}</title></g>`;
+          })
+          .join('');
+        const size =
+          54 +
+          Math.min(
+            34,
+            ((system.children || []).length +
+              (system.remotes || []).length +
+              (system.configs || []).length) *
+              3,
+          );
+        return `<line class="dt-analysis-link" x1="${cx}" y1="${cy}" x2="${x}" y2="${y}"></line><g class="dt-analysis-node dt-analysis-node--system" transform="translate(${x} ${y})"><circle r="${size}"></circle><text>${_escape(_analysisKindGlyph(system.kind))}</text><text class="dt-analysis-node-label" y="${size + 20}">${_escape(system.label || system.id || 'System')}</text><title>${_escape(system.hover || system.description || system.summary || system.label || 'System')}</title></g>${children}`;
+      })
+      .join('');
+    return `<div class="dt-analysis-map-stage"><svg viewBox="0 0 1400 900" role="img" aria-label="AI place mechanism map"><g class="dt-analysis-map-world" transform="translate(${pan.x} ${pan.y}) scale(${pan.scale})"><g class="dt-analysis-node dt-analysis-node--game" transform="translate(${cx} ${cy})"><circle r="84"></circle><text>Game</text><title>${_escape(plan?.summary || 'Saved place')}</title></g>${branches}</g></svg></div><div class="dt-analysis-map-caption"><span>${systems.length.toLocaleString()} branches · drag to pan · wheel to zoom</span><button class="dt-icon-action" data-action="analysis-map-reset">Reset view</button></div>`;
+  }
+
+  function _analysisDetailsMarkup(analysis, graph, humanGraph) {
+    if (analysis.error) {
+      return `<div class="dt-analysis-card dt-analysis-card--error"><span>Analysis paused</span><h3>Could not finish stage</h3><p>${_escape(analysis.error)}</p></div>`;
+    }
+    const plan = _analysisCombinedPlan(analysis);
+    const remotes = analysis.results?.remotes?.data?.remotes || plan?.remoteArgs || [];
+    const configs =
+      analysis.results?.configs?.data?.configs || analysis.results?.configs?.data?.dataTables || [];
+    const systems = plan?.systems || [];
+    const localConfigs = (graph?.nodes || [])
+      .filter((node) => /config/i.test(node.kind) || node.configKeys?.length)
+      .slice(0, 7);
+    return `<div class="dt-analysis-card"><span>Deep-dive target</span><h3>RBXLX + AI workflow</h3><p>The AI is asked to inspect configs, modules, remotes, templates, runtime clones, and repeated prefabs before it writes the final map.</p></div><section class="dt-analysis-section"><strong>Mechanism branches</strong>${
+      systems
+        .slice(0, 8)
+        .map(
+          (system) =>
+            `<div class="dt-analysis-mini-row"><b>${_escape(system.label || system.id || 'System')}</b><small>${_escape(system.kind || 'gameplay')} · ${_escape(system.confidence || 'inferred')}</small></div>`,
+        )
+        .join('') || '<p>No AI map yet.</p>'
+    }</section><section class="dt-analysis-section"><strong>Remote arg predictions</strong>${
+      remotes
+        .slice(0, 8)
+        .map(
+          (remote) =>
+            `<div class="dt-analysis-mini-row"><b>${_escape(remote.name || remote.remote || 'Remote')}</b><small>${_escape(remote.args || remote.arguments || remote.predictedArgs || 'args unknown')} · ${_escape(remote.confidence || 'unverified')}</small></div>`,
+        )
+        .join('') || '<p>Run the remotes stage to predict payloads.</p>'
+    }</section><section class="dt-analysis-section"><strong>Configs to inspect</strong>${
+      configs
+        .slice(0, 6)
+        .map(
+          (config) =>
+            `<div class="dt-analysis-mini-row"><b>${_escape(config.name || config.label || 'Config')}</b><small>${_escape(config.path || config.role || config.summary || '')}</small></div>`,
+        )
+        .join('') ||
+      localConfigs
+        .map(
+          (node) =>
+            `<div class="dt-analysis-mini-row"><b>${_escape(node.name)}</b><small>${_escape(node.path || node.kind)}</small></div>`,
+        )
+        .join('') ||
+      '<p>No configs detected locally yet.</p>'
+    }</section>`;
+  }
+
+  function _analysisKindGlyph(kind = '') {
+    if (/remote/i.test(kind)) return '<>';
+    if (/config|data/i.test(kind)) return '{}';
+    if (/module/i.test(kind)) return 'M';
+    if (/control|client|server/i.test(kind)) return 'C';
+    if (/presentation|ui/i.test(kind)) return 'UI';
+    return 'S';
+  }
+
+  function _analysisRenderIfVisible() {
+    if (state_.visible && state_.viewMode === 'analysis')
+      _replace('.dt-place-analysis', _placeAnalysisPane());
+  }
+
+  function _analysisLocalPacket(graph, humanGraph, learning) {
+    const snapshot = activeSnapshot();
+    const nodes = graph?.nodes || [];
+    const edges = graph?.edges || [];
+    const configs = nodes
+      .filter((node) => /config/i.test(node.kind) || node.configKeys?.length)
+      .sort((a, b) => (b.configKeys?.length || 0) - (a.configKeys?.length || 0))
+      .slice(0, 90)
+      .map((node) => ({
+        name: node.name,
+        kind: node.kind,
+        path: node.path,
+        keys: node.configKeys?.slice(0, 18) || [],
+        sourceLen: node.sourceLen || 0,
+      }));
+    const remoteEdges = edges
+      .filter((edge) => /remote/i.test(edge.kind || edge.label || ''))
+      .slice(0, 160)
+      .map((edge) => ({
+        from: learning.byId.get(edge.from)?.path || learning.byId.get(edge.from)?.name || edge.from,
+        to: learning.byId.get(edge.to)?.path || learning.byId.get(edge.to)?.name || edge.to,
+        kind: edge.kind,
+        label: edge.label,
+        evidence: edge.evidence,
+      }));
+    const scripts = nodes
+      .filter((node) => /script|module|local/i.test(node.kind))
+      .sort((a, b) => (learning.scores.get(b.id) || 0) - (learning.scores.get(a.id) || 0))
+      .slice(0, 70)
+      .map((node) => ({
+        name: node.name,
+        kind: node.kind,
+        path: node.path,
+        sourceLen: node.sourceLen || 0,
+        exports: node.exports?.slice(0, 12) || [],
+        remotes: node.remoteEvents?.slice(0, 14) || [],
+      }));
+    return {
+      snapshot: {
+        name: snapshot?.name || '',
+        nodeCount: snapshot?.nodeCount || 0,
+        storagePath: snapshot?.storagePath || '',
+        source: snapshot?.sourcePath ? helpers.basename(snapshot.sourcePath) : '',
+      },
+      summary: graph?.summary || {},
+      denseSystems: learning.topSystems.slice(0, 10),
+      groupedMechanisms: humanGraph.groups.slice(0, 60).map((group) => ({
+        name: group.name,
+        kind: group.kind,
+        system: group.systemName,
+        members: group.count,
+        score: Math.round(group.score * 100),
+        path: group.primary?.path || '',
+        uiNoise: Boolean(group.uiNoise),
+        exports: group.exports.slice(0, 10),
+        configKeys: group.configKeys.slice(0, 10),
+      })),
+      configs,
+      scripts,
+      remoteEdges,
+    };
+  }
+
+  function _analysisPrompt(step, packet, analysis) {
+    const completed = Object.fromEntries(
+      Object.entries(analysis.results || {})
+        .filter(([, value]) => value?.status === 'done')
+        .map(([key, value]) => [key, value.data || { summary: value.summary }]),
+    );
+    const base = `You are analyzing a Roblox RBXLX DataTree snapshot for VelocityUI.
+
+Use the DataTree/RBXLX tools if available. The local packet is only an index. Do a deep dive into configs, ModuleScripts, scripts, remotes, folders, templates, runtime clones, and repeated prefabs. Do not assume visible Zombies/Characters are the whole game; configs and replicated tables can define hidden systems. Ignore GUI-only presentation unless it controls gameplay.
+
+Keep output concise enough for UI ingestion. Mark guesses as inferred. For remotes, predict args only from call-site evidence, nearby config names, or naming patterns.
+
+Local packet:
+\`\`\`json
+${JSON.stringify(packet, null, 2)}
+\`\`\`
+
+Completed stages:
+\`\`\`json
+${JSON.stringify(completed, null, 2)}
+\`\`\``;
+    if (step.id === 'configs') {
+      return `${base}
+
+Stage 1/${PLACE_ANALYSIS_STEPS.length}: inspect config/data files and data-like ModuleScripts.
+Return a short summary, then fenced JSON:
+{
+  "summary": "",
+  "configs": [{ "name": "", "path": "", "role": "", "keys": [], "systemsAffected": [], "confidence": "verified | inferred" }],
+  "dataTables": [{ "name": "", "path": "", "role": "", "importantFields": [], "linkedSystems": [] }],
+  "filesToInspectNext": []
+}`;
+    }
+    if (step.id === 'remotes') {
+      return `${base}
+
+Stage 2/${PLACE_ANALYSIS_STEPS.length}: inspect remotes and usage. Predict argument shapes when evidence exists.
+Return a short summary, then fenced JSON:
+{
+  "summary": "",
+  "remotes": [{ "name": "", "path": "", "direction": "client_to_server | server_to_client | bindable | unknown", "args": "", "confidence": "verified | inferred | unknown", "evidence": [], "callers": [], "linkedSystems": [], "nextInspection": [] }],
+  "unknowns": []
+}`;
+    }
+    if (step.id === 'mechanisms') {
+      return `${base}
+
+Stage 3/${PLACE_ANALYSIS_STEPS.length}: discover gameplay mechanisms. Group repeated clones and templates into one mechanism. Keep UI noise out unless it drives gameplay.
+Return a short summary, then fenced JSON:
+{
+  "summary": "",
+  "mechanisms": [{ "id": "", "label": "", "kind": "gameplay | control | data | infrastructure | presentation", "confidence": "verified | inferred | unresolved", "worldRoots": [], "controllers": [], "modules": [], "configs": [], "remotes": [], "repeatPattern": "", "notes": "", "ignoreUiNoise": true }]
+}`;
+    }
+    return `${base}
+
+Stage 4/${PLACE_ANALYSIS_STEPS.length}: assemble the final clean mechanism map. Put Game at the center, then major systems, then a few useful child details. Make it modular for future additions.
+Return a short summary, then fenced JSON:
+{
+  "summary": "",
+  "systems": [{ "id": "", "label": "", "kind": "gameplay | control | data | infrastructure | presentation", "confidence": "verified | inferred | unresolved", "description": "", "hover": "", "children": [{ "label": "", "kind": "controller | module | config | remote | world | template", "details": "", "refs": [] }], "remotes": [], "configs": [] }],
+  "remoteArgs": [{ "name": "", "args": "", "confidence": "", "evidence": [] }],
+  "nextSteps": []
+}`;
+  }
+
+  function _analysisParseJson(text = '') {
+    const clean = String(text || '').trim();
+    const fenced = clean.match(/```json\s*([\s\S]*?)```/i);
+    if (!fenced) return null;
+    try {
+      return JSON.parse(fenced[1]);
+    } catch {
+      return null;
+    }
+  }
+
+  function _analysisSummary(text = '', data = null) {
+    if (data?.summary) return String(data.summary);
+    const clean = String(text || '')
+      .replace(/```json[\s\S]*?```/i, '')
+      .trim();
+    return (
+      clean
+        .split('\n')
+        .find((line) => line.trim())
+        ?.trim() || 'Stage completed'
+    );
+  }
+
+  async function _runPlaceAnalysis({ all = false } = {}) {
+    const snapshot = activeSnapshot();
+    const analysis = _analysisForSnapshot(snapshot);
+    if (analysis.busy) {
+      toast.show('AI analysis is already running.', 'info', 1800);
+      return;
+    }
+    if (Date.now() - analysis.lastRunAt < 1600) return;
+    const helper = globalThis.AiHelper || (typeof AiHelper !== 'undefined' ? AiHelper : null);
+    if (!helper?.sendChat) {
+      toast.show('Open/enable AI Helper before running place analysis.', 'warn', 2800);
+      return;
+    }
+    await _preparePlaceAnalysis();
+    const graph = state_.logicWeb.graph;
+    if (!graph) {
+      toast.show('Local logic index is still building. Try again in a moment.', 'info', 2200);
+      return;
+    }
+    const learning = _logicLearning(graph);
+    const humanGraph = _logicHumanGraph(graph, learning);
+    const packet = _analysisLocalPacket(graph, humanGraph, learning);
+    analysis.busy = true;
+    analysis.error = '';
+    analysis.lastRunAt = Date.now();
+    _analysisRenderIfVisible();
+    try {
+      helper.togglePanel?.(true);
+      do {
+        const step = _analysisFirstPending(analysis);
+        if (!step) break;
+        analysis.activeStepId = step.id;
+        _analysisRenderIfVisible();
+        await _waitForAiHelperReady(helper, 30_000);
+        const result = await helper.sendChat(_analysisPrompt(step, packet, analysis));
+        if (!result) throw new Error('AI returned no analysis text.');
+        const data = _analysisParseJson(result);
+        if (!data) throw new Error(`${step.title} did not return a usable JSON block.`);
+        analysis.results[step.id] = {
+          status: 'done',
+          summary: _analysisSummary(result, data),
+          data,
+          raw: result,
+          completedAt: Date.now(),
+        };
+        if (step.id === 'map' && Array.isArray(data.systems)) analysis.plan = data;
+      } while (all);
+      analysis.activeStepId = null;
+      if (!_analysisFirstPending(analysis)) toast.show('Place analysis complete.', 'ok', 2400);
+    } catch (err) {
+      const step = PLACE_ANALYSIS_STEPS.find((item) => item.id === analysis.activeStepId);
+      if (step) {
+        analysis.results[step.id] = {
+          status: 'failed',
+          error: err?.message || 'Stage failed',
+          completedAt: Date.now(),
+        };
+      }
+      analysis.error = err?.message || 'Place analysis failed';
+      toast.show(analysis.error, 'fail', 4200);
+    } finally {
+      analysis.busy = false;
+      analysis.activeStepId = null;
+      _analysisRenderIfVisible();
+    }
+  }
+
+  function _attachAnalysisMapPan(root) {
+    const stage = root.querySelector('.dt-analysis-map-stage');
+    const analysis = state_.placeAnalysis;
+    if (!stage) return;
+    const paint = () => {
+      const pan = analysis.pan || { x: 0, y: 0, scale: 1 };
+      stage
+        .querySelector('.dt-analysis-map-world')
+        ?.setAttribute('transform', `translate(${pan.x} ${pan.y}) scale(${pan.scale})`);
+    };
+    let dragging = false;
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let startPan = { x: 0, y: 0 };
+    stage.addEventListener('pointerdown', (event) => {
+      dragging = true;
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startY = event.clientY;
+      startPan = { x: analysis.pan?.x || 0, y: analysis.pan?.y || 0 };
+      stage.setPointerCapture?.(pointerId);
+      stage.classList.add('is-dragging');
+    });
+    stage.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      const pan = analysis.pan || { x: 0, y: 0, scale: 1 };
+      pan.x = Math.round(startPan.x + (event.clientX - startX) / Math.max(0.2, pan.scale));
+      pan.y = Math.round(startPan.y + (event.clientY - startY) / Math.max(0.2, pan.scale));
+      analysis.pan = pan;
+      paint();
+    });
+    const stop = () => {
+      if (!dragging) return;
+      dragging = false;
+      stage.classList.remove('is-dragging');
+      if (pointerId != null) stage.releasePointerCapture?.(pointerId);
+      pointerId = null;
+    };
+    stage.addEventListener('pointerup', stop);
+    stage.addEventListener('pointercancel', stop);
+    stage.addEventListener(
+      'wheel',
+      (event) => {
+        event.preventDefault();
+        const pan = analysis.pan || { x: 0, y: 0, scale: 1 };
+        const delta = event.deltaY > 0 ? 0.9 : 1.1;
+        pan.scale = Math.max(0.44, Math.min(1.9, Number((pan.scale * delta).toFixed(3))));
+        analysis.pan = pan;
+        paint();
+      },
+      { passive: false },
+    );
+    root.querySelector('[data-action="analysis-map-reset"]')?.addEventListener('click', () => {
+      analysis.pan = { x: 0, y: 0, scale: 1 };
+      paint();
+    });
+  }
+
+  function _moduleScannerPane() {
+    const snapshot = activeSnapshot();
+    const scanner = state_.moduleScanner;
+    const pane = document.createElement('main');
+    pane.className = 'dt-module-scanner';
+    const count = scanner.results.length;
+    const status = scanner.busy
+      ? 'Scanning scripts'
+      : scanner.error
+        ? scanner.error
+        : snapshot?.storagePath
+          ? scanner.scannedAt
+            ? `${count.toLocaleString()} result${count === 1 ? '' : 's'}`
+            : 'Ready to scan scripts'
+          : 'Import a DataTree first';
+    const rows = scanner.results
+      .map((hit) => {
+        const icon = _iconMarkup(_classIcon(hit.className), 'dt-render-icon');
+        return `<button type="button" class="dt-module-row" data-node-id="${_escape(hit.id)}"><span class="dt-module-row-icon">${icon}</span><span class="dt-module-row-main"><strong>${_escape(hit.name || hit.className || 'Script')}</strong><small>${_escape(hit.path || '')}</small></span><span class="dt-module-row-matches">${Number(hit.matches || 0).toLocaleString()}</span></button>`;
+      })
+      .join('');
+    pane.innerHTML = `<section class="dt-module-searchbar"><label><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg><input placeholder="Search scripts" value="${_escape(scanner.query)}" spellcheck="false"></label><small>${_escape(status)}</small></section><section class="dt-module-results"><div class="dt-module-results-head"><span>Script name</span><span>Matches</span></div><div class="dt-module-results-list">${rows || `<div class="dt-module-empty">${_escape(scanner.query ? 'No scripts matched this search.' : 'Type to search source, names, and paths. Empty search lists every Script, LocalScript, and ModuleScript.')}</div>`}</div></section>`;
+    const input = pane.querySelector('.dt-module-searchbar input');
+    input?.addEventListener('input', () => {
+      scanner.query = input.value;
+      _scheduleModuleScanner(360);
+    });
+    pane.querySelectorAll('.dt-module-row').forEach((row) => {
+      row.addEventListener('click', () => _openModuleScriptResult(Number(row.dataset.nodeId || 0)));
+    });
+    if (
+      snapshot?.storagePath &&
+      !scanner.busy &&
+      (scanner.snapshotId !== snapshot.id || scanner.scannedQuery !== scanner.query)
+    ) {
+      _scheduleModuleScanner(scanner.scannedAt ? 360 : 0);
+    }
+    return pane;
+  }
+
+  function _scheduleModuleScanner(delay = 120) {
+    clearTimeout(_moduleScanTimer);
+    _moduleScanTimer = setTimeout(() => _refreshModuleScanner().catch(() => {}), delay);
+  }
+
+  async function _refreshModuleScanner() {
+    const snapshot = activeSnapshot();
+    if (!snapshot?.storagePath) return;
+    const scanner = state_.moduleScanner;
+    const query = scanner.query || '';
+    const run = ++_moduleScanRun;
+    const activeInput = _container()?.querySelector('.dt-module-searchbar input');
+    const shouldRestoreFocus = document.activeElement === activeInput;
+    const selectionStart = shouldRestoreFocus ? activeInput.selectionStart : null;
+    const selectionEnd = shouldRestoreFocus ? activeInput.selectionEnd : null;
+    scanner.busy = true;
+    scanner.error = '';
+    scanner.snapshotId = snapshot.id;
+    scanner.scannedQuery = query;
+    _paintModuleScannerStatus();
+    try {
+      const results = await window.__TAURI__.core.invoke('datatree_scan_scripts', {
+        path: snapshot.storagePath,
+        query,
+        limit: 500,
+      });
+      if (run !== _moduleScanRun || activeSnapshot()?.id !== snapshot.id) return;
+      scanner.results = Array.isArray(results) ? results : [];
+      scanner.scannedAt = Date.now();
+    } catch (err) {
+      if (run !== _moduleScanRun) return;
+      scanner.error = err?.message || 'Script scan failed';
+      scanner.results = [];
+    } finally {
+      if (run !== _moduleScanRun) return;
+      scanner.busy = false;
+      if (state_.visible && state_.viewMode === 'scanner') {
+        _replace('.dt-module-scanner', _moduleScannerPane());
+        if (shouldRestoreFocus) {
+          requestAnimationFrame(() => {
+            const next = _container()?.querySelector('.dt-module-searchbar input');
+            next?.focus();
+            const end = next?.value?.length ?? 0;
+            next?.setSelectionRange(selectionStart ?? end, selectionEnd ?? end);
+          });
+        }
+      }
+    }
+  }
+
+  function _paintModuleScannerStatus() {
+    const scanner = state_.moduleScanner;
+    const status = _container()?.querySelector('.dt-module-searchbar small');
+    if (!status) return;
+    status.textContent = scanner.busy
+      ? 'Scanning scripts'
+      : scanner.error
+        ? scanner.error
+        : scanner.scannedAt
+          ? `${scanner.results.length.toLocaleString()} result${scanner.results.length === 1 ? '' : 's'}`
+          : 'Ready to scan scripts';
+  }
+
+  async function _openModuleScriptResult(nodeId) {
+    if (!nodeId) return;
+    const snapshot = activeSnapshot();
+    if (!snapshot?.storagePath) return;
+    const hit = state_.moduleScanner.results.find((item) => Number(item.id) === nodeId);
+    try {
+      let source = '';
+      try {
+        source = await window.__TAURI__.core.invoke('datatree_node_value', {
+          path: snapshot.storagePath,
+          nodeId,
+          section: 'properties',
+          key: 'Source',
+        });
+      } catch {
+        source = await window.__TAURI__.core.invoke('datatree_node_value', {
+          path: snapshot.storagePath,
+          nodeId,
+          section: 'properties',
+          key: 'source',
+        });
+      }
+      const id = `datatree-module:${snapshot.id}:${nodeId}`;
+      const name = `${hit?.name || hit?.className || 'Script'}.lua`;
+      const existing = state.getFile(id);
+      if (existing) {
+        state.setContent(id, String(source || ''), { readonly: true });
+      } else {
+        state.addFile(id, name, null, String(source || ''), {
+          languageOverride: 'lua',
+          languageOverrideLabel: 'Lua',
+          readonly: true,
+        });
+      }
+      state.setActive(id, { permanent: true, keepTabs: true });
+      tabs.render();
+      document.querySelector('.activity-btn[data-view="explorer"]')?.click();
+      editorController.renderEditor();
+    } catch (err) {
+      toast.show(err?.message || 'Could not open script source', 'fail', 2600);
+    }
+  }
+
+  function _saveCurrentGameScript() {
+    return String.raw`local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local function report(kind, data)
+    data = type(data) == "table" and data or {}
+    data.place_id = game.PlaceId
+    data.job_id = game.JobId
+    if LocalPlayer then
+        data.user_id = tostring(LocalPlayer.UserId)
+        data.username = LocalPlayer.Name
+        data.display_name = LocalPlayer.DisplayName
+    end
+    if bridge and type(bridge.report) == "function" then
+        pcall(bridge.report, kind, data)
+    end
+end
+
+local fileName = string.format(
+    "VelocityUI_Save_%s_%s",
+    tostring(game.PlaceId),
+    os.date("!%Y%m%d_%H%M%S")
+)
+
+local options = {
+    __DEBUG_MODE = true,
+    ReadMe = false,
+    SafeMode = false,
+    KillAllScripts = false,
+    BoostFPS = false,
+    ShutdownWhenDone = false,
+    AntiIdle = true,
+    Anonymous = false,
+    ShowStatus = true,
+
+    mode = "full",
+    Object = game,
+    IsModel = false,
+
+    Decompile = true,
+    scriptcache = true,
+    DecompileTimeout = 20,
+    DecompileJobless = false,
+    SaveBytecode = false,
+    DecompileIgnore = {},
+
+    ExtraInstances = {},
+    IgnoreProperties = {},
+    IgnoreDefaultProperties = true,
+    IgnoreNotArchivable = true,
+    IgnorePropertiesOfNotScriptsOnScriptsMode = false,
+    IgnoreSpecialProperties = false,
+
+    NilInstances = true,
+    IsolateStarterPlayer = false,
+    IsolatePlayers = false,
+    IsolateLocalPlayer = false,
+    IsolateLocalPlayerCharacter = false,
+    SavePlayerCharacters = true,
+    SaveNotCreatable = true,
+
+    AlternativeWritefile = false,
+    IgnoreDefaultPlayerScripts = false,
+    IgnoreSharedStrings = true,
+    SharedStringOverwrite = false,
+    TreatUnionsAsParts = false,
+
+    FilePath = fileName,
+    AvoidFileOverwrite = true,
+    SaveCacheInterval = 0x800,
+}
+
+report("saveinstance:start", {
+    file_path = fileName,
+    safe_mode = false,
+    mode = options.mode,
+    extra_instances = 0,
+})
+
+local repo = "https://raw.githubusercontent.com/luau/UniversalSynSaveInstance/main/"
+local loader, loadErr = loadstring(game:HttpGet(repo .. "saveinstance.luau", true), "saveinstance")
+if type(loader) ~= "function" then
+    error("Could not load UniversalSynSaveInstance: " .. tostring(loadErr))
+end
+
+local saveinstance = loader()
+if type(saveinstance) ~= "function" then
+    error("UniversalSynSaveInstance did not return a save function")
+end
+
+local ok, err = pcall(saveinstance, options)
+if ok then
+    report("saveinstance:done", {
+        file_path = fileName,
+        import_paths = {
+            fileName .. ".rbxlx",
+            fileName .. ".rbxmx",
+            fileName .. ".xml",
+            fileName,
+        },
+    })
+else
+    report("saveinstance:error", { file_path = fileName, message = tostring(err) })
+    error(err, 0)
+end`;
+  }
+
+  async function saveCurrentGame() {
+    const cooldownMs = 30_000;
+    const now = Date.now();
+    const remaining = state_.saveGameCooldownUntil - now;
+    if (remaining > 0) {
+      toast.show(
+        `Save current game is cooling down for ${Math.ceil(remaining / 1000)}s`,
+        'info',
+        1800,
+      );
+      return;
+    }
+    state_.saveGameCooldownUntil = now + cooldownMs;
+    render();
+    setTimeout(() => {
+      if (Date.now() >= state_.saveGameCooldownUntil && state_.visible) render();
+    }, cooldownMs + 80);
+    try {
+      toast.show('Starting optimized USSI saveinstance...', 'info', 2600);
+      await injector.executeWithClientBridge(_saveCurrentGameScript());
+    } catch (err) {
+      toast.show(err?.message || 'Could not start current game save', 'fail', 3600);
+    }
+  }
+
+  function _savedGameCandidates(body = {}) {
+    const paths = [];
+    if (Array.isArray(body.import_paths)) paths.push(...body.import_paths);
+    if (body.host_path) paths.push(body.host_path);
+    if (body.saved_path) paths.push(body.saved_path);
+    if (body.file_path) paths.push(body.file_path);
+    if (body.file_name) paths.push(body.file_name);
+    return [...new Set(paths.map((item) => String(item || '').trim()).filter(Boolean))];
+  }
+
+  async function _resolveSavedGamePath(body = {}) {
+    const candidates = _savedGameCandidates(body);
+    for (const fileName of candidates) {
+      const found = await window.__TAURI__.core
+        .invoke('datatree_find_saved_game_file', { fileName })
+        .catch(() => null);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  async function _importSavedGame(body = {}) {
+    const filePath = await _resolveSavedGamePath(body);
+    if (filePath) {
+      await importRbxlx(filePath);
+      return;
+    }
+    toast.show('Saved file was not found. Pick the RBXLX manually?', 'warn', 10000, {
+      actions: [
+        {
+          label: 'Browse',
+          primary: true,
+          onClick: () => importRbxlx(),
+        },
+        { label: 'Later' },
+      ],
+    });
+  }
+
+  function _offerSavedGameImport(body = {}) {
+    const label = body.file_path || body.file_name || 'current game';
+    toast.show(`Saved ${label}. Import into DataTree?`, 'ok', 14000, {
+      actions: [
+        {
+          label: 'Import',
+          primary: true,
+          onClick: () => _importSavedGame(body),
+        },
+        { label: 'Later' },
+      ],
+    });
   }
 
   function _sideSplitter(content) {
@@ -1088,13 +3234,107 @@ const dataTree = (() => {
   }
 
   function _nodePath(snapshot, node) {
-    const names = [];
+    return _nodeChain(snapshot, node)
+      .map((current) => String(current.name || current.className || 'Instance'))
+      .join('.');
+  }
+
+  function _nodeChain(snapshot, node) {
+    const nodes = [];
     let current = node;
-    while (current && names.length < 160) {
-      names.unshift(String(current.name || current.className || 'Instance'));
+    while (current && nodes.length < 160) {
+      nodes.unshift(current);
       current = current.parentId ? snapshot?.byId?.get(current.parentId) : null;
     }
-    return names.join('.');
+    return nodes;
+  }
+
+  function _robloxPathSegment(name = '') {
+    const value = String(name || 'Instance');
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return `.${value}`;
+    return `[${JSON.stringify(value)}]`;
+  }
+
+  function _robloxNodePath(snapshot, node) {
+    const chain = _nodeChain(snapshot, node);
+    if (
+      /^datamodel$/i.test(String(chain[0]?.className || '')) ||
+      /^game$/i.test(String(chain[0]?.name || ''))
+    )
+      chain.shift();
+    return `game${chain
+      .map((current) => _robloxPathSegment(current.name || current.className || 'Instance'))
+      .join('')}`;
+  }
+
+  async function getAiReference(id = '') {
+    await init();
+    const snapshot =
+      state_.snapshots.find((item) => item.id === id) || (!id ? activeSnapshot() : null);
+    if (!snapshot?.storagePath) return null;
+    return {
+      snapshot: {
+        id: snapshot.id,
+        name: snapshot.name || helpers.basename(snapshot.sourcePath || '') || 'Untitled DataTree',
+        nodeCount: snapshot.nodeCount || snapshot.nodes?.length || 0,
+        sourcePath: snapshot.sourcePath || '',
+        storagePath: snapshot.storagePath,
+        rootId: snapshot.rootId || snapshot.nodes?.[0]?.id || null,
+        activeNodeId:
+          snapshot.id === state_.activeSnapshotId
+            ? state_.activeNodeId || snapshot.activeNodeId || snapshot.rootId || null
+            : snapshot.activeNodeId || snapshot.rootId || null,
+      },
+    };
+  }
+
+  async function getAiSnapshots() {
+    await init();
+    return state_.snapshots.map((snapshot) => ({
+      id: snapshot.id,
+      name: snapshot.name || helpers.basename(snapshot.sourcePath || '') || 'Untitled DataTree',
+      nodeCount: snapshot.nodeCount || snapshot.nodes?.length || 0,
+      sourcePath: snapshot.sourcePath || '',
+      active: snapshot.id === state_.activeSnapshotId,
+    }));
+  }
+
+  async function setAiSnapshot(id) {
+    await init();
+    await _activateSnapshot(id);
+    _saveSoon();
+    if (state_.visible) render();
+    return getAiSnapshots();
+  }
+
+  function getAiSelection() {
+    const snapshot = activeSnapshot();
+    if (!snapshot?.id) return null;
+    return {
+      snapshotId: snapshot.id,
+      activeNodeId: state_.activeNodeId || snapshot.activeNodeId || snapshot.rootId || null,
+      expandedIds: [...state_.expanded],
+      previewTab: state_.previewTab || 'raw',
+    };
+  }
+
+  async function restoreAiSelection(selection) {
+    if (!selection?.snapshotId) return false;
+    await init();
+    const snapshot = state_.snapshots.find((item) => item.id === selection.snapshotId);
+    if (!snapshot) return false;
+    snapshot.activeNodeId =
+      selection.activeNodeId || snapshot.activeNodeId || snapshot.rootId || null;
+    snapshot.expandedIds = Array.isArray(selection.expandedIds)
+      ? selection.expandedIds.filter(Boolean)
+      : snapshot.expandedIds || [];
+    await _activateSnapshot(snapshot.id);
+    state_.activeNodeId = snapshot.activeNodeId;
+    state_.expanded = new Set(snapshot.expandedIds);
+    if (selection.previewTab) state_.previewTab = selection.previewTab;
+    _saveSoon();
+    if (state_.visible) render();
+    return true;
   }
 
   function _depth(snapshot, node) {
@@ -1119,12 +3359,118 @@ const dataTree = (() => {
     row.innerHTML = `<span class="dt-disclosure${state_.expanded.has(node.id) ? ' open' : ''}${hasChildren ? '' : ' empty'}">›</span>${_iconMarkup(_classIcon(node.className))}<span class="dt-node-name">${_escape(node.name)}</span><span class="dt-node-class">${_escape(node.className)}</span>`;
     if (node.id === state_.activeNodeId) _activeRowEl = row;
     row.addEventListener('click', () => _selectNode(node.id, row));
+    row.addEventListener('contextmenu', (event) => {
+      _showNodeMenu(event, snapshot, node, depth, row, hasChildren);
+    });
     row.querySelector('.dt-disclosure')?.addEventListener('click', (event) => {
       event.stopPropagation();
       if (!hasChildren) return;
       _toggleNodeInPlace(snapshot, node, depth, row);
     });
     return row;
+  }
+
+  async function _copyNodeText(text, label) {
+    try {
+      await window.__TAURI__.core.invoke('write_clipboard', { text: String(text || '') });
+      toast.show(label, 'ok', 1400);
+    } catch {}
+  }
+
+  function _showNodeMenu(event, snapshot, node, depth, row, hasChildren) {
+    const path = _robloxNodePath(snapshot, node);
+    const expanded = state_.expanded.has(node.id);
+    ctxMenu.showItems(event, [
+      { label: 'Copy Current Path', action: () => _copyNodeText(path, 'DataTree path copied') },
+      { label: 'Copy Name', action: () => _copyNodeText(node.name, 'Instance name copied') },
+      {
+        label: 'Copy Class Name',
+        action: () => _copyNodeText(node.className, 'Class name copied'),
+      },
+      { separator: true },
+      {
+        label: 'Copy Node JSON',
+        action: () => _copyNodeText(JSON.stringify(node, null, 2), 'Node JSON copied'),
+      },
+      hasChildren
+        ? {
+            separator: true,
+          }
+        : null,
+      hasChildren
+        ? {
+            label: expanded ? 'Collapse Children' : 'Expand Children',
+            action: () => _toggleNodeInPlace(snapshot, node, depth, row),
+          }
+        : null,
+    ]);
+  }
+
+  function _expandNodeAncestors(snapshot, nodeId) {
+    let current = snapshot?.byId?.get(Number(nodeId));
+    let guard = 0;
+    while (current?.parentId && guard < 256) {
+      state_.expanded.add(current.parentId);
+      current = snapshot.byId.get(current.parentId);
+      guard += 1;
+    }
+  }
+
+  function _flashTreeNode(nodeId) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const row = _container()?.querySelector(`.dt-tree-row[data-node-id="${Number(nodeId)}"]`);
+        if (!row) return;
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row.classList.add('dt-tree-row--flash');
+        setTimeout(() => row.classList.remove('dt-tree-row--flash'), 700);
+      });
+    });
+  }
+
+  async function _jumpToDataTreeNode(nodeId, remote = null) {
+    const id = Number(nodeId);
+    if (!Number.isFinite(id) || id <= 0) {
+      toast.show('This remote does not map to a DataTree node yet.', 'warn', 2200);
+      return;
+    }
+    const snapshot = activeSnapshot();
+    if (!snapshot?.storagePath) {
+      toast.show('Load a DataTree before jumping to remotes.', 'warn', 2200);
+      return;
+    }
+    try {
+      await _ensureSnapshotLoaded(snapshot, { light: true });
+      const node = snapshot.byId?.get(id);
+      if (!node) {
+        toast.show('Remote node is not present in the loaded DataTree.', 'warn', 2400);
+        return;
+      }
+      state_.query = '';
+      state_.viewMode = 'explorer';
+      state_.memoryUnloaded = false;
+      state_.activeNodeId = id;
+      snapshot.activeNodeId = id;
+      _expandNodeAncestors(snapshot, id);
+      snapshot.expandedIds = [...state_.expanded];
+      state_.previewTab = state_.previewReady ? _preferredPreviewTab(node) : 'raw';
+      _saveSoon();
+
+      const activeView = document.querySelector('.activity-btn.active')?.dataset.view;
+      const dataTreeButton = document.querySelector('.activity-btn[data-view="datatree"]');
+      if (activeView !== 'datatree' && dataTreeButton) {
+        dataTreeButton.click();
+      } else {
+        _activeContainerId = 'dataTreeView';
+        render();
+        if (!state_.memoryUnloaded) requestAnimationFrame(_loadActiveSnapshotForView);
+      }
+      _ensureNodeDetailsLoaded(snapshot, node).catch(() => {});
+      _flashTreeNode(id);
+      toast.show(`Jumped to ${remote?.displayName || node.name}`, 'ok', 1200);
+    } catch (err) {
+      toast.show(err?.message || 'Could not jump to remote node', 'fail', 2600);
+    }
   }
 
   function _selectNode(id, rowEl = null) {
@@ -6689,7 +9035,10 @@ const dataTree = (() => {
     const wrap = document.createElement('div');
     wrap.className = 'dt-workbench dt-workbench--single';
     const source = node.properties?.Source || node.properties?.source || '';
-    wrap.innerHTML = `<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Script</span><small>${_escape(node.className)}</small></div><pre>${_escape(source || 'No script source is present in this file.')}</pre></section>`;
+    wrap.innerHTML = `<section class="dt-inspector-panel"><div class="dt-inspector-head"><span>Script</span><small>${_escape(node.className)} · read only</small><button class="dt-icon-action" type="button" data-action="open-script-monaco">Open in editor</button></div><pre>${_escape(source || 'No script source is present in this file.')}</pre></section>`;
+    wrap
+      .querySelector('[data-action="open-script-monaco"]')
+      ?.addEventListener('click', () => _openModuleScriptResult(node.id));
     return wrap;
   }
 
@@ -7483,20 +9832,31 @@ const dataTree = (() => {
   function queueTask() {
     return Promise.resolve();
   }
-  function handleBridgeEvent() {}
+  function handleBridgeEvent(payload) {
+    const body = payload?.body || {};
+    if (body.kind === 'saveinstance:done') _offerSavedGameImport(body);
+  }
   function handleBridgeError() {}
 
   return {
     init,
     show,
+    showAnalysis,
     hide,
     render,
+    flushSave,
     openImportDialog,
     importRbxlx,
+    saveCurrentGame,
     ensureBridge,
     captureLiveTree,
     handleBridgeEvent,
     handleBridgeError,
     queueTask,
+    getAiReference,
+    getAiSnapshots,
+    setAiSnapshot,
+    getAiSelection,
+    restoreAiSelection,
   };
 })();

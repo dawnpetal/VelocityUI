@@ -11,7 +11,11 @@ impl FileTreeManager {
     }
 
     pub fn build(&self, dir_path: &str) -> VelocityUIResult<FileNode> {
-        build_recursive(Path::new(dir_path))
+        build_shallow_root(Path::new(dir_path))
+    }
+
+    pub fn children(&self, dir_path: &str) -> VelocityUIResult<Vec<FileNode>> {
+        build_children(Path::new(dir_path))
     }
 
     pub fn generate_unique_path(
@@ -56,7 +60,7 @@ impl FileTreeManager {
     }
 }
 
-fn build_recursive(path: &Path) -> VelocityUIResult<FileNode> {
+fn folder_identity(path: &Path) -> VelocityUIResult<(String, String)> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -67,7 +71,20 @@ fn build_recursive(path: &Path) -> VelocityUIResult<FileNode> {
         .to_str()
         .ok_or_else(|| VelocityUIError::InvalidData("non-UTF-8 path".into()))?
         .to_string();
+    Ok((name, path_str))
+}
 
+fn build_shallow_root(path: &Path) -> VelocityUIResult<FileNode> {
+    let (name, path_str) = folder_identity(path)?;
+    Ok(FileNode::folder(
+        uuid::Uuid::new_v4().to_string(),
+        name,
+        path_str,
+        build_children(path)?,
+    ))
+}
+
+fn build_children(path: &Path) -> VelocityUIResult<Vec<FileNode>> {
     let mut children: Vec<FileNode> = std::fs::read_dir(path)
         .map_err(VelocityUIError::Io)?
         .filter_map(|entry| {
@@ -84,9 +101,11 @@ fn build_recursive(path: &Path) -> VelocityUIResult<FileNode> {
             let meta = entry.metadata().ok()?;
 
             if meta.is_dir() {
-                let mut node = build_recursive(&entry_path).ok()?;
-                node.open = false;
-                Some(node)
+                Some(FileNode::lazy_folder(
+                    uuid::Uuid::new_v4().to_string(),
+                    entry_name_str.to_string(),
+                    entry_path_str,
+                ))
             } else {
                 Some(FileNode::file(
                     uuid::Uuid::new_v4().to_string(),
@@ -104,12 +123,7 @@ fn build_recursive(path: &Path) -> VelocityUIResult<FileNode> {
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
-    Ok(FileNode::folder(
-        uuid::Uuid::new_v4().to_string(),
-        name,
-        path_str,
-        children,
-    ))
+    Ok(children)
 }
 
 fn copy_sync(src: &str, dest: &str) -> VelocityUIResult<()> {

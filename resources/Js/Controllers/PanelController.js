@@ -1,4 +1,6 @@
 const panelController = (() => {
+  const SIDEBAR_OPEN_ICON = `<svg xmlns="http://www.w3.org/2000/svg" class="lucide lucide-panel-left-open-icon lucide-panel-left-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>`;
+  const SIDEBAR_CLOSE_ICON = `<svg xmlns="http://www.w3.org/2000/svg" class="lucide lucide-panel-left-close-icon lucide-panel-left-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>`;
   const PANEL_BODIES = {
     console: 'consoleOutput',
     roblox: 'robloxOutput',
@@ -92,8 +94,29 @@ const panelController = (() => {
       compute: (clientY) => document.querySelector('.app').getBoundingClientRect().height - clientY,
       onCommit: (val) => uiState.setSbBottomHeight(val),
     });
+    _makeResizer({
+      resizerEl: document.getElementById('aiSideResizer'),
+      targetEl: document.getElementById('aiSidePanel'),
+      axis: 'x',
+      prop: 'width',
+      min: 260,
+      max: 520,
+      compute: (clientX) => document.querySelector('.app').getBoundingClientRect().width - clientX,
+      onCommit: (val) => uiState.setAiPanelWidth?.(val),
+      onChange: () => AiHelper.syncFabOffset?.(),
+    });
   }
-  function _makeResizer({ resizerEl, targetEl, axis, prop, min, max, compute, onCommit }) {
+  function _makeResizer({
+    resizerEl,
+    targetEl,
+    axis,
+    prop,
+    min,
+    max,
+    compute,
+    onCommit,
+    onChange,
+  }) {
     if (!resizerEl || !targetEl) return;
     let dragging = false;
     let lastVal = null;
@@ -106,6 +129,7 @@ const panelController = (() => {
       if (!dragging) return;
       lastVal = Math.min(max, Math.max(min, compute(axis === 'x' ? e.clientX : e.clientY)));
       targetEl.style[prop] = lastVal + 'px';
+      onChange?.(lastVal);
     });
     document.addEventListener('mouseup', () => {
       if (!dragging) return;
@@ -160,6 +184,7 @@ const panelController = (() => {
       sBtn.classList.toggle('active', mode === 'open');
       sBtn.classList.toggle('locked', mode === 'locked');
       sBtn.dataset.state = mode;
+      sBtn.innerHTML = mode === 'open' ? SIDEBAR_CLOSE_ICON : SIDEBAR_OPEN_ICON;
       sBtn.title =
         mode === 'open'
           ? 'Close Sidebar (⌘B)'

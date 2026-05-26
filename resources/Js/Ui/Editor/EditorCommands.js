@@ -14,7 +14,8 @@ const EditorCommands = (() => {
       }
       try {
         if (state.previewTabId === id) state.previewTabId = null;
-        await fileManager.save(id);
+        const saved = await fileManager.save(id);
+        if (!saved) return;
         tabs.render();
         eventBus.emit('ui:file-saved', {
           id,

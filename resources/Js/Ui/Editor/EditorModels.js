@@ -13,7 +13,7 @@ const EditorModels = (() => {
     const uri = monaco.Uri.parse(`file:///${file.id}/${file.name}`);
     const model = monaco.editor.createModel(
       file.content,
-      file.languageOverride ?? LangMap.monacoLang(file.name),
+      LangMap.monacoLang(file.name, file.languageOverride),
       uri,
     );
     model.__velocityuiFileId = file.id;

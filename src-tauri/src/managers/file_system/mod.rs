@@ -26,6 +26,10 @@ impl FileSystemManager {
         self.tree.build(dir_path)
     }
 
+    pub fn load_tree_children(&self, dir_path: &str) -> VelocityUIResult<Vec<FileNode>> {
+        self.tree.children(dir_path)
+    }
+
     pub fn generate_unique_path(
         &self,
         dir_path: &str,

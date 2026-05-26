@@ -2,7 +2,7 @@ const VirtualList = (() => {
   const ROW_HEIGHT = 26;
   const OVERSCAN = 8;
 
-  function create({ container, getCount, getItem, renderRow, onScroll }) {
+  function create({ container, getCount, getItem, getItemHeight, renderRow, onScroll }) {
     let _totalCount = 0;
     let _scrollTop = 0;
     let _viewportHeight = 0;
@@ -41,12 +41,40 @@ const VirtualList = (() => {
       });
     }
 
+    function _heightAt(index) {
+      const item = getItem ? getItem(index) : null;
+      const value = getItemHeight?.(index, item);
+      return Number.isFinite(value) && value > 0 ? value : ROW_HEIGHT;
+    }
+
+    function _offsetFor(index) {
+      let offset = 0;
+      for (let i = 0; i < index; i++) offset += _heightAt(i);
+      return offset;
+    }
+
+    function _totalHeight() {
+      let height = 0;
+      for (let i = 0; i < _totalCount; i++) height += _heightAt(i);
+      return height;
+    }
+
     function _getRange() {
-      const start = Math.max(0, Math.floor(_scrollTop / ROW_HEIGHT) - OVERSCAN);
-      const end = Math.min(
-        _totalCount,
-        Math.ceil((_scrollTop + _viewportHeight) / ROW_HEIGHT) + OVERSCAN,
-      );
+      let start = 0;
+      let y = 0;
+      while (start < _totalCount && y + _heightAt(start) < _scrollTop) {
+        y += _heightAt(start);
+        start++;
+      }
+      start = Math.max(0, start - OVERSCAN);
+      let end = start;
+      y = _offsetFor(start);
+      const limit = _scrollTop + _viewportHeight;
+      while (end < _totalCount && y < limit) {
+        y += _heightAt(end);
+        end++;
+      }
+      end = Math.min(_totalCount, end + OVERSCAN);
       return { start, end };
     }
 
@@ -67,10 +95,10 @@ const VirtualList = (() => {
         const el = renderRow(i, item);
         if (!el) continue;
         el.style.position = 'absolute';
-        el.style.top = i * ROW_HEIGHT + 'px';
+        el.style.top = _offsetFor(i) + 'px';
         el.style.left = '0';
         el.style.right = '0';
-        el.style.height = ROW_HEIGHT + 'px';
+        el.style.height = _heightAt(i) + 'px';
         _inner.appendChild(el);
         _rendered.set(i, el);
       }
@@ -82,7 +110,7 @@ const VirtualList = (() => {
     function update(count) {
       _totalCount = count;
       _viewportHeight = container.getBoundingClientRect().height;
-      _inner.style.height = _totalCount * ROW_HEIGHT + 'px';
+      _inner.style.height = _totalHeight() + 'px';
       _scrollTop = container.scrollTop;
       _lastStart = -1;
       _lastEnd = -1;
@@ -105,8 +133,8 @@ const VirtualList = (() => {
     }
 
     function scrollToIndex(idx) {
-      const top = idx * ROW_HEIGHT;
-      const bottom = top + ROW_HEIGHT;
+      const top = _offsetFor(idx);
+      const bottom = top + _heightAt(idx);
       if (top < container.scrollTop) {
         container.scrollTop = top;
       } else if (bottom > container.scrollTop + _viewportHeight) {

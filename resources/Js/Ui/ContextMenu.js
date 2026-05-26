@@ -3,12 +3,10 @@ const ctxMenu = (() => {
   const isMac = navigator.platform.includes('Mac');
   const REVEAL_LABEL = isMac ? 'Reveal in Finder' : 'Open in Explorer';
   let _token = 0;
-  let _position = null;
 
   function _capture(e) {
     e.preventDefault();
     e.stopPropagation();
-    _position = { x: e.clientX, y: e.clientY };
     _token += 1;
   }
 
@@ -21,10 +19,7 @@ const ctxMenu = (() => {
     await buildFn(items, item, sep);
     if (token !== _token) return;
     const menu = await Menu.new({ items });
-    const at = _position
-      ? new window.__TAURI__.dpi.LogicalPosition(_position.x, _position.y)
-      : undefined;
-    await menu.popup(at);
+    await menu.popup();
   }
 
   function show(e, node) {
@@ -49,6 +44,8 @@ const ctxMenu = (() => {
         items.push(await sep());
       }
       if (node.type === 'file') {
+        items.push(await item('Execute Script', () => editorController.executeFile(node.id)));
+        items.push(await sep());
         items.push(await item('Duplicate', () => ExplorerTree.duplicate(node)));
         if (editor.canPreview(node.name)) {
           items.push(
@@ -68,7 +65,7 @@ const ctxMenu = (() => {
       items.push(await item(REVEAL_LABEL, () => ExplorerTree.revealInFinder(node)));
       if (!autoexec.isProtectedRootNode(node)) {
         items.push(await sep());
-        items.push(await item('Delete', () => ExplorerTree.confirmDelete(node)));
+        items.push(await item('Move to Trash', () => ExplorerTree.confirmDelete(node)));
       }
     });
   }
@@ -86,7 +83,9 @@ const ctxMenu = (() => {
         items.push(await sep());
       }
       items.push(
-        await item(`Delete ${nodes.length} Items`, () => ExplorerTree.confirmDeleteMulti(nodes)),
+        await item(`Move ${nodes.length} Items to Trash`, () =>
+          ExplorerTree.confirmDeleteMulti(nodes),
+        ),
       );
     });
   }
@@ -95,7 +94,9 @@ const ctxMenu = (() => {
     _capture(e);
     _menu(async (items, item, sep) => {
       items.push(await item('New File', () => ExplorerTree.startCreate(rootNode, 'file')));
-      items.push(await item('New Folder', () => ExplorerTree.startCreate(rootNode, 'folder')));
+      if (!autoexec.isInsideProtectedArea(rootNode?.path)) {
+        items.push(await item('New Folder', () => ExplorerTree.startCreate(rootNode, 'folder')));
+      }
       items.push(await sep());
       items.push(
         await item('Add Folder to Workspace', () => workspaceController.openFolderDialog()),
@@ -118,7 +119,9 @@ const ctxMenu = (() => {
       items.push(
         await item('Remove from Workspace', () => ExplorerTree.removeFolderFromWorkspace(rootNode)),
       );
-      items.push(await item('Delete from Disk', () => ExplorerTree.deleteFolderFromDisk(rootNode)));
+      items.push(
+        await item('Move Folder to Trash', () => ExplorerTree.deleteFolderFromDisk(rootNode)),
+      );
     });
   }
 

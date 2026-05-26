@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod ai;
 pub mod auth;
 pub mod console;
 pub mod datatree;

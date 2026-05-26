@@ -15,6 +15,7 @@ const editor = (() => {
   let _runtimeDecorations = [];
   let _inlineHintDecorations = [];
   let _inlineHintTimer = null;
+  let _suspendContentChange = false;
   function _setPane(which) {
     const ids = {
       placeholder: 'editorPlaceholder',
@@ -52,7 +53,7 @@ const editor = (() => {
       size,
       lines,
       large: file?.largePreview || size > LARGE_FILE_LIMIT || lines > LARGE_LINE_LIMIT,
-      readonly: !!file?.largePreview,
+      readonly: !!file?.largePreview || !!file?.readonly,
     };
   }
   function _applyFileProfile(file) {
@@ -76,7 +77,7 @@ const editor = (() => {
           hover: { enabled: false },
         }
       : {
-          readOnly: false,
+          readOnly: !!file?.readonly,
           minimap: { enabled: _settings.minimap },
           folding: true,
           wordBasedSuggestions: 'matchingDocuments',
@@ -128,6 +129,38 @@ const editor = (() => {
           ? `Tab Size ${file?.indentSize ?? 2}`
           : `Spaces: ${file?.indentSize ?? 2}`;
   }
+  function _linkAtPosition(model, position) {
+    if (!model || !position) return '';
+    const line = model.getLineContent(position.lineNumber);
+    const re = /\b(?:https?:\/\/|file:\/\/|mailto:)[^\s"'`<>)}\]]+/gi;
+    let match;
+    while ((match = re.exec(line))) {
+      const start = match.index + 1;
+      const end = start + match[0].length;
+      if (position.column >= start && position.column <= end) {
+        return match[0].replace(/[.,;:!?]+$/, '');
+      }
+    }
+    return '';
+  }
+  function _wireMonacoLinkOpen() {
+    _editorInstance.onMouseDown((event) => {
+      const browserEvent = event.event?.browserEvent;
+      if (!browserEvent || browserEvent.button !== 0) return;
+      if (!browserEvent.metaKey && !browserEvent.ctrlKey) return;
+      const target = event.target?.position;
+      const model = _editorInstance.getModel();
+      const href = _linkAtPosition(model, target);
+      if (!href) return;
+      browserEvent.preventDefault();
+      browserEvent.stopPropagation();
+      event.event.preventDefault?.();
+      event.event.stopPropagation?.();
+      window.__TAURI__.core.invoke('open_external', { url: href }).catch((err) => {
+        toast.show(err?.message || 'Could not open link', 'fail', 2400);
+      });
+    });
+  }
 
   async function _ensureReady() {
     if (_ready) return;
@@ -138,6 +171,7 @@ const editor = (() => {
     _symbolProviders = result.symbolProviders;
     Breadcrumb.init(_editorInstance, _symbolProviders);
     EditorCommands.register(_monaco, _editorInstance);
+    _wireMonacoLinkOpen();
     _editorInstance.onContextMenu(async (e) => {
       e.event.preventDefault();
       e.event.stopPropagation();
@@ -182,6 +216,7 @@ const editor = (() => {
         format: `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" width="28" height="28"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>`,
         comment: `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" width="28" height="28"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
         goTo: `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" width="28" height="28"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+        ai: `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" width="28" height="28"><path d="M12 2l1.7 5.2L19 9l-5.3 1.8L12 16l-1.7-5.2L5 9l5.3-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>`,
       };
 
       const items = [];
@@ -219,6 +254,22 @@ const editor = (() => {
       );
       items.push(await sep());
       items.push(
+        await iconItem('Codex Generate at Cursor', SVG.ai, () => AiHelper.generateAtCursor?.()),
+      );
+      if (hasSelection) {
+        items.push(
+          await iconItem('Codex Improve Selection', SVG.ai, () =>
+            AiHelper.replaceSelection?.('improve_selection'),
+          ),
+        );
+        items.push(
+          await iconItem('Codex Fix Selection', SVG.ai, () =>
+            AiHelper.replaceSelection?.('fix_selection'),
+          ),
+        );
+      }
+      items.push(await sep());
+      items.push(
         await iconItem(
           'Go to Definition',
           SVG.goTo,
@@ -236,10 +287,13 @@ const editor = (() => {
       Breadcrumb.update(e.position);
     });
     _editorInstance.onDidChangeModelContent(() => {
+      if (_suspendContentChange) return;
       const id = state.activeFileId;
       if (!id) return;
       const file = state.getFile(id);
       if (file?.largePreview) return;
+      if (file?.readonly) return;
+      if (typeof AiHelper !== 'undefined' && AiHelper.isFileLocked?.(file)) return;
       state.updateContent(id, _editorInstance.getValue());
       _applyFileProfile(state.getFile(id));
       _syncStatusDetails(state.getFile(id));
@@ -279,16 +333,24 @@ const editor = (() => {
       });
       return;
     }
+    const aiLocked = typeof AiHelper !== 'undefined' && AiHelper.isFileLocked?.(file);
     _editorInstance?.updateOptions({
-      readOnly: !!file.largePreview,
+      readOnly: !!file.largePreview || !!file.readonly || !!aiLocked,
     });
     EditorModels.saveViewState(
       EditorModels.fileIdForModel(_editorInstance?.getModel?.()),
       _editorInstance,
     );
     const model = EditorModels.getOrCreate(_monaco, file);
-    if (model.getValue() !== file.content) model.setValue(file.content);
-    if (file.languageOverride) _monaco.editor.setModelLanguage(model, file.languageOverride);
+    if (model.getValue() !== file.content) {
+      _suspendContentChange = true;
+      try {
+        model.setValue(file.content);
+      } finally {
+        _suspendContentChange = false;
+      }
+    }
+    _monaco.editor.setModelLanguage(model, LangMap.monacoLang(file.name, file.languageOverride));
     model.updateOptions({
       tabSize: file.indentSize ?? 2,
       insertSpaces: file.insertSpaces !== false,

@@ -40,7 +40,7 @@
 <body spellcheck="false">
   <div class="app">
 
-    <div class="titlebar" id="titlebar" data-tauri-drag-region>
+    <div class="titlebar" id="titlebar">
       <div class="titlebar-traffic-zone">
         <div class="traffic-lights-wrapper" aria-label="Window controls" data-no-drag>
           <button class="traffic-light traffic-light-close" id="btnWindowClose" type="button" aria-label="Close window">
@@ -64,10 +64,12 @@
         <div class="titlebar-control-group">
           <button class="titlebar-layout-btn" id="btnToggleSidebar" title="Toggle Sidebar (⌘B)"
             aria-label="Toggle sidebar" data-no-drag>
-            <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg class="lucide lucide-panel-left-close-icon lucide-panel-left-close" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true">
               <rect width="18" height="18" x="3" y="3" rx="2" />
               <path d="M9 3v18" />
+              <path d="m16 15-3-3 3-3" />
             </svg>
           </button>
           <button class="titlebar-layout-btn" id="btnUndo" title="Undo (⌘Z)" aria-label="Undo" data-no-drag>
@@ -100,7 +102,16 @@
         </label>
         <span class="titlebar-workspace" id="titlebarWorkspace">No folder open</span>
       </div>
-      <div class="titlebar-actions" id="titlebarActions"></div>
+      <div class="titlebar-actions" id="titlebarActions">
+        <button class="titlebar-layout-btn" id="btnToggleAiPanel" title="Toggle Codex Panel"
+          aria-label="Toggle Codex panel" data-no-drag>
+          <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2l1.7 5.2L19 9l-5.3 1.8L12 16l-1.7-5.2L5 9l5.3-1.8z" />
+            <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div class="workspace">
@@ -129,6 +140,15 @@
           </svg>
           <svg class="lucide activity-icon activity-icon--light" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="currentColor" d="M15 19v-1h-2q-.825 0-1.412-.587T11 16V8H9v1q0 .825-.587 1.413T7 11H4q-.825 0-1.412-.587T2 9V5q0-.825.588-1.412T4 3h3q.825 0 1.413.588T9 5v1h6V5q0-.825.588-1.412T17 3h3q.825 0 1.413.588T22 5v4q0 .825-.587 1.413T20 11h-3q-.825 0-1.412-.587T15 9V8h-2v8h2v-1q0-.825.588-1.412T17 13h3q.825 0 1.413.588T22 15v4q0 .825-.587 1.413T20 21h-3q-.825 0-1.412-.587T15 19M4 5v4zm13 10v4zm0-10v4zm0 4h3V5h-3zm0 10h3v-4h-3zM4 9h3V5H4z"/>
+          </svg>
+        </button>
+        <button class="activity-btn" data-view="analysis" title="Remote Scan" aria-label="Remote Scan"
+          aria-pressed="false">
+          <svg class="lucide activity-icon activity-icon--dark" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M11.896 20q-1.204-.006-2.447-.199t-2.333-.572t-1.91-.94Q4.384 17.73 4 17v-2.942q.346.63 1.04 1.145q.693.514 1.604.89t1.988.606t2.2.316q.053.84.325 1.59q.272.749.74 1.395m-1.006-4.529q-1.126-.087-2.219-.316q-1.093-.23-2.006-.6t-1.616-.887T4 12.52V9.558q.385.7 1.172 1.246q.788.546 1.825.928t2.256.586t2.459.228h.413q.202 0 .414-.019q-.628.57-1.055 1.316q-.428.748-.594 1.628M12 11q-3.34 0-5.68-1.021T3.98 7.5t2.34-2.479T12 4q3.346 0 5.673 1.021T20 7.5t-2.327 2.479T12 11m4.577 9q-1.413 0-2.418-1.005t-1.005-2.418t1.005-2.418t2.418-1.005t2.418 1.005T20 16.577q0 .554-.159 1.087q-.158.532-.503.967l2.308 2.308q.14.14.15.344t-.15.363t-.354.15t-.354-.15l-2.307-2.288q-.454.286-.977.464T16.577 20m0-1q1.011 0 1.717-.706T19 16.577t-.706-1.718q-.706-.705-1.717-.705t-1.718.706q-.705.706-.705 1.717t.705 1.717t1.718.706"/>
+          </svg>
+          <svg class="lucide activity-icon activity-icon--light" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M11.402 19.994q-1.575-.011-2.93-.26q-1.355-.248-2.353-.67t-1.558-.997T4 16.807q0 .685.56 1.26q.561.575 1.56.997q.997.422 2.352.67t2.93.26m-.461-5.105q-.73-.037-1.528-.13t-1.58-.275t-1.506-.445q-.723-.264-1.327-.61q.604.346 1.327.61q.723.263 1.506.445t1.58.275t1.527.13M12 8.885q2.123 0 4.318-.609t2.624-1.328q-.41-.725-2.57-1.336T12 5q-2.16 0-4.357.609q-2.197.608-2.624 1.339q.414.725 2.584 1.33q2.17.607 4.397.607m-8 7.923V7q0-.575.674-1.117t1.793-.958t2.565-.67T12 4q1.504 0 2.949.255t2.565.68t1.802.957T20 7q0 .517-.722 1.03q-.722.514-1.87.93q-1.149.415-2.574.67q-1.426.254-2.834.254q-2.086 0-3.934-.423Q6.217 9.04 5 8.275v3.987q1.004.698 2.563 1.113t3.378.514q.213.011.35.157q.138.146.138.36q0 .208-.14.35q-.141.144-.349.133q-1.463-.068-3.107-.405T5 13.429V17q.492.806 2.137 1.328q1.644.522 4.27.638q.214.011.352.163t.137.365t-.14.36t-.354.14q-1.575-.011-2.93-.26q-1.355-.248-2.353-.67t-1.559-.997t-.56-1.26M16.577 20q-1.413 0-2.418-1.005t-1.005-2.418t1.005-2.418t2.418-1.005t2.418 1.005T20 16.577q0 .554-.159 1.087q-.158.532-.503.967l2.308 2.308q.14.14.15.344t-.15.363t-.354.15t-.354-.15l-2.307-2.288q-.454.286-.977.464T16.577 20m0-1q1.011 0 1.717-.706T19 16.577t-.706-1.718q-.706-.705-1.717-.705t-1.718.706q-.705.706-.705 1.717t.705 1.717t1.718.706"/>
           </svg>
         </button>
         <button class="activity-btn" data-view="accounts" title="Accounts" aria-label="Accounts" aria-pressed="false">
@@ -231,7 +251,55 @@
         </div>
 
         <div class="sidebar-content">
-          <div class="file-tree" id="fileTree" role="tree" aria-label="File explorer"></div>
+          <section class="sb-section explorer-files-section" id="explorerFilesSection" aria-label="Folders">
+            <div class="sb-section-header explorer-files-header" id="explorerFilesHeader" role="button" tabindex="0"
+              aria-expanded="true">
+              <span class="sb-arrow explorer-files-arrow open" id="explorerFilesArrow" aria-hidden="true">
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="sb-section-label">Folders</span>
+              <span class="sb-section-meta" id="explorerFilesMeta"></span>
+            </div>
+            <div class="sb-section-body explorer-files-body" id="explorerFilesBody">
+              <div class="file-tree" id="fileTree" role="tree" aria-label="File explorer"></div>
+            </div>
+          </section>
+
+          <section class="sb-section autoexec-section" id="autoexecSection" aria-label="Autoexecute">
+            <div class="sb-section-header autoexec-header" id="autoexecHeader" role="button" tabindex="0"
+              aria-expanded="true">
+              <span class="sb-arrow autoexec-arrow open" id="autoexecArrow" aria-hidden="true">
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="sb-section-label">Autoexecute</span>
+              <span class="sb-section-meta" id="autoexecCount"></span>
+              <button class="sb-icon-btn" id="btnAutoexecNew" title="New Autoexecute script"
+                aria-label="New Autoexecute script">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M8 3v10" />
+                  <path d="M3 8h10" />
+                </svg>
+              </button>
+              <button class="sb-icon-btn" id="btnAutoexecToggle" title="Toggle Autoexecute"
+                aria-label="Toggle Autoexecute">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M8 2v6" />
+                  <path d="M4.2 4.7a5.5 5.5 0 1 0 7.6 0" />
+                </svg>
+              </button>
+            </div>
+            <div class="sb-section-body autoexec-body" id="autoexecBody">
+              <div class="file-tree autoexec-tree" id="autoexecTree" role="tree" aria-label="Autoexecute scripts"></div>
+            </div>
+          </section>
 
           <div id="searchView" class="sidebar-view sidebar-view--search">
             <div class="search-panel">
@@ -276,6 +344,37 @@
         <div class="sidebar-bottom" id="sidebarBottom" style="display:none">
           <div class="sb-resizer" id="sidebarBottomResizer" role="separator" aria-orientation="horizontal"
             aria-label="Resize explorer details"></div>
+          <section class="sb-section ai-chats-section" aria-label="Chats">
+            <div class="sb-section-header ai-chats-header" id="aiChatsHeader" role="button" tabindex="0"
+              aria-expanded="true">
+              <span class="sb-arrow ai-chats-arrow open" id="aiChatsArrow" aria-hidden="true">
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="sb-section-label">Chats</span>
+              <span class="sb-section-meta" id="aiChatsCount"></span>
+              <button class="sb-icon-btn" id="btnAiChatNew" title="New Codex chat" aria-label="New Codex chat">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M8 3v10" />
+                  <path d="M3 8h10" />
+                </svg>
+              </button>
+              <button class="sb-icon-btn" id="btnAiChatFolder" title="New chat folder" aria-label="New chat folder">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14.5 12.5a1.5 1.5 0 0 1-1.5 1.5H3a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 3 3h3l1.5 2H13A1.5 1.5 0 0 1 14.5 6.5z" />
+                  <path d="M8 7.5v4" />
+                  <path d="M6 9.5h4" />
+                </svg>
+              </button>
+            </div>
+            <div class="sb-section-body ai-chats-body" id="aiChatsBody">
+              <div class="ai-chat-tree" id="aiChatTree" role="tree" aria-label="Codex chats"></div>
+            </div>
+          </section>
           <section class="sb-section outline-section" aria-label="Outline">
             <div class="sb-section-header outline-header" id="outlineHeader" role="button" tabindex="0"
               aria-expanded="true">
@@ -432,8 +531,63 @@
         </footer>
       </main>
 
+      <aside class="ai-side-panel hidden" id="aiSidePanel" aria-label="Codex panel">
+        <div class="ai-side-resizer" id="aiSideResizer" role="separator" aria-orientation="vertical"
+          aria-label="Resize Codex panel"></div>
+        <header class="ai-side-header">
+          <div>
+            <span class="ai-side-title">Codex</span>
+          </div>
+          <div class="ai-side-actions">
+            <button class="icon-btn" id="aiChatNew" title="New Codex chat" aria-label="New Codex chat">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="aiChatClear" title="Clear chat" aria-label="Clear Codex chat">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="m19 6-1 14H6L5 6" />
+              </svg>
+            </button>
+            <button class="icon-btn" id="aiChatClose" title="Close Codex panel" aria-label="Close Codex panel">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </div>
+        </header>
+        <div class="ai-chat-messages" id="aiChatMessages" role="log" aria-live="polite"></div>
+        <footer class="ai-chat-composer">
+          <div class="ai-chat-toolbar">
+            <select class="ai-snapshot-select" id="aiSnapshotSelect" aria-label="DataTree snapshot"></select>
+            <div class="ai-context-meter" id="aiContextMeter" title="Estimated context window">
+              <span></span>
+              <div class="ai-context-tip" id="aiContextTip" role="tooltip"></div>
+            </div>
+            <select class="ai-model-select" id="aiModelSelect" aria-label="Codex model"></select>
+          </div>
+          <textarea id="aiChatInput" class="ai-chat-input" rows="3" placeholder="Ask Codex about this workspace"
+            spellcheck="false"></textarea>
+          <button class="ai-chat-send" id="aiChatSend" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path d="m22 2-7 20-4-9-9-4z" />
+              <path d="M22 2 11 13" />
+            </svg>
+          </button>
+        </footer>
+      </aside>
+
       <div id="cloudView" class="workspace-view workspace-view--cloud"></div>
       <div id="dataTreeView" class="workspace-view workspace-view--datatree" style="display:none"></div>
+      <div id="analysisView" class="workspace-view workspace-view--analysis" style="display:none"></div>
       <div id="accountsView" class="workspace-view workspace-view--accounts" style="display:none"></div>
       <div id="pinboardView" class="workspace-view workspace-view--pinboard" style="display:none"></div>
 
@@ -457,6 +611,12 @@
               <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 7l5 5l-5 5m7 2h7"/>
             </svg>
             Editor
+          </a>
+          <a class="sp-nav-item" href="#sp-ai" data-section="sp-ai">
+            <svg viewBox="0 0 24 24">
+              <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2l1.7 5.2L19 9l-5.3 1.8L12 16l-1.7-5.2L5 9l5.3-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>
+            </svg>
+            AI Helper
           </a>
           <a class="sp-nav-item" href="#sp-folder" data-section="sp-folder">
             <svg viewBox="0 0 24 24">
@@ -642,6 +802,50 @@
                     value="100" aria-label="Timeline height">
                   <span class="range-value" id="timelineHeightVal" aria-live="polite">100</span>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="sp-section" id="sp-ai">
+            <div class="sp-section-header">
+              <span class="sp-section-title">AI Helper</span>
+              <span class="sp-section-desc">Codex panel and DataTree-aware code actions</span>
+            </div>
+            <div class="sp-rows">
+              <div class="sp-row">
+                <div class="sp-row-info">
+                  <label class="sp-row-label" for="aiEnabledToggle">Enable AI Helper</label>
+                  <span class="sp-row-hint">Enable the Codex right panel and code actions</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="aiEnabledToggle">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </div>
+              <div class="sp-row">
+                <div class="sp-row-info">
+                  <label class="sp-row-label" for="aiCodexSandboxSelect">File Access</label>
+                  <span class="sp-row-hint">Choose whether Codex can edit the open folder</span>
+                </div>
+                <div class="settings-control">
+                  <select class="settings-select" id="aiCodexSandboxSelect" aria-label="Codex file access">
+                    <option value="read-only">Read Only</option>
+                    <option value="workspace-write">Workspace Write</option>
+                  </select>
+                </div>
+              </div>
+              <div class="sp-row">
+                <div class="sp-row-info">
+                  <label class="sp-row-label" for="aiDataTreeToggle">DataTree Retrieval</label>
+                  <span class="sp-row-hint">Let Codex query a selected DataTree only when needed</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="aiDataTreeToggle" checked>
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </div>
+              <div class="sp-row sp-row--actions">
+                <button class="settings-action-btn" id="aiSaveBtn">Save</button>
               </div>
             </div>
           </section>
@@ -939,6 +1143,7 @@
   <script src="Js/Utils/Scheduler.js"></script>
   <script src="Js/Core/State.js"></script>
   <script src="Js/Core/FileManager.js"></script>
+  <script src="Js/Core/WorkspaceHistory.js"></script>
   <script src="Js/Core/ThemeManager.js"></script>
   <script src="Js/Core/IconThemeManager.js"></script>
   <script src="Js/Core/UiState.js"></script>
@@ -962,6 +1167,7 @@
   <script src="Js/Ui/Editor/EditorCommands.js"></script>
   <script src="Js/Ui/Editor/Breadcrumb.js"></script>
   <script src="Js/Ui/Editor/Preview.js"></script>
+  <script src="Js/Features/AiHelper.js"></script>
   <script src="Js/Ui/Editor/EditorMount.js"></script>
   <script src="Js/Features/MultiInstance.js"></script>
   <script src="Js/Features/MultiInstanceUI.js"></script>

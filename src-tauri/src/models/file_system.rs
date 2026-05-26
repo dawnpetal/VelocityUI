@@ -9,7 +9,13 @@ pub struct FileNode {
     pub node_type: String,
     pub open: bool,
     pub size: u64,
+    #[serde(rename = "childrenLoaded", default = "default_children_loaded")]
+    pub children_loaded: bool,
     pub children: Vec<FileNode>,
+}
+
+fn default_children_loaded() -> bool {
+    true
 }
 
 impl FileNode {
@@ -21,6 +27,7 @@ impl FileNode {
             node_type: "file".into(),
             open: false,
             size,
+            children_loaded: true,
             children: Vec::new(),
         }
     }
@@ -33,7 +40,21 @@ impl FileNode {
             node_type: "folder".into(),
             open: true,
             size: 0,
+            children_loaded: true,
             children,
+        }
+    }
+
+    pub fn lazy_folder(id: String, name: String, path: String) -> Self {
+        Self {
+            id,
+            name,
+            path,
+            node_type: "folder".into(),
+            open: false,
+            size: 0,
+            children_loaded: false,
+            children: Vec::new(),
         }
     }
 

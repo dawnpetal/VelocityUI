@@ -2,7 +2,7 @@ const persist = (() => {
   const invoke = window.__TAURI__.core.invoke;
 
   async function saveTreeState(workDir) {
-    if (!workDir || !state.fileTree) return;
+    if (!workDir || !state.roots.length) return;
     const openPaths = [];
     const collect = (node) => {
       if (node?.type === 'folder' && node.open) {
@@ -10,11 +10,14 @@ const persist = (() => {
         node.children?.forEach(collect);
       }
     };
-    collect(state.fileTree);
+    state.roots.forEach(collect);
     try {
       await invoke('save_tree_state_cmd', {
         workDir,
-        state: { openPaths, activeFile: state.getActive()?.path ?? null },
+        state: {
+          openPaths: [...new Set(openPaths)],
+          activeFile: state.getActive()?.path ?? null,
+        },
       });
     } catch {}
   }
@@ -53,9 +56,11 @@ const persist = (() => {
 
   async function saveSession(workDir) {
     if (!workDir) return;
+    const rootPaths = [...new Set(state.roots.map((root) => root.path).filter(Boolean))];
+    const activeFile = state.getActive()?.path ?? null;
     try {
       await invoke('save_session_cmd', {
-        data: { workDir, lastFolder: workDir },
+        data: { workDir, lastFolder: workDir, rootPaths, activeFile },
       });
     } catch {}
   }

@@ -11,6 +11,16 @@ pub fn build_file_tree(dir_path: String, ctx: State<'_, AppContext>) -> Result<F
 }
 
 #[tauri::command]
+pub fn load_folder_children(
+    dir_path: String,
+    ctx: State<'_, AppContext>,
+) -> Result<Vec<FileNode>, String> {
+    ctx.FileSystem
+        .load_tree_children(&dir_path)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn generate_unique_filename(
     dir_path: String,
     name: String,

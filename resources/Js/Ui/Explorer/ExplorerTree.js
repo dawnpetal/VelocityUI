@@ -8,6 +8,7 @@ const ExplorerTree = (() => {
   let _structureKey = '';
   let _vlist = null;
   let _nodeContainer = null;
+  let _creatingNode = null;
   const SVG = {
     arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
     newFile: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`,
@@ -57,13 +58,10 @@ const ExplorerTree = (() => {
     _setSelection([]);
   }
   function _orderedChildren(node) {
-    const children = [...(node.children ?? [])];
-    return children.sort((a, b) => {
-      const aa = autoexec.isProtectedRootNode(a);
-      const bb = autoexec.isProtectedRootNode(b);
-      if (aa !== bb) return aa ? 1 : -1;
-      return 0;
-    });
+    return (node.children ?? []).filter((child) => !autoexec.isProtectedRootNode(child));
+  }
+  function _terminalNodes(rootNode) {
+    return [];
   }
 
   function _getFileCount(node) {
@@ -90,10 +88,16 @@ const ExplorerTree = (() => {
         for (const c of _orderedChildren(node)) walk(c);
       }
     }
-    for (const root of state.roots) {
+    state.roots.forEach((root, index) => {
+      if (index > 0) parts.push('S' + root.id);
       parts.push('R' + root.id + (root.open ? 'O' : 'C'));
       if (root.open) for (const c of _orderedChildren(root)) walk(c);
-    }
+      for (const terminal of _terminalNodes(root)) {
+        parts.push('T' + root.id);
+        walk(terminal);
+      }
+    });
+    if (_creatingNode) parts.push(`N${_creatingNode.id}:${_creatingNode.parentId}`);
     return parts.join('|');
   }
   function _patchSelection() {
@@ -155,9 +159,48 @@ const ExplorerTree = (() => {
     _nodeContainer = null;
   }
 
+  function syncChrome() {
+    const header = document.getElementById('explorerFilesHeader');
+    const body = document.getElementById('explorerFilesBody');
+    const arrow = document.getElementById('explorerFilesArrow');
+    const section = document.getElementById('explorerFilesSection');
+    const meta = document.getElementById('explorerFilesMeta');
+    const expanded = !uiState.fileTreeCollapsed;
+    if (!header || !body) return;
+    body.hidden = !expanded;
+    section?.classList.toggle('is-collapsed', !expanded);
+    arrow?.classList.toggle('open', expanded);
+    header.setAttribute('aria-expanded', String(expanded));
+    if (meta)
+      meta.textContent = state.roots.length
+        ? `${state.roots.length} root${state.roots.length === 1 ? '' : 's'}`
+        : '';
+  }
+
+  function _setupSectionHeader() {
+    const header = document.getElementById('explorerFilesHeader');
+    if (!header || header.dataset.explorerFilesBound) return;
+    header.dataset.explorerFilesBound = 'true';
+    const toggle = () => {
+      uiState.setFileTreeCollapsed?.(!uiState.fileTreeCollapsed);
+      syncChrome();
+    };
+    header.addEventListener('click', (event) => {
+      if (event.target.closest('button')) return;
+      toggle();
+    });
+    header.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      toggle();
+    });
+    syncChrome();
+  }
+
   function render() {
     const root = rootEl();
     if (!root) return;
+    syncChrome();
     _ensureRootContextMenu();
     if (!state.roots.length) {
       _structureKey = '';
@@ -183,6 +226,7 @@ const ExplorerTree = (() => {
     if (newKey === _structureKey) {
       _patchSelection();
       _patchUnsaved();
+      autoexec.renderSection?.();
       return;
     }
     _structureKey = newKey;
@@ -190,13 +234,7 @@ const ExplorerTree = (() => {
     root.innerHTML = '';
     _flatOrder = [];
 
-    const headerFrag = document.createDocumentFragment();
-    for (const rootNode of state.roots) _renderRootHeader(rootNode, headerFrag);
-    root.appendChild(headerFrag);
-
-    for (const rootNode of state.roots) {
-      if (rootNode.open) _buildFlatOrder(rootNode, _flatOrder);
-    }
+    _rebuildFlatOrder();
 
     _nodeContainer = document.createElement('div');
     _nodeContainer.className = 'tree-node-container';
@@ -216,10 +254,13 @@ const ExplorerTree = (() => {
       getItem: (i) => _flatOrder[i],
       renderRow: (i, item) => {
         if (!item) return null;
+        if (item.root) return _buildRootHeader(item.root);
         return _buildRow(item.node, item.depth);
       },
+      getItemHeight: (_i, item) => (item?.rootGhost ? 42 : VirtualList.ROW_HEIGHT),
     });
     _vlist.update(_flatOrder.length);
+    autoexec.renderSection?.();
   }
 
   function _buildFlatOrder(rootNode, out) {
@@ -232,10 +273,18 @@ const ExplorerTree = (() => {
       for (const child of _orderedChildren(node)) _buildFlatOrderNode(child, depth + 1, out);
     }
   }
-  function _renderRootHeader(rootNode, container) {
+  async function _ensureFolderOpen(node) {
+    if (!node || node.type !== 'folder') return;
+    await fileManager.ensureChildren?.(node);
+    node.open = true;
+  }
+  function _buildRootHeader(rootNode) {
     const isPrimary = state.roots.indexOf(rootNode) === 0;
     const header = document.createElement('div');
-    header.className = 'tree-root-header' + (isPrimary ? '' : ' tree-root-header--secondary');
+    header.className =
+      'tree-root-header' +
+      (isPrimary ? '' : ' tree-root-header--secondary tree-root-header--ghost-before');
+    header.dataset.id = rootNode.id;
     const left = document.createElement('div');
     left.className = 'tree-root-left';
     const arrow = document.createElement('span');
@@ -271,7 +320,7 @@ const ExplorerTree = (() => {
       render();
     });
     ExplorerDnd.attachRootHeaderDrop(header, rootNode);
-    container.appendChild(header);
+    return header;
   }
   function _toggleFolderInPlace(row, node, depth) {
     const arrowEl = row?.querySelector('.tree-arrow');
@@ -288,13 +337,16 @@ const ExplorerTree = (() => {
 
   function _rebuildFlatOrder() {
     _flatOrder = [];
-    for (const root of state.roots) {
+    state.roots.forEach((root, index) => {
+      _flatOrder.push({ root, rootGhost: index > 0 });
       if (root.open) _buildFlatOrder(root, _flatOrder);
-    }
+      for (const terminal of _terminalNodes(root)) _buildFlatOrderNode(terminal, 0, _flatOrder);
+    });
     if (_vlist) _vlist.update(_flatOrder.length);
   }
 
   function _buildRow(node, depth) {
+    if (node?.creating) return _buildCreatingRow(node, depth);
     const row = document.createElement('div');
     row.className = 'tree-row';
     row.dataset.id = node.id;
@@ -341,7 +393,7 @@ const ExplorerTree = (() => {
     }
     indent.append(arrowEl, iconEl, labelEl, metaEl);
     row.appendChild(indent);
-    row.addEventListener('click', (e) => {
+    row.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (e.ctrlKey || e.metaKey) {
         if (_selection.has(node.id)) {
@@ -355,19 +407,25 @@ const ExplorerTree = (() => {
         return;
       }
       if (e.shiftKey && _lastClickedId && _lastClickedId !== node.id) {
-        const a = _flatOrder.findIndex((item) => item.node.id === _lastClickedId);
-        const b = _flatOrder.findIndex((item) => item.node.id === node.id);
+        const a = _flatOrder.findIndex((item) => item.node?.id === _lastClickedId);
+        const b = _flatOrder.findIndex((item) => item.node?.id === node.id);
         if (a !== -1 && b !== -1) {
           const lo = Math.min(a, b),
             hi = Math.max(a, b);
-          _setSelection(_flatOrder.slice(lo, hi + 1).map((item) => item.node.id));
+          _setSelection(
+            _flatOrder
+              .slice(lo, hi + 1)
+              .map((item) => item.node?.id)
+              .filter(Boolean),
+          );
           return;
         }
       }
       _setSelection([node.id]);
       _lastClickedId = node.id;
       if (node.type === 'folder') {
-        node.open = !node.open;
+        if (node.open) node.open = false;
+        else await _ensureFolderOpen(node);
         _toggleFolderInPlace(row, node, depth);
       } else {
         eventBus.emit('ui:open-file', {
@@ -389,9 +447,69 @@ const ExplorerTree = (() => {
     if (node.type === 'folder') ExplorerDnd.attachFolderDrag(row, node);
     return row;
   }
-  function _selectByIndex(idx) {
+
+  function _buildCreatingRow(node, depth) {
+    const row = document.createElement('div');
+    row.className = 'tree-row tree-row--creating';
+    row.dataset.id = node.id;
+    row.dataset.type = node.type;
+    const indent = document.createElement('div');
+    indent.className = 'tree-indent';
+    indent.style.paddingLeft = depth * 14 + 6 + 'px';
+    const arrowEl = document.createElement('span');
+    arrowEl.className = 'tree-arrow leaf';
+    arrowEl.innerHTML = SVG.arrow;
+    const iconEl = document.createElement('span');
+    iconEl.className = 'tree-icon';
+    iconEl.appendChild(
+      helpers.fileIconEl(node.type === 'file' ? 'untitled.lua' : '', node.type === 'folder', false),
+    );
+    const input = document.createElement('input');
+    input.className = 'tree-rename-input tree-rename-input--creating';
+    input.placeholder = node.type === 'file' ? 'filename.lua' : 'folder name';
+    input.value = node.pendingName || '';
+    input.addEventListener('input', () => {
+      node.pendingName = input.value;
+      helpers.updateIconEl(
+        iconEl.querySelector('span'),
+        input.value.trim() || '.',
+        node.type === 'folder',
+        false,
+      );
+    });
+    let done = false;
+    const finish = async (success) => {
+      if (done) return;
+      done = true;
+      await node.creating.finish(input.value.trim(), success);
+    };
+    input.addEventListener('blur', () => finish(true), { once: true });
+    input.addEventListener('keydown', (event) => {
+      if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key))
+        event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        input.removeEventListener('blur', () => finish(true));
+        finish(true);
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    indent.append(arrowEl, iconEl, input);
+    row.appendChild(indent);
+    requestAnimationFrame(() => {
+      if (!document.body.contains(input)) return;
+      input.focus();
+      input.select();
+    });
+    return row;
+  }
+  function _selectByIndex(idx, step = 1) {
     if (!_flatOrder.length) return;
-    const next = Math.max(0, Math.min(idx, _flatOrder.length - 1));
+    let next = Math.max(0, Math.min(idx, _flatOrder.length - 1));
+    while (next >= 0 && next < _flatOrder.length && !_flatOrder[next]?.node) next += step;
     const item = _flatOrder[next];
     if (!item?.node) return;
     _setSelection([item.node.id]);
@@ -400,43 +518,57 @@ const ExplorerTree = (() => {
   }
   function _selectedIndex() {
     const id = [..._selection][0] ?? state.activeFileId;
-    const idx = _flatOrder.findIndex((item) => item.node.id === id);
-    return idx === -1 ? 0 : idx;
+    const idx = _flatOrder.findIndex((item) => item.node?.id === id);
+    if (idx !== -1) return idx;
+    return _flatOrder.findIndex((item) => item.node);
   }
   function _parentIndexOf(idx) {
     const depth = _flatOrder[idx]?.depth ?? 0;
     if (depth <= 0) return -1;
     for (let i = idx - 1; i >= 0; i--) {
-      if (_flatOrder[i].depth < depth) return i;
+      if (_flatOrder[i].node && _flatOrder[i].depth < depth) return i;
     }
     return -1;
   }
   function _handleTreeKeydown(e) {
-    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Enter'].includes(e.key)) return;
+    if (
+      !['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Enter', 'Delete', 'Backspace'].includes(
+        e.key,
+      )
+    )
+      return;
     if (!_flatOrder.length) return;
     e.preventDefault();
     const idx = _selectedIndex();
+    if (idx === -1) return;
     const item = _flatOrder[idx];
     const node = item?.node;
     if (!node) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const nodes = _getSelectionNodes();
+      if (nodes.length) ExplorerOps.confirmDeleteMulti(nodes);
+      return;
+    }
     if (e.key === 'ArrowDown') {
-      _selectByIndex(idx + 1);
+      _selectByIndex(idx + 1, 1);
       return;
     }
     if (e.key === 'ArrowUp') {
-      _selectByIndex(idx - 1);
+      _selectByIndex(idx - 1, -1);
       return;
     }
     if (e.key === 'ArrowRight') {
       if (node.type === 'folder' && !node.open) {
-        node.open = true;
-        _toggleFolderInPlace(
-          document.querySelector(`.tree-row[data-id="${node.id}"]`),
-          node,
-          item.depth,
-        );
+        _ensureFolderOpen(node).then(() => {
+          _toggleFolderInPlace(
+            document.querySelector(`.tree-row[data-id="${node.id}"]`),
+            node,
+            item.depth,
+          );
+        });
+        return;
       } else if (node.type === 'folder' && node.children?.length) {
-        _selectByIndex(idx + 1);
+        _selectByIndex(idx + 1, 1);
       } else if (node.type === 'file') {
         eventBus.emit('ui:open-file', { id: node.id });
       }
@@ -457,7 +589,17 @@ const ExplorerTree = (() => {
       return;
     }
     if (node.type === 'folder') {
-      node.open = !node.open;
+      if (node.open) node.open = false;
+      else {
+        _ensureFolderOpen(node).then(() => {
+          _toggleFolderInPlace(
+            document.querySelector(`.tree-row[data-id="${node.id}"]`),
+            node,
+            item.depth,
+          );
+        });
+        return;
+      }
       _toggleFolderInPlace(
         document.querySelector(`.tree-row[data-id="${node.id}"]`),
         node,
@@ -469,6 +611,7 @@ const ExplorerTree = (() => {
   }
 
   function init() {
+    _setupSectionHeader();
     const root = rootEl();
     if (root) {
       root.tabIndex = 0;
@@ -506,12 +649,15 @@ const ExplorerTree = (() => {
     }
 
     _flatOrder = [];
-    for (const root of state.roots) {
+    state.roots.forEach((root, index) => {
+      _flatOrder.push({ root, rootGhost: index > 0 });
       if (root.open) _buildFlatOrder(root, _flatOrder);
-    }
+      for (const terminal of _terminalNodes(root)) _buildFlatOrderNode(terminal, 0, _flatOrder);
+    });
     if (_vlist) _vlist.update(_flatOrder.length);
+    autoexec.renderSection?.();
 
-    const idx = _flatOrder.findIndex((item) => item.node.id === id);
+    const idx = _flatOrder.findIndex((item) => item.node?.id === id);
     if (idx !== -1 && _vlist) {
       _vlist.scrollToIndex(idx);
     }
@@ -533,6 +679,13 @@ const ExplorerTree = (() => {
     findNode: findNodeInRoots,
     getSelection: _getSelectionNodes,
     getSvgs: () => SVG,
+    syncChrome,
+    setCreatingNode: (node) => {
+      _creatingNode = node;
+    },
+    clearCreatingNode: () => {
+      _creatingNode = null;
+    },
     startRename: ExplorerOps.startRename,
     startCreate: ExplorerOps.startCreate,
     duplicate: ExplorerOps.duplicate,

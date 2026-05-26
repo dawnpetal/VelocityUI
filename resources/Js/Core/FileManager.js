@@ -16,12 +16,27 @@ const fileManager = (() => {
 
   function _registerTree(node) {
     if (node.type === 'file') {
-      state.addFile(node.id, node.name, node.path, null, { size: node.size ?? null });
+      state.addFile(node.id, node.name, node.path, null, {
+        size: node.size ?? null,
+        ...(LangMap.inferOverride?.(node.name, node.path) || {}),
+      });
     } else {
       for (const child of node.children ?? []) {
         _registerTree(child);
       }
     }
+  }
+
+  async function ensureChildren(node) {
+    if (!node || node.type !== 'folder' || node.childrenLoaded !== false)
+      return node?.children ?? [];
+    const children = await window.__TAURI__.core.invoke('load_folder_children', {
+      dirPath: node.path,
+    });
+    node.children = Array.isArray(children) ? children : [];
+    node.childrenLoaded = true;
+    node.children.forEach(_registerTree);
+    return node.children;
   }
 
   async function ensureContent(id) {
@@ -43,11 +58,16 @@ const fileManager = (() => {
           size: preview.size ?? size,
           largePreview: true,
           truncated: !!preview.truncated,
+          ...(LangMap.inferOverride?.(file.name, file.path, preview.content ?? '') || {}),
         });
         return;
       }
       const content = await window.__TAURI__.core.invoke('read_text_file', { path: file.path });
-      state.setContent(id, content, { largePreview: false, truncated: false });
+      state.setContent(id, content, {
+        largePreview: false,
+        truncated: false,
+        ...(LangMap.inferOverride?.(file.name, file.path, content) || {}),
+      });
     } catch {
       state.setContent(id, '');
     }
@@ -60,6 +80,11 @@ const fileManager = (() => {
       toast.show('Huge file preview is read-only', 'warn');
       return false;
     }
+    if (typeof AiHelper !== 'undefined' && AiHelper.isFileLocked?.(file)) {
+      toast.show('Codex is editing this file. Save is paused until it finishes.', 'warn', 2600);
+      return false;
+    }
+    workspaceController.suppressWatcher?.(900);
     await window.__TAURI__.core.invoke('write_text_file', {
       path: file.path,
       content: file.content,
@@ -82,6 +107,7 @@ const fileManager = (() => {
       isFolder: false,
     });
     const path = `${dirPath}/${safeName}`;
+    workspaceController.suppressWatcher?.(900);
     await window.__TAURI__.core.invoke('write_text_file', { path, content: '' });
     const id = helpers.uid();
     state.addFile(id, safeName, path, '', { size: 0 });
@@ -95,24 +121,34 @@ const fileManager = (() => {
       isFolder: true,
     });
     const path = `${dirPath}/${safeName}`;
+    workspaceController.suppressWatcher?.(900);
     await window.__TAURI__.core.invoke('create_dir', { path });
     return path;
   }
 
   async function rename(oldPath, newPath) {
+    workspaceController.suppressWatcher?.(900);
     await window.__TAURI__.core.invoke('rename_path', { src: oldPath, dest: newPath });
   }
 
   async function remove(path) {
+    workspaceController.suppressWatcher?.(900);
     await window.__TAURI__.core.invoke('remove_path', { path });
   }
 
+  async function moveToTrash(path) {
+    workspaceController.suppressWatcher?.(900);
+    return window.__TAURI__.core.invoke('trash_path', { path });
+  }
+
   async function copyRecursive(src, dest) {
+    workspaceController.suppressWatcher?.(900);
     await window.__TAURI__.core.invoke('copy_path_recursive', { src, dest });
   }
 
   return {
     loadFolder,
+    ensureChildren,
     openFolder,
     ensureContent,
     save,
@@ -120,6 +156,7 @@ const fileManager = (() => {
     createFolder,
     rename,
     remove,
+    moveToTrash,
     copyRecursive,
   };
 })();

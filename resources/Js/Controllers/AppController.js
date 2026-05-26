@@ -8,10 +8,12 @@ const appController = (() => {
   let _commandSymbolCache = [];
   const _relayoutEditor = scheduler.delay(() => editor.relayout(), 80);
   const _renderCommandCenterSoon = scheduler.frame(() => _renderCommandCenter(_commandQuery));
+  const _saveWindowStateSoon = scheduler.delay(() => _captureWindowState(), 600);
   const ACTIVITY_VIEW_META = [
     { view: 'explorer', label: 'Explorer', locked: true },
     { view: 'search', label: 'Search' },
     { view: 'datatree', label: 'DataTree' },
+    { view: 'analysis', label: 'Remote Scan' },
     { view: 'accounts', label: 'Accounts' },
     { view: 'pinboard', label: 'Pinboard' },
     { view: 'cloud', label: 'Cloud Scripts' },
@@ -38,6 +40,43 @@ const appController = (() => {
     } catch {}
     _scheduleEditorRelayout();
     if (showToast) toast.show(`Zoom ${Math.round(zoom * 100)}%`, 'info', 1200);
+  }
+
+  async function _captureWindowState() {
+    try {
+      const win = window.__TAURI__.window.getCurrentWindow();
+      const maximized = await win.isMaximized();
+      if (maximized) {
+        uiState.setWindowState?.({ maximized }, false);
+        await persist.saveUI(uiState.snapshot());
+        return;
+      }
+      const scale = win.scaleFactor ? await win.scaleFactor() : 1;
+      const size = win.outerSize ? await win.outerSize() : await win.innerSize();
+      let position = null;
+      try {
+        if (win.outerPosition) position = await win.outerPosition();
+      } catch {}
+      const logicalSize = size?.toLogical
+        ? size.toLogical(scale)
+        : { width: Number(size?.width) / scale, height: Number(size?.height) / scale };
+      const logicalPosition = position?.toLogical
+        ? position.toLogical(scale)
+        : position
+          ? { x: Number(position.x) / scale, y: Number(position.y) / scale }
+          : null;
+      uiState.setWindowState?.(
+        {
+          width: logicalSize.width,
+          height: logicalSize.height,
+          x: logicalPosition?.x,
+          y: logicalPosition?.y,
+          maximized,
+        },
+        false,
+      );
+      await persist.saveUI(uiState.snapshot());
+    } catch {}
   }
 
   function _zoomIn() {
@@ -130,8 +169,7 @@ const appController = (() => {
       }),
     );
     const menu = await Menu.new({ items });
-    const at = new window.__TAURI__.dpi.LogicalPosition(event.clientX, event.clientY);
-    await menu.popup(at);
+    await menu.popup();
   }
 
   function _initBridge() {
@@ -151,10 +189,13 @@ const appController = (() => {
     eventBus.on('ui:open-file', ({ id } = {}) => id && editorController.openFile(id));
     eventBus.on('ui:open-workspace', () => workspaceController.openFolderDialog());
     eventBus.on('ui:file-saved', ({ id } = {}) => id && editorController.onFileSaved(id));
+    eventBus.on('file:activated', () => workspaceController.saveSnapshotSoon?.(80));
+    eventBus.on('file:changed', () => workspaceController.saveSnapshotSoon?.(250));
     eventBus.on('file:closed', ({ id, wasUnsaved } = {}) => {
       if (!id) return;
       editor.destroyTab(id);
       if (!wasUnsaved) state.releasePayload(id);
+      workspaceController.saveSnapshotSoon?.(80);
     });
     eventBus.on('workspace:cleared', () => editor.destroyAllTabs?.());
     eventBus.on('ui:activity-pulse', ({ view } = {}) => {
@@ -204,9 +245,17 @@ const appController = (() => {
       .getElementById('btnWindowMaximize')
       ?.addEventListener('click', () => invoke?.('toggle_maximize_window'));
     document.getElementById('btnUndo')?.addEventListener('click', () => {
+      if (workspaceHistory.canUndo?.()) {
+        workspaceHistory.undo();
+        return;
+      }
       editor.getInstance?.()?.trigger?.('titlebar', 'undo');
     });
     document.getElementById('btnRedo')?.addEventListener('click', () => {
+      if (workspaceHistory.canRedo?.()) {
+        workspaceHistory.redo();
+        return;
+      }
       editor.getInstance?.()?.trigger?.('titlebar', 'redo');
     });
     _setupCommandCenter();
@@ -391,6 +440,7 @@ const appController = (() => {
       { label: 'Refresh outline', hint: 'Explorer', run: () => outline.refresh() },
       { label: 'Cloud scripts', hint: 'View', run: () => _switchView('cloud') },
       { label: 'DataTree', hint: 'View', key: '⌘⇧D', run: () => _switchView('datatree') },
+      { label: 'Analysis', hint: 'View', run: () => _switchView('analysis') },
       {
         label: 'Import DataTree',
         hint: 'RBXLX / RBXMX',
@@ -399,6 +449,7 @@ const appController = (() => {
           dataTree.openImportDialog?.();
         },
       },
+      ...(AiHelper.commandItems?.() || []),
       { label: 'Toggle Autoexecute', hint: 'Explorer', run: () => autoexec.toggleEnabled() },
       { label: 'Accounts', hint: 'View', run: () => _switchView('accounts') },
       { label: 'Pinboard', hint: 'View', run: () => _switchView('pinboard') },
@@ -557,6 +608,7 @@ const appController = (() => {
   const EXCLUSIVE_PANELS = {
     cloud: 'cloudView',
     datatree: 'dataTreeView',
+    analysis: 'analysisView',
     accounts: 'accountsView',
     pinboard: 'pinboardView',
     settings: 'settingsPanel',
@@ -576,17 +628,26 @@ const appController = (() => {
     if (editorArea) editorArea.style.display = showMain ? '' : 'none';
     const fabWrap = document.getElementById('fabWrap');
     if (fabWrap) fabWrap.style.display = showMain ? '' : 'none';
+    AiHelper.syncAvailability?.(showMain);
     const sbBottom = document.getElementById('sidebarBottom');
     if (sbBottom) sbBottom.style.display = showMain && view === 'explorer' ? '' : 'none';
-    for (const [panelView, elId] of Object.entries(EXCLUSIVE_PANELS)) {
+    const panelIds = [...new Set(Object.values(EXCLUSIVE_PANELS))];
+    for (const elId of panelIds) {
       const el = document.getElementById(elId);
-      if (el) el.style.display = view === panelView ? 'flex' : 'none';
+      if (el) {
+        const active = Object.entries(EXCLUSIVE_PANELS).some(
+          ([panelView, panelId]) => panelId === elId && panelView === view,
+        );
+        el.style.display = active ? 'flex' : 'none';
+      }
     }
-    if (prevView === 'datatree' && view !== 'datatree') dataTree.hide?.();
+    const dataTreeViews = new Set(['datatree', 'analysis']);
+    if (dataTreeViews.has(prevView) && !dataTreeViews.has(view)) dataTree.hide?.();
     if (prevView === 'accounts' && view !== 'accounts') accountsPanel.hide();
     if (view === 'accounts') accountsPanel.show();
     if (view === 'pinboard') pinboard.show();
-    if (view === 'datatree') dataTree.show();
+    if (view === 'datatree') dataTree.show('explorer');
+    if (view === 'analysis') dataTree.showAnalysis('remote');
     if (view === 'cloud' && !_cloudInited) {
       cloud.init();
       _cloudInited = true;
@@ -602,8 +663,10 @@ const appController = (() => {
     if (isStandard) {
       const sidebarLabel = document.getElementById('sidebarLabel');
       if (sidebarLabel) sidebarLabel.textContent = view.charAt(0).toUpperCase() + view.slice(1);
-      const fileTree = document.getElementById('fileTree');
-      if (fileTree) fileTree.style.display = view === 'explorer' ? '' : 'none';
+      const filesSection = document.getElementById('explorerFilesSection');
+      if (filesSection) filesSection.style.display = view === 'explorer' ? '' : 'none';
+      const autoexecSection = document.getElementById('autoexecSection');
+      if (autoexecSection) autoexecSection.style.display = view === 'explorer' ? '' : 'none';
       const searchView = document.getElementById('searchView');
       if (searchView) searchView.style.display = view === 'search' ? 'flex' : 'none';
       const sidebarActions = document.getElementById('sidebarHeaderActions');
@@ -614,6 +677,7 @@ const appController = (() => {
           btn.style.display = view === 'explorer' ? '' : 'none';
         });
       if (view === 'explorer') outline.refresh();
+      if (view === 'explorer') autoexec.renderSection?.();
       if (view === 'search') {
         search.run();
         document.getElementById('searchInput')?.focus();
@@ -715,6 +779,7 @@ const appController = (() => {
       updateChecker.syncAutoUpdateUi?.();
       if (this.checked) updateChecker.check?.();
     });
+    AiHelper.mountSettings?.();
     const sidebarSlider = document.getElementById('sidebarWidthSlider');
     const sidebarWidthVal = document.getElementById('sidebarWidthVal');
     sidebarSlider?.addEventListener('input', () => {
@@ -787,7 +852,16 @@ const appController = (() => {
     const sidebar = document.getElementById('sidebar');
     const sbBottom = document.getElementById('sidebarBottom');
     const panel = document.getElementById('bottomPanel');
+    const aiPanel = document.getElementById('aiSidePanel');
     if (uiState.sidebarWidth && sidebar) sidebar.style.width = uiState.sidebarWidth + 'px';
+    if (aiPanel) {
+      aiPanel.style.width = `${uiState.aiPanelWidth || 340}px`;
+      aiPanel.classList.toggle('hidden', !uiState.aiPanelVisible);
+      document
+        .getElementById('btnToggleAiPanel')
+        ?.classList.toggle('active', !!uiState.aiPanelVisible);
+      AiHelper.syncFabOffset?.();
+    }
     if (sidebar) {
       const locked = uiState.getSidebarLocked?.();
       if (locked) sidebar.dataset.navLocked = '1';
@@ -799,6 +873,9 @@ const appController = (() => {
       });
     }
     if (uiState.sbBottomHeight && sbBottom) sbBottom.style.height = uiState.sbBottomHeight + 'px';
+    AiHelper.syncChatChrome?.();
+    ExplorerTree.syncChrome?.();
+    autoexec.syncChrome?.();
     outline.syncChrome?.();
     timeline.syncChrome?.();
     if (sbBottom && !sbBottom.querySelector('.sb-section:not(.is-collapsed)')) {
@@ -810,7 +887,7 @@ const appController = (() => {
       panel.classList.remove('hidden');
     }
     executorSettings.init(uiState.executor);
-    _applyAppZoom(uiState.appZoom || 1, false);
+    _applyAppZoom(uiState.appZoom || 1.2, false);
     _syncActivityVisibility();
     const fontSlider = document.getElementById('fontSizeSlider');
     const fontVal = document.getElementById('fontSizeVal');
@@ -940,6 +1017,9 @@ const appController = (() => {
       const view = document.querySelector('.activity-btn.active')?.dataset.view ?? 'explorer';
       keyboardManager.setScope(view);
     });
+    document.getElementById('aiSidePanel')?.addEventListener('mousedown', () => {
+      keyboardManager.setScope('editor');
+    });
     keyboardManager.registerShortcut({
       keys: 'Cmd+Q',
       scope: ['global'],
@@ -972,6 +1052,22 @@ const appController = (() => {
       handler: () => editorController.newUntitledFile(),
     });
     keyboardManager.registerShortcut({
+      keys: 'Cmd+Z',
+      scope: ['explorer', 'search'],
+      handler: () => {
+        if (!workspaceHistory.canUndo?.()) return;
+        workspaceHistory.undo();
+      },
+    });
+    keyboardManager.registerShortcut({
+      keys: 'Cmd+Shift+Z',
+      scope: ['explorer', 'search'],
+      handler: () => {
+        if (!workspaceHistory.canRedo?.()) return;
+        workspaceHistory.redo();
+      },
+    });
+    keyboardManager.registerShortcut({
       keys: 'Cmd+Enter',
       scope: ['explorer', 'search', 'editor'],
       handler: () => editorController.executeScript(),
@@ -993,6 +1089,13 @@ const appController = (() => {
       scope: ['global'],
       allowInEditor: true,
       handler: () => panelController.togglePanel(),
+    });
+    keyboardManager.registerShortcut({
+      keys: 'Cmd+Shift+A',
+      scope: ['global'],
+      allowInEditor: true,
+      allowInInputs: true,
+      handler: () => AiHelper.togglePanel?.(),
     });
     keyboardManager.registerShortcut({
       keys: 'Cmd+P',
@@ -1096,6 +1199,18 @@ const appController = (() => {
       console_.log(`[DataTree] ${body.message || 'Capture failed'}`, 'fail');
       return;
     }
+    if (kind === 'saveinstance:start') {
+      console_.log(`[DataTree] USSI save started: ${body.file_path || 'current game'}`, 'info');
+      return;
+    }
+    if (kind === 'saveinstance:done') {
+      console_.log(`[DataTree] USSI save finished: ${body.file_path || 'current game'}`, 'ok');
+      return;
+    }
+    if (kind === 'saveinstance:error') {
+      console_.log(`[DataTree] USSI save failed: ${body.message || 'unknown error'}`, 'fail');
+      return;
+    }
     if (kind === 'error') {
       console_.log(`[Client] ${body.message ?? 'Script error'}`, 'fail');
       return;
@@ -1104,6 +1219,7 @@ const appController = (() => {
   }
 
   async function _shutdown() {
+    await _captureWindowState();
     await workspaceController.shutdown();
     await Promise.allSettled([
       menuBar.killAgent(),
@@ -1111,11 +1227,13 @@ const appController = (() => {
       persist.saveTreeState(state.workDir),
       persist.saveTimeline(state.workDir),
       persist.saveSession(state.workDir),
+      dataTree.flushSave?.(),
     ]);
   }
 
   async function init() {
     const win = window.__TAURI__.window.getCurrentWindow();
+    win.onResized?.(() => _saveWindowStateSoon());
     win.onCloseRequested(async (event) => {
       event.preventDefault();
       await _shutdown();
@@ -1138,6 +1256,7 @@ const appController = (() => {
     _initBridge();
     await paths.init();
     await autoexec.init();
+    autoexec.initSection?.();
     themeManager.load();
     _setupWindowFocusState();
     _setupTitlebar();
@@ -1151,6 +1270,7 @@ const appController = (() => {
     search.init();
     timeline.init();
     panelController.init();
+    AiHelper.mountPanel?.();
     await iconThemeManager.load();
     await helpers.loadIcons();
     ExplorerTree.init();
@@ -1161,7 +1281,7 @@ const appController = (() => {
       _restoreUI(ui);
     } else {
       executorSettings.init('opium');
-      _applyAppZoom(1, false);
+      _applyAppZoom(1.2, false);
       _syncActivityVisibility();
       _switchView('explorer');
     }

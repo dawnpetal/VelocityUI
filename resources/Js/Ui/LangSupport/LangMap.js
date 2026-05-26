@@ -2,6 +2,9 @@ const LangMap = (() => {
   const EXT_TO_LANG = {
     lua: 'lua',
     luau: 'lua',
+    module: 'lua',
+    modulescript: 'lua',
+    localscript: 'lua',
     js: 'javascript',
     ts: 'typescript',
     jsx: 'javascript',
@@ -67,8 +70,45 @@ const LangMap = (() => {
     avi: 'video/x-msvideo',
     m4v: 'video/x-m4v',
   };
-  const ext = (name) => name.split('.').pop().toLowerCase();
-  function monacoLang(filename) {
+  const LUA_SCRIPT_EXT = new Set(['lua', 'luau', 'script', 'localscript', 'modulescript']);
+  const ext = (name) => {
+    const value = String(name || '');
+    const dot = value.lastIndexOf('.');
+    return dot === -1 ? '' : value.slice(dot + 1).toLowerCase();
+  };
+  function isLuaScriptFile(filename = '', path = '') {
+    const value = String(filename || path || '');
+    const e = ext(value);
+    if (LUA_SCRIPT_EXT.has(e)) return true;
+    const base = value
+      .split(/[\\/]/)
+      .pop()
+      .replace(/\.[^.]+$/, '')
+      .toLowerCase();
+    return /(?:^|[._\s-])(script|localscript|modulescript|server|client|module)$/.test(base);
+  }
+  function looksLikeLuaSource(content = '') {
+    const text = String(content || '').slice(0, 12000);
+    if (!text.trim()) return false;
+    let score = 0;
+    if (/--!(strict|nonstrict|native|optimize)\b/.test(text)) score += 3;
+    if (/\b(game|workspace):GetService\s*\(/.test(text)) score += 3;
+    if (/\b(local\s+function|function\s+[A-Za-z_]|local\s+[A-Za-z_]\w*\s*=|return\s+)/.test(text))
+      score += 2;
+    if (/\b(end|then|do)\b/.test(text)) score += 1;
+    if (/\bInstance\.new|Enum\.|Vector3\.new|CFrame\.new|require\s*\(/.test(text)) score += 2;
+    return score >= 3;
+  }
+  function inferOverride(filename = '', path = '', content = '') {
+    const e = ext(filename || path);
+    if (e && EXT_TO_LANG[e] && EXT_TO_LANG[e] !== 'lua') return {};
+    if (isLuaScriptFile(filename, path) || looksLikeLuaSource(content)) {
+      return { languageOverride: 'lua', languageOverrideLabel: 'Lua' };
+    }
+    return {};
+  }
+  function monacoLang(filename, override = '') {
+    if (override) return override;
     return EXT_TO_LANG[ext(filename)] ?? 'plaintext';
   }
   function previewType(filename) {
@@ -96,5 +136,8 @@ const LangMap = (() => {
     canPreview,
     mimeFor,
     extOf,
+    isLuaScriptFile,
+    looksLikeLuaSource,
+    inferOverride,
   };
 })();

@@ -1,12 +1,18 @@
 const ExplorerOps = (() => {
+  function _syncInputIcon(input, iconEl, type, isOpen = false) {
+    if (!input || !iconEl) return;
+    const fallbackName = type === 'file' ? '.' : '';
+    input.addEventListener('input', () => {
+      helpers.updateIconEl(iconEl, input.value.trim() || fallbackName, type === 'folder', isOpen);
+    });
+  }
+
   function startRename(node) {
     if (autoexec.isProtectedRootNode(node)) {
       toast.show('Autoexecute folder is protected', 'info', 1500);
       return;
     }
-    const row = document
-      .getElementById('fileTree')
-      .querySelector(`.tree-row[data-id="${node.id}"]`);
+    const row = document.querySelector(`.tree-row[data-id="${node.id}"]`);
     if (!row) return;
     const labelEl = row.querySelector('.tree-label');
     const iconEl = row.querySelector('.tree-icon > span');
@@ -17,16 +23,21 @@ const ExplorerOps = (() => {
     input.focus();
     const dotIdx = node.name.lastIndexOf('.');
     input.setSelectionRange(0, dotIdx > 0 ? dotIdx : node.name.length);
-    if (iconEl)
-      input.addEventListener('input', () =>
-        helpers.updateIconEl(iconEl, input.value.trim() || '.', false, false),
-      );
+    _syncInputIcon(input, iconEl, node.type, !!node.open);
     const commit = async () => {
       const newName = input.value.trim();
       if (newName && newName !== node.name) {
         const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
         const newPath = `${parentPath}/${newName}`;
-        await fileManager.rename(node.path, newPath).catch(console.error);
+        try {
+          await fileManager.rename(node.path, newPath);
+        } catch (err) {
+          console.error(err);
+          toast.show(`Could not rename ${node.name}`, 'warn', 2400);
+          ExplorerTree.render();
+          return;
+        }
+        workspaceHistory.recordMove?.(node.path, newPath, node.type === 'folder');
         if (node.type === 'file') {
           const f = state.getFile(node.id);
           if (f) {
@@ -62,98 +73,60 @@ const ExplorerOps = (() => {
       toast.show('Autoexecute only accepts Lua files', 'info', 1500);
       return;
     }
+    if (autoexec.isInsideProtectedArea(parentNode.path)) uiState.setAutoexecCollapsed?.(false);
+    else uiState.setFileTreeCollapsed?.(false);
     if (!parentNode.open) {
+      await fileManager.ensureChildren?.(parentNode);
       parentNode.open = true;
       ExplorerTree.render();
     }
-    const fileTreeEl = document.getElementById('fileTree');
-    function _getDepth(node, roots) {
-      for (const root of roots) {
-        const d = _depthOf(node.id, root, 0);
-        if (d !== -1) return d;
-      }
-      return 0;
-    }
-    function _depthOf(id, node, d) {
-      if (node.id === id) return d;
-      for (const c of node.children ?? []) {
-        const found = _depthOf(id, c, d + 1);
-        if (found !== -1) return found;
-      }
-      return -1;
-    }
-    const parentDepth = _getDepth(parentNode, state.roots);
-    const childDepth = parentDepth + 1;
-    const indentPx = childDepth * 14 + 6;
-    const parentRow = fileTreeEl.querySelector(`.tree-row[data-id="${parentNode.id}"]`);
-    let insertAfter =
-      parentRow ?? fileTreeEl.querySelector('.tree-root-header') ?? fileTreeEl.lastElementChild;
-    if (insertAfter) {
-      let next = insertAfter.nextElementSibling;
-      while (next && next.classList.contains('tree-row')) {
-        const sibDepth = Math.round(
-          (parseInt(next.querySelector('.tree-indent')?.style.paddingLeft) - 6) / 14,
-        );
-        if (sibDepth <= parentDepth) break;
-        insertAfter = next;
-        next = next.nextElementSibling;
-      }
-    }
-    const row = document.createElement('div');
-    row.className = 'tree-row tree-row--creating';
-    const indent = document.createElement('div');
-    indent.className = 'tree-indent';
-    indent.style.paddingLeft = indentPx + 'px';
-    const arrowEl = document.createElement('span');
-    arrowEl.className = 'tree-arrow leaf';
-    arrowEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
-    const iconEl = document.createElement('span');
-    iconEl.className = 'tree-icon';
-    iconEl.appendChild(
-      helpers.fileIconEl(type === 'file' ? 'untitled.lua' : '', type === 'folder', false),
-    );
-    const input = document.createElement('input');
-    input.className = 'tree-rename-input';
-    input.placeholder = type === 'file' ? 'filename.lua' : 'folder name';
-    input.style.flex = '1';
-    indent.append(arrowEl, iconEl, input);
-    row.appendChild(indent);
-    if (insertAfter && insertAfter.parentNode === fileTreeEl) {
-      insertAfter.after(row);
-    } else {
-      fileTreeEl.appendChild(row);
-    }
-    input.focus();
-    const cleanup = () => row.remove();
-    const commit = async () => {
-      const name = input.value.trim();
-      cleanup();
-      if (!name) return;
-      try {
-        if (type === 'file') {
-          const result = await fileManager.createFile(parentNode.path, name);
-          state.setActive(result.id, { permanent: true, keepTabs: true });
-        } else {
-          await fileManager.createFolder(parentNode.path, name);
-        }
-        eventBus.emit('ui:refresh-tree');
-      } catch (err) {
-        modal.alert('Error', err.message ?? 'Could not create item.');
-      }
+    const phantom = {
+      id: `new:${helpers.uid()}`,
+      name: '',
+      path: `${parentNode.path}/`,
+      type,
+      children: [],
+      open: false,
+      creating: null,
+      parentId: parentNode.id,
+      pendingName: '',
     };
-    input.addEventListener('blur', commit, { once: true });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        input.removeEventListener('blur', commit);
-        commit();
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        input.removeEventListener('blur', commit);
-        cleanup();
-      }
-    });
+    let finished = false;
+    const removePhantom = () => {
+      parentNode.children = (parentNode.children ?? []).filter((child) => child !== phantom);
+      ExplorerTree.clearCreatingNode?.();
+    };
+    phantom.creating = {
+      finish: async (rawName, success) => {
+        if (finished) return;
+        finished = true;
+        removePhantom();
+        const name = rawName.trim();
+        if (!success || !name) {
+          ExplorerTree.render();
+          autoexec.renderSection?.();
+          return;
+        }
+        try {
+          if (type === 'file') {
+            const result = await fileManager.createFile(parentNode.path, name);
+            workspaceHistory.recordCreate?.(result.path, false, '');
+            state.setActive(result.id, { permanent: true, keepTabs: true });
+          } else {
+            const path = await fileManager.createFolder(parentNode.path, name);
+            workspaceHistory.recordCreate?.(path, true, '');
+          }
+          eventBus.emit('ui:refresh-tree');
+        } catch (err) {
+          modal.alert('Error', err.message ?? 'Could not create item.');
+        }
+      },
+    };
+    parentNode.children = parentNode.children ?? [];
+    parentNode.children.unshift(phantom);
+    ExplorerTree.setCreatingNode?.(phantom);
+    if (autoexec.isInsideProtectedArea(parentNode.path)) autoexec.renderSection?.();
+    else ExplorerTree.render();
   }
 
   async function duplicate(node) {
@@ -170,6 +143,7 @@ const ExplorerOps = (() => {
         src: node.path,
         dest: `${parentPath}/${newName}`,
       });
+      workspaceHistory.recordCreate?.(`${parentPath}/${newName}`, false, '');
       eventBus.emit('ui:refresh-tree');
     } catch (err) {
       modal.alert('Error', err.message ?? 'Could not duplicate file.');
@@ -182,8 +156,8 @@ const ExplorerOps = (() => {
       return;
     }
     const confirmed = await modal.confirm(
-      'Delete ' + (node.type === 'folder' ? 'Folder' : 'File'),
-      `Permanently delete <strong>${helpers.escapeHtml(node.name)}</strong>? This cannot be undone.`,
+      'Move to Trash',
+      `Move <strong>${helpers.escapeHtml(node.name)}</strong> to Trash?`,
     );
     if (!confirmed) return;
     await _deleteNode(node);
@@ -202,8 +176,8 @@ const ExplorerOps = (() => {
       .join(', ');
     const extra = nodes.length > 5 ? ` and ${nodes.length - 5} more` : '';
     const confirmed = await modal.confirm(
-      `Delete ${nodes.length} items`,
-      `Permanently delete ${preview}${extra}? This cannot be undone.`,
+      `Move ${nodes.length} items to Trash`,
+      `Move ${preview}${extra} to Trash?`,
     );
     if (!confirmed) return;
     for (const node of nodes) await _deleteNode(node);
@@ -213,7 +187,10 @@ const ExplorerOps = (() => {
 
   async function _deleteNode(node) {
     try {
-      await fileManager.remove(node.path);
+      const wasAutoexecScript = autoexec.containsScript?.(node.path);
+      const result = await fileManager.moveToTrash(node.path);
+      workspaceHistory.recordTrash?.(node.path, result?.trashPath, node.type === 'folder');
+      if (wasAutoexecScript) autoexec.sync?.({ createSource: false }).catch(() => {});
       if (node.type === 'file') {
         if (state.openTabIds.includes(node.id)) {
           editor.destroyTab(node.id);
@@ -241,6 +218,8 @@ const ExplorerOps = (() => {
     if (state.workDir === rootNode.path) {
       state.workDir = state.roots[0]?.path ?? null;
     }
+    await workspaceController.syncWatchers?.();
+    await persist.saveTreeState(state.workDir);
     await persist.saveSession(state.workDir);
     ExplorerTree.render();
     tabs.render();
@@ -249,12 +228,13 @@ const ExplorerOps = (() => {
 
   async function deleteFolderFromDisk(rootNode) {
     const confirmed = await modal.confirm(
-      'Delete Folder from Disk',
-      `Permanently delete <strong>${helpers.escapeHtml(rootNode.name)}</strong> and all its contents? This cannot be undone.`,
+      'Move Folder to Trash',
+      `Move <strong>${helpers.escapeHtml(rootNode.name)}</strong> and all its contents to Trash?`,
     );
     if (!confirmed) return;
     try {
-      await fileManager.remove(rootNode.path);
+      const result = await fileManager.moveToTrash(rootNode.path);
+      workspaceHistory.recordTrash?.(rootNode.path, result?.trashPath, true, true);
       await removeFolderFromWorkspace(rootNode);
     } catch (err) {
       modal.alert('Error', err.message ?? 'Could not delete folder.');
