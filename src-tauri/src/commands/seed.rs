@@ -25,6 +25,11 @@ pub fn seed_default_workspace(app: &AppHandle) -> anyhow::Result<bool> {
         fs::write(&flag_path, "1")?;
     }
 
+    let autoexec_dir = default_dir.join("Autoexecute");
+    if !autoexec_dir.exists() {
+        fs::create_dir_all(&autoexec_dir)?;
+    }
+
     let scripts_path = crate::paths::scripts_path()?;
     if !scripts_path.exists() {
         let scripts = vec![
