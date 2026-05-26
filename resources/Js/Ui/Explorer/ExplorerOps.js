@@ -15,6 +15,7 @@ const ExplorerOps = (() => {
     const row = document.querySelector(`.tree-row[data-id="${node.id}"]`);
     if (!row) return;
     const labelEl = row.querySelector('.tree-label');
+    if (!labelEl) return;
     const iconEl = row.querySelector('.tree-icon > span');
     const input = document.createElement('input');
     input.className = 'tree-rename-input';
@@ -52,17 +53,23 @@ const ExplorerOps = (() => {
         ExplorerTree.render();
       }
     };
-    input.addEventListener('blur', commit, { once: true });
+    const handleBlur = () => commit();
+    input.addEventListener('blur', handleBlur, { once: true });
     input.addEventListener('keydown', (e) => {
-      if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(e.key))
+      if (
+        ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(
+          e.key,
+        )
+      )
         e.stopPropagation();
       if (e.key === 'Enter') {
         e.preventDefault();
-        input.blur();
+        input.removeEventListener('blur', handleBlur);
+        commit();
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        input.removeEventListener('blur', commit);
+        input.removeEventListener('blur', handleBlur);
         ExplorerTree.render();
       }
     });

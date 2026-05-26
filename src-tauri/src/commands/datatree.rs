@@ -1810,33 +1810,12 @@ fn remote_calls_in_source(
 ) -> Vec<LogicWebRemoteCall> {
     let mut calls = Vec::new();
     let local_types = local_lua_value_types(source, script_path, vars, module_function_returns);
-    for cap in logic_regex(
-        r#"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:\s*(FireServer|FireClient|FireAllClients|InvokeServer|InvokeClient|OnServerEvent|OnClientEvent|OnServerInvoke|OnClientInvoke|OnInvoke)\s*\("#,
-    )
-    .captures_iter(source)
-    {
-        let Some(target_match) = cap.get(1) else {
-            continue;
-        };
-        let target_expr = target_match.as_str();
-        let method = cap.get(2).map(|m| m.as_str()).unwrap_or("Remote");
-        let Some(open_index) = cap.get(0).map(|m| m.end() - 1) else {
-            continue;
-        };
-        let Some(close_index) = find_matching_paren(source, open_index) else {
-            continue;
-        };
-        let args_raw = &source[open_index + 1..close_index];
+    let require_map = require_vars(source, script_path, vars);
+
+    let mut push_call = |target_expr: &str, method: &str, target_start: usize, args_raw: &str| {
         let args = split_lua_args(args_raw)
             .iter()
-            .map(|arg| {
-                infer_lua_expr_type(
-                    arg,
-                    &local_types,
-                    &require_vars(source, script_path, vars),
-                    module_function_returns,
-                )
-            })
+            .map(|arg| infer_lua_expr_type(arg, &local_types, &require_map, module_function_returns))
             .collect::<Vec<_>>();
         let arg_signature = format!("{{{}}}", args.join(", "));
         let remote_path = resolve_require_path(target_expr, script_path, vars)
@@ -1850,7 +1829,7 @@ fn remote_calls_in_source(
             .get(&remote_path.to_ascii_lowercase())
             .cloned()
             .unwrap_or_else(|| "RemoteRef".to_string());
-        let line = source_line_at(source, target_match.start());
+        let line = source_line_at(source, target_start);
         let evidence = format!("{target_expr}:{method}({})", args_raw.trim());
         calls.push(LogicWebRemoteCall {
             id: String::new(),
@@ -1868,7 +1847,35 @@ fn remote_calls_in_source(
             line,
             confidence: 0.5,
         });
+    };
+
+    for cap in logic_regex(
+        r#"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:\s*(FireServer|FireClient|FireAllClients|InvokeServer|InvokeClient|OnServerEvent|OnClientEvent|OnServerInvoke|OnClientInvoke|OnInvoke)\s*\("#,
+    )
+    .captures_iter(source)
+    {
+        let Some(target_match) = cap.get(1) else { continue };
+        let target_expr = target_match.as_str();
+        let method = cap.get(2).map(|m| m.as_str()).unwrap_or("Remote");
+        let Some(open_index) = cap.get(0).map(|m| m.end() - 1) else { continue };
+        let Some(close_index) = find_matching_paren(source, open_index) else { continue };
+        let args_raw = &source[open_index + 1..close_index];
+        push_call(target_expr, method, target_match.start(), args_raw);
     }
+
+    for cap in logic_regex(
+        r#"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.(OnServerEvent|OnClientEvent|OnServerInvoke|OnClientInvoke|OnInvoke)\s*:\s*(?:Connect|Once)\s*\("#,
+    )
+    .captures_iter(source)
+    {
+        let Some(target_match) = cap.get(1) else { continue };
+        let method = cap.get(2).map(|m| m.as_str()).unwrap_or("OnClientEvent");
+        let target_expr = target_match.as_str();
+        let Some(open_index) = cap.get(0).map(|m| m.end() - 1) else { continue };
+        let Some(_close_index) = find_matching_paren(source, open_index) else { continue };
+        push_call(target_expr, method, target_match.start(), "");
+    }
+
     calls
 }
 

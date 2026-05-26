@@ -7,9 +7,10 @@ const uiState = (() => {
   let _aiPanelWidth = 340;
   let _sbBottomHeight = 100;
   let _activeView = 'explorer';
+  let _dataTreeViewMode = 'explorer';
   let _fileTreeCollapsed = false;
   let _aiChatsCollapsed = true;
-  let _autoexecCollapsed = false;
+  let _autoexecCollapsed = true;
   let _outlineCollapsed = true;
   let _timelineCollapsed = true;
   let _fontSize = 12;
@@ -33,6 +34,7 @@ const uiState = (() => {
       aiPanelWidth: _aiPanelWidth,
       sbBottomHeight: _sbBottomHeight,
       activeView: _activeView === 'datatree' ? 'explorer' : _activeView,
+      dataTreeViewMode: _dataTreeViewMode,
       fileTreeCollapsed: _fileTreeCollapsed,
       aiChatsCollapsed: _aiChatsCollapsed,
       autoexecCollapsed: _autoexecCollapsed,
@@ -63,6 +65,8 @@ const uiState = (() => {
       _aiPanelWidth = Math.max(260, Math.min(520, loaded.aiPanelWidth));
     if (loaded.activeView)
       _activeView = loaded.activeView === 'datatree' ? 'explorer' : loaded.activeView;
+    if (loaded.dataTreeViewMode && ['explorer', 'scanner'].includes(loaded.dataTreeViewMode))
+      _dataTreeViewMode = loaded.dataTreeViewMode;
     if (loaded.fileTreeCollapsed != null) _fileTreeCollapsed = !!loaded.fileTreeCollapsed;
     if (loaded.aiChatsCollapsed != null) _aiChatsCollapsed = !!loaded.aiChatsCollapsed;
     if (loaded.autoexecCollapsed != null) _autoexecCollapsed = !!loaded.autoexecCollapsed;
@@ -122,6 +126,11 @@ const uiState = (() => {
   }
   function setActiveView(v) {
     _activeView = v === 'datatree' ? 'explorer' : v;
+    save();
+  }
+  function setDataTreeViewMode(v) {
+    if (!['explorer', 'scanner'].includes(v)) return;
+    _dataTreeViewMode = v;
     save();
   }
   function setFileTreeCollapsed(v) {
@@ -223,6 +232,9 @@ const uiState = (() => {
     get activeView() {
       return _activeView;
     },
+    get dataTreeViewMode() {
+      return _dataTreeViewMode;
+    },
     get fileTreeCollapsed() {
       return _fileTreeCollapsed;
     },
@@ -272,6 +284,7 @@ const uiState = (() => {
     setAiPanelWidth,
     setSbBottomHeight,
     setActiveView,
+    setDataTreeViewMode,
     setFileTreeCollapsed,
     setAiChatsCollapsed,
     setAutoexecCollapsed,

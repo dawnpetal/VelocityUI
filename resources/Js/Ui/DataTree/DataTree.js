@@ -492,7 +492,7 @@ const dataTree = (() => {
 
   function show(mode = null) {
     _activeContainerId = 'dataTreeView';
-    state_.viewMode = mode || 'explorer';
+    state_.viewMode = mode || uiState.dataTreeViewMode || 'explorer';
     state_.visible = true;
     if (!_inited) {
       const root = _container();
@@ -820,7 +820,7 @@ const dataTree = (() => {
   function render() {
     const root = _container();
     if (!root) return;
-    _rememberScroll(root);
+    if (root.querySelector('.dt-tree-list')) _rememberScroll(root);
     _disposeViewports(root);
     root.innerHTML = '';
     root.appendChild(_view());
@@ -928,6 +928,7 @@ const dataTree = (() => {
         const mode = button.dataset.mode === 'scanner' ? 'scanner' : 'explorer';
         if (state_.viewMode === mode) return;
         state_.viewMode = mode;
+        uiState.setDataTreeViewMode?.(mode);
         render();
         if (mode === 'scanner') _scheduleModuleScanner(0);
       });

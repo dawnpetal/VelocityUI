@@ -136,8 +136,38 @@ const ExplorerDnd = (() => {
       row.draggable = false;
       return;
     }
-    row.draggable = true;
+    let _dragStartTimer = null;
+    let _pendingDragStart = null;
+    row.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      _pendingDragStart = { x: e.clientX, y: e.clientY };
+      _dragStartTimer = setTimeout(() => {
+        _pendingDragStart = null;
+      }, 300);
+    });
+    row.addEventListener('mousemove', (e) => {
+      if (!_pendingDragStart) return;
+      const dx = e.clientX - _pendingDragStart.x;
+      const dy = e.clientY - _pendingDragStart.y;
+      if (Math.hypot(dx, dy) > 6) {
+        clearTimeout(_dragStartTimer);
+        _pendingDragStart = null;
+        row.draggable = true;
+      }
+    });
+    row.addEventListener('mouseup', () => {
+      clearTimeout(_dragStartTimer);
+      _pendingDragStart = null;
+      requestAnimationFrame(() => {
+        row.draggable = false;
+      });
+    });
+    row.draggable = false;
     row.addEventListener('dragstart', (e) => {
+      if (!row.draggable) {
+        e.preventDefault();
+        return;
+      }
       const sel = ExplorerTree.getSelection();
       const dragNodes = sel.length > 0 && sel.some((n) => n.id === node.id) ? sel : [node];
       ExplorerTree.setDragSrc(node.id);
@@ -153,6 +183,7 @@ const ExplorerDnd = (() => {
       }, 0);
     });
     row.addEventListener('dragend', () => {
+      row.draggable = false;
       _clearAll();
       _clearAutoExpand();
       if (_ghostEl) {

@@ -3212,6 +3212,8 @@ button:focus-visible {
   gap: 10px;
   padding: 0 16px 0 20px !important;
   overflow: visible !important;
+  container-type: inline-size;
+  container-name: dt-topbar;
 }
 
 .dt-title-block {
@@ -4892,7 +4894,7 @@ button:focus-visible {
   }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 780px) {
   .dt-snapshot-select,
   .analysis-snapshot-select,
   .dt-memory-action,
@@ -4919,6 +4921,15 @@ button:focus-visible {
 
   .dt-analysis-head [data-action='analysis-reset'] {
     display: none;
+  }
+}
+
+@container dt-topbar (max-width: 680px) {
+  .dt-snapshot-select,
+  .analysis-snapshot-select,
+  .dt-memory-action,
+  .dt-save-game-action {
+    display: none !important;
   }
 }
 

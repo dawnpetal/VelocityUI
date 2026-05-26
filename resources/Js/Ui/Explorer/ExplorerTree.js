@@ -223,7 +223,8 @@ const ExplorerTree = (() => {
       return;
     }
     const newKey = _buildStructureKey();
-    if (newKey === _structureKey) {
+    const isDirty = root.querySelector('.tree-rename-input:not(.tree-rename-input--creating)');
+    if (newKey === _structureKey && !isDirty) {
       _patchSelection();
       _patchUnsaved();
       autoexec.renderSection?.();
@@ -481,19 +482,30 @@ const ExplorerTree = (() => {
     const finish = async (success) => {
       if (done) return;
       done = true;
-      await node.creating.finish(input.value.trim(), success);
+      const val = input.value.trim();
+      const createHandler = node.creating;
+      _creatingNode = null;
+      _structureKey = '';
+      await createHandler.finish(val, success);
+      render();
     };
-    input.addEventListener('blur', () => finish(true), { once: true });
+    const handleBlur = () => finish(true);
+    input.addEventListener('blur', handleBlur, { once: true });
     input.addEventListener('keydown', (event) => {
-      if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key))
+      if (
+        ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(
+          event.key,
+        )
+      )
         event.stopPropagation();
       if (event.key === 'Enter') {
         event.preventDefault();
-        input.removeEventListener('blur', () => finish(true));
+        input.removeEventListener('blur', handleBlur);
         finish(true);
       }
       if (event.key === 'Escape') {
         event.preventDefault();
+        input.removeEventListener('blur', handleBlur);
         finish(false);
       }
     });
@@ -537,6 +549,7 @@ const ExplorerTree = (() => {
       )
     )
       return;
+    if (document.activeElement?.classList.contains('tree-rename-input')) return;
     if (!_flatOrder.length) return;
     e.preventDefault();
     const idx = _selectedIndex();
@@ -685,17 +698,18 @@ const ExplorerTree = (() => {
     },
     clearCreatingNode: () => {
       _creatingNode = null;
+      _structureKey = '';
     },
-    startRename: ExplorerOps.startRename,
-    startCreate: ExplorerOps.startCreate,
-    duplicate: ExplorerOps.duplicate,
-    confirmDelete: ExplorerOps.confirmDelete,
-    confirmDeleteMulti: ExplorerOps.confirmDeleteMulti,
-    removeFolderFromWorkspace: ExplorerOps.removeFolderFromWorkspace,
-    deleteFolderFromDisk: ExplorerOps.deleteFolderFromDisk,
-    copyPath: ExplorerOps.copyPath,
-    copyPaths: ExplorerOps.copyPaths,
-    revealInFinder: ExplorerOps.revealInFinder,
-    revealRootInFinder: ExplorerOps.revealRootInFinder,
+    startRename: (node) => ExplorerOps.startRename(node),
+    startCreate: (parentNode, type) => ExplorerOps.startCreate(parentNode, type),
+    duplicate: (node) => ExplorerOps.duplicate(node),
+    confirmDelete: (node) => ExplorerOps.confirmDelete(node),
+    confirmDeleteMulti: (nodes) => ExplorerOps.confirmDeleteMulti(nodes),
+    removeFolderFromWorkspace: (rootNode) => ExplorerOps.removeFolderFromWorkspace(rootNode),
+    deleteFolderFromDisk: (rootNode) => ExplorerOps.deleteFolderFromDisk(rootNode),
+    copyPath: (node) => ExplorerOps.copyPath(node),
+    copyPaths: (nodes) => ExplorerOps.copyPaths(nodes),
+    revealInFinder: (node) => ExplorerOps.revealInFinder(node),
+    revealRootInFinder: (rootNode) => ExplorerOps.revealRootInFinder(rootNode),
   };
 })();
