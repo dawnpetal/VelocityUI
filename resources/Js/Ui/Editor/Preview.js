@@ -6,7 +6,28 @@ const Preview = (() => {
     return bytes;
   }
   function _fileSrc(file) {
-    return window.__TAURI__?.core?.convertFileSrc?.(file.path) || file.path;
+    const convert =
+      window.__TAURI__?.core?.convertFileSrc ||
+      window.__TAURI__?.convertFileSrc ||
+      window.__TAURI__?.tauri?.convertFileSrc;
+    try {
+      const src = convert?.(file.path) || '';
+      if (src === file.path || /^\/(?!\/)/.test(src) || /^[A-Za-z]:[\\/]/.test(src)) return '';
+      return src;
+    } catch {
+      return '';
+    }
+  }
+  async function _blobUrlFromFile(file) {
+    const b64 = await window.__TAURI__?.core?.invoke?.('read_binary_file', { path: file.path });
+    if (!b64) throw new Error('Binary file reader is unavailable');
+    const bytes = _base64ToUint8Array(b64);
+    const blob = new Blob([bytes], {
+      type: LangMap.mimeFor(file.name),
+    });
+    const url = URL.createObjectURL(blob);
+    EditorModels.setBlobUrl(file.id, url);
+    return url;
   }
   function _tbBtn(label, onClick) {
     const b = document.createElement('button');
@@ -84,9 +105,13 @@ const Preview = (() => {
     );
     viewport.appendChild(img);
     pane.append(toolbar, viewport);
+    return img;
   }
   function renderImage(pane, file) {
     pane.className = 'preview-pane preview-image-pane';
+    const token = `${file.id}:${file.path}`;
+    pane.dataset.previewToken = token;
+    const isCurrent = () => pane.dataset.previewToken === token;
     if (file.binaryData) {
       const mime = LangMap.mimeFor(file.name);
       const bytes = _base64ToUint8Array(file.binaryData);
@@ -97,7 +122,34 @@ const Preview = (() => {
       EditorModels.setBlobUrl(file.id, url);
       _buildImageUI(pane, url, file.name);
     } else {
-      _buildImageUI(pane, _fileSrc(file), file.name);
+      const src = _fileSrc(file);
+      if (!src) {
+        pane.textContent = 'Loading image...';
+        _blobUrlFromFile(file)
+          .then((url) => {
+            if (!isCurrent()) return;
+            pane.textContent = '';
+            _buildImageUI(pane, url, file.name);
+          })
+          .catch((err) => {
+            if (!isCurrent()) return;
+            pane.textContent = 'Could not load image: ' + (err?.message ?? err);
+          });
+        return;
+      }
+      const img = _buildImageUI(pane, src, file.name);
+      img.onerror = () => {
+        img.onerror = null;
+        _blobUrlFromFile(file)
+          .then((url) => {
+            if (!isCurrent()) return;
+            img.src = url;
+          })
+          .catch((err) => {
+            if (!isCurrent()) return;
+            pane.textContent = 'Could not load image: ' + (err?.message ?? err);
+          });
+      };
     }
   }
   function renderSvg(pane, file) {

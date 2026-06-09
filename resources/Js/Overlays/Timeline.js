@@ -1,6 +1,7 @@
 const timeline = (() => {
   const MAX = 50;
   const _histories = new Map();
+  let _pendingByPath = null;
   let _activeId = null;
   let _expanded = true;
   function _history(id) {
@@ -14,19 +15,33 @@ const timeline = (() => {
     _histories.set(id, items);
     _render();
   }
+  function setPendingHistories(byPath) {
+    _pendingByPath = byPath;
+    _histories.clear();
+    state.files.forEach((f) => {
+      const norm = _normPath(f.path);
+      const match = byPath[f.path] ?? byPath[norm];
+      if (match?.length) _histories.set(f.id, match);
+    });
+    _render();
+  }
+  function _normPath(p) {
+    return p ? p.replace(/\\/g, '/').replace(/\/$/, '') : p;
+  }
   function recordSave(fileId, content, filename) {
     const h = _history(fileId);
     if (h.length && h[0].content === content) return;
-    h.unshift({
-      at: Date.now(),
-      content,
-      name: filename,
-    });
+    h.unshift({ at: Date.now(), content, name: filename });
     if (h.length > MAX) h.length = MAX;
     _render();
   }
   function setFile(file) {
     _activeId = file && !file.preview ? file.id : null;
+    if (_activeId && _pendingByPath && !_histories.has(_activeId)) {
+      const norm = _normPath(file.path);
+      const pending = _pendingByPath[file.path] ?? _pendingByPath[norm];
+      if (pending?.length) _histories.set(_activeId, pending);
+    }
     _render();
     _syncSize(file);
   }
@@ -135,10 +150,12 @@ const timeline = (() => {
       uiState.setTimelineCollapsed(!_expanded);
       sync();
       if (!panel) return;
-      if (_expanded && !panel.dataset.userResized) panel.style.height = '360px';
+      if (_expanded && !panel.dataset.userResized) {
+        panel.style.height = (uiState.sbBottomHeight > 0 ? uiState.sbBottomHeight : 200) + 'px';
+      }
       const allCollapsed = !panel.querySelector('.sb-section:not(.is-collapsed)');
       if (allCollapsed) {
-        panel.style.height = '';
+        panel.style.height = 'auto';
         delete panel.dataset.userResized;
       }
     };
@@ -207,6 +224,7 @@ const timeline = (() => {
     clearActive,
     getHistory,
     restoreHistory,
+    setPendingHistories,
     snapshotByPath,
     restoreFromSnapshot,
   };

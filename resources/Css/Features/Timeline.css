@@ -1,12 +1,12 @@
 .sidebar-bottom {
   flex-shrink: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--glass-border);
   display: flex;
   flex-direction: column;
-  height: 100px;
+  height: auto;
   min-height: 24px;
   max-height: 480px;
-  background: var(--bg2);
+  background: transparent;
   overflow: hidden;
 }
 

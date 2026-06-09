@@ -9,6 +9,9 @@ const ExplorerTree = (() => {
   let _vlist = null;
   let _nodeContainer = null;
   let _creatingNode = null;
+  let _stickyEl = null;
+  let _stickyAncestors = [];
+  let _stickyRowMap = new Map();
   const SVG = {
     arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
     newFile: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`,
@@ -70,11 +73,17 @@ const ExplorerTree = (() => {
   }
   function _setSelection(ids) {
     _selection = new Set(ids);
+    const selectionIsFolder =
+      ids.length === 1 &&
+      (() => {
+        const n = findNodeInRoots(ids[0]);
+        return n?.type === 'folder';
+      })();
     rootEl()
       ?.querySelectorAll('.tree-row')
       .forEach((row) => {
         row.classList.toggle('selected', _selection.has(row.dataset.id));
-        row.classList.toggle('active', row.dataset.id === state.activeFileId);
+        row.classList.toggle('active', !selectionIsFolder && row.dataset.id === state.activeFileId);
       });
   }
   function _getSelectionNodes() {
@@ -157,6 +166,10 @@ const ExplorerTree = (() => {
     _vlist?.destroy?.();
     _vlist = null;
     _nodeContainer = null;
+    _stickyEl = null;
+    _stickyAncestors = [];
+    _stickyAncestors._key = '';
+    _stickyRowMap = new Map();
   }
 
   function syncChrome() {
@@ -171,10 +184,6 @@ const ExplorerTree = (() => {
     section?.classList.toggle('is-collapsed', !expanded);
     arrow?.classList.toggle('open', expanded);
     header.setAttribute('aria-expanded', String(expanded));
-    if (meta)
-      meta.textContent = state.roots.length
-        ? `${state.roots.length} root${state.roots.length === 1 ? '' : 's'}`
-        : '';
   }
 
   function _setupSectionHeader() {
@@ -239,7 +248,7 @@ const ExplorerTree = (() => {
 
     _nodeContainer = document.createElement('div');
     _nodeContainer.className = 'tree-node-container';
-    _nodeContainer.style.position = 'relative';
+    _nodeContainer.style.cssText = 'position:relative;height:100%;';
     root.appendChild(_nodeContainer);
 
     _nodeContainer.addEventListener('contextmenu', (e) => {
@@ -248,6 +257,10 @@ const ExplorerTree = (() => {
         ctxMenu.showEmpty(e, state.roots[0] ?? null);
       }
     });
+
+    _stickyEl = document.createElement('div');
+    _stickyEl.className = 'tree-sticky-stack';
+    _nodeContainer.appendChild(_stickyEl);
 
     _vlist = VirtualList.create({
       container: _nodeContainer,
@@ -258,9 +271,11 @@ const ExplorerTree = (() => {
         if (item.root) return _buildRootHeader(item.root);
         return _buildRow(item.node, item.depth);
       },
-      getItemHeight: (_i, item) => (item?.rootGhost ? 42 : VirtualList.ROW_HEIGHT),
+      getItemHeight: (_i, item) => VirtualList.ROW_HEIGHT,
+      onScroll: (scrollTop) => _updateSticky(scrollTop),
     });
     _vlist.update(_flatOrder.length);
+    _updateSticky(0);
     autoexec.renderSection?.();
   }
 
@@ -279,6 +294,163 @@ const ExplorerTree = (() => {
     await fileManager.ensureChildren?.(node);
     node.open = true;
   }
+  function _updateSticky(scrollTop) {
+    if (!_stickyEl) return;
+    const RH = VirtualList.ROW_HEIGHT;
+
+    if (scrollTop <= 0) {
+      if (_stickyEl.childElementCount) {
+        _stickyEl.innerHTML = '';
+        _stickyAncestors = [];
+        _stickyAncestors._key = '';
+        _stickyRowMap.clear();
+      }
+      return;
+    }
+
+    const stickyNodes = [];
+    const maxStickyCount = 7;
+    const maxStickyHeight = Math.max(RH, (_nodeContainer?.clientHeight ?? RH) * 0.4);
+
+    while (stickyNodes.length < maxStickyCount) {
+      const stickyTop = stickyNodes.length * RH;
+      if (stickyTop + RH > maxStickyHeight) break;
+
+      const underIdx = Math.min(Math.floor((scrollTop + stickyTop) / RH), _flatOrder.length - 1);
+      const path = _stickyPathForIndex(underIdx);
+      const item = path[stickyNodes.length];
+      if (!item) break;
+
+      const itemIdx = _flatOrder.indexOf(item);
+      if (itemIdx === -1 || scrollTop <= itemIdx * RH - stickyTop) break;
+
+      const position = _calculateStickyTop(item, stickyTop, scrollTop, RH);
+      stickyNodes.push({ item, position });
+    }
+
+    const newKey = stickyNodes
+      .map(({ item }) => (item.root ? item.root.id : item.node.id))
+      .join('|');
+
+    if (!stickyNodes.length) {
+      if (_stickyEl.childElementCount) {
+        _stickyEl.innerHTML = '';
+        _stickyRowMap.clear();
+      }
+      _stickyAncestors = [];
+      _stickyAncestors._key = '';
+      return;
+    }
+
+    if (newKey !== _stickyAncestors._key) {
+      _stickyEl.innerHTML = '';
+      _stickyRowMap.clear();
+
+      for (let i = stickyNodes.length - 1; i >= 0; i--) {
+        const { item } = stickyNodes[i];
+        const id = item.root ? item.root.id : item.node.id;
+        const row = item.root
+          ? _buildStickyRoot(item.root)
+          : _buildStickyFolder(item.node, item.depth);
+        row.style.zIndex = String(stickyNodes.length - i);
+        row.addEventListener('click', () => {
+          const targetIdx = _flatOrder.findIndex((f) =>
+            item.root ? f.root === item.root : f.node === item.node,
+          );
+          if (targetIdx !== -1) _vlist.scrollToIndex(targetIdx);
+        });
+        _stickyEl.appendChild(row);
+        _stickyRowMap.set(id, row);
+      }
+
+      _stickyAncestors = stickyNodes.map(({ item }) => item);
+      _stickyAncestors._key = newKey;
+    }
+
+    stickyNodes.forEach(({ item, position }) => {
+      const id = item.root ? item.root.id : item.node.id;
+      const row = _stickyRowMap.get(id);
+      if (row) row.style.top = Math.round(position) + 'px';
+    });
+  }
+
+  function _stickyPathForIndex(index) {
+    const path = [];
+    let targetDepth = Infinity;
+
+    for (let i = index; i >= 0; i--) {
+      const item = _flatOrder[i];
+      if (!item) continue;
+      if (item.root) {
+        path.unshift(item);
+        break;
+      }
+      if (item.node?.type !== 'folder' || !item.node.open) continue;
+      if (item.depth < targetDepth) {
+        path.unshift(item);
+        targetDepth = item.depth;
+      }
+    }
+
+    return path;
+  }
+
+  function _calculateStickyTop(item, stickyTop, scrollTop, rowHeight) {
+    const itemIdx = _flatOrder.indexOf(item);
+    if (itemIdx === -1) return stickyTop;
+
+    const itemDepth = item.root ? -1 : item.depth;
+    let nextSectionIdx = itemIdx + 1;
+    while (nextSectionIdx < _flatOrder.length) {
+      const next = _flatOrder[nextSectionIdx];
+      if (next.root || (next.node?.type === 'folder' && next.depth <= itemDepth)) break;
+      nextSectionIdx++;
+    }
+
+    const bottomOfLastDescendant = nextSectionIdx * rowHeight - scrollTop;
+    if (stickyTop + rowHeight > bottomOfLastDescendant && stickyTop <= bottomOfLastDescendant) {
+      return bottomOfLastDescendant - rowHeight;
+    }
+
+    return stickyTop;
+  }
+
+  function _buildStickyRoot(rootNode) {
+    const row = document.createElement('div');
+    row.className = 'tree-root-header tree-sticky-row';
+    const left = document.createElement('div');
+    left.className = 'tree-root-left';
+    const arrow = document.createElement('span');
+    arrow.className = 'tree-root-arrow open';
+    arrow.innerHTML = SVG.arrow;
+    const name = document.createElement('span');
+    name.className = 'tree-root-name';
+    name.textContent = rootNode.name;
+    left.append(arrow, name);
+    row.appendChild(left);
+    return row;
+  }
+
+  function _buildStickyFolder(node, depth) {
+    const row = document.createElement('div');
+    row.className = 'tree-row tree-sticky-row';
+    const indent = document.createElement('div');
+    indent.className = 'tree-indent';
+    indent.style.paddingLeft = depth * 16 + 22 + 'px';
+    const arrowEl = document.createElement('span');
+    arrowEl.className = 'tree-arrow open';
+    arrowEl.innerHTML = SVG.arrow;
+    const iconEl = document.createElement('span');
+    iconEl.className = 'tree-icon';
+    iconEl.appendChild(helpers.fileIconEl(node.name, true, true));
+    const labelEl = document.createElement('span');
+    labelEl.className = 'tree-label';
+    labelEl.textContent = node.name;
+    indent.append(arrowEl, iconEl, labelEl);
+    row.appendChild(indent);
+    return row;
+  }
+
   function _buildRootHeader(rootNode) {
     const isPrimary = state.roots.indexOf(rootNode) === 0;
     const header = document.createElement('div');
@@ -293,19 +465,10 @@ const ExplorerTree = (() => {
     arrow.innerHTML = SVG.arrow;
     const name = document.createElement('span');
     name.className = 'tree-root-name';
-    name.textContent = rootNode.name.toUpperCase();
+    name.textContent = rootNode.name;
     left.append(arrow, name);
-    if (!isPrimary) {
-      const badge = document.createElement('span');
-      badge.className = 'tree-root-badge';
-      badge.textContent = 'folder';
-      left.appendChild(badge);
-    }
     const right = document.createElement('div');
     right.className = 'tree-root-right';
-    const count = document.createElement('span');
-    count.className = 'tree-root-count';
-    count.textContent = _getFileCount(rootNode);
     const menuBtn = document.createElement('button');
     menuBtn.className = 'tree-root-menu-btn';
     menuBtn.innerHTML = SVG.dots;
@@ -314,7 +477,7 @@ const ExplorerTree = (() => {
       e.stopPropagation();
       ctxMenu.showForRoot(e, rootNode);
     });
-    right.append(count, menuBtn);
+    right.append(menuBtn);
     header.append(left, right);
     header.addEventListener('click', () => {
       rootNode.open = !rootNode.open;
@@ -344,6 +507,7 @@ const ExplorerTree = (() => {
       for (const terminal of _terminalNodes(root)) _buildFlatOrderNode(terminal, 0, _flatOrder);
     });
     if (_vlist) _vlist.update(_flatOrder.length);
+    if (_nodeContainer) _updateSticky(_nodeContainer.scrollTop);
   }
 
   function _buildRow(node, depth) {
@@ -357,13 +521,17 @@ const ExplorerTree = (() => {
     row.classList.toggle('autoexec-root', autoexec.isProtectedRootNode(node));
     const indent = document.createElement('div');
     indent.className = 'tree-indent';
+    const rootGuide = document.createElement('span');
+    rootGuide.className = 'tree-guide tree-guide--root';
+    rootGuide.style.left = '16px';
+    row.appendChild(rootGuide);
     for (let i = 0; i < depth; i++) {
       const guide = document.createElement('span');
       guide.className = 'tree-guide';
-      guide.style.left = i * 14 + 13 + 'px';
+      guide.style.left = i * 16 + 30 + 'px';
       row.appendChild(guide);
     }
-    indent.style.paddingLeft = depth * 14 + 6 + 'px';
+    indent.style.paddingLeft = depth * 16 + 22 + 'px';
     const arrowEl = document.createElement('span');
     arrowEl.className =
       'tree-arrow' + (node.type === 'folder' ? (node.open ? ' open' : '') : ' leaf');
@@ -456,7 +624,7 @@ const ExplorerTree = (() => {
     row.dataset.type = node.type;
     const indent = document.createElement('div');
     indent.className = 'tree-indent';
-    indent.style.paddingLeft = depth * 14 + 6 + 'px';
+    indent.style.paddingLeft = depth * 16 + 22 + 'px';
     const arrowEl = document.createElement('span');
     arrowEl.className = 'tree-arrow leaf';
     arrowEl.innerHTML = SVG.arrow;

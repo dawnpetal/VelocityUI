@@ -16,6 +16,7 @@ const appController = (() => {
     { view: 'analysis', label: 'Remote Scan' },
     { view: 'accounts', label: 'Accounts' },
     { view: 'pinboard', label: 'Pinboard' },
+    { view: 'docs', label: 'Docs' },
     { view: 'cloud', label: 'Cloud Scripts' },
     { view: 'settings', label: 'Settings', locked: true },
   ];
@@ -453,6 +454,7 @@ const appController = (() => {
       { label: 'Toggle Autoexecute', hint: 'Explorer', run: () => autoexec.toggleEnabled() },
       { label: 'Accounts', hint: 'View', run: () => _switchView('accounts') },
       { label: 'Pinboard', hint: 'View', run: () => _switchView('pinboard') },
+      { label: 'Docs', hint: 'View', run: () => _switchView('docs') },
       { label: 'Settings', hint: 'View', run: () => _switchView('settings') },
       ...ACTIVITY_VIEW_META.map(({ view, label }) => ({
         label: `${uiState.isActivityViewVisible?.(view) === false ? 'Show' : 'Hide'} ${label} tab`,
@@ -611,6 +613,7 @@ const appController = (() => {
     analysis: 'analysisView',
     accounts: 'accountsView',
     pinboard: 'pinboardView',
+    docs: 'docsView',
     settings: 'settingsPanel',
   };
 
@@ -646,6 +649,7 @@ const appController = (() => {
     if (prevView === 'accounts' && view !== 'accounts') accountsPanel.hide();
     if (view === 'accounts') accountsPanel.show();
     if (view === 'pinboard') pinboard.show();
+    if (view === 'docs') docsPanel.show();
     if (view === 'datatree') dataTree.show('explorer');
     if (view === 'analysis') dataTree.showAnalysis('remote');
     if (view === 'cloud' && !_cloudInited) {
@@ -655,7 +659,6 @@ const appController = (() => {
     if (view === 'settings') {
       themeManager.renderGrid();
       themeManager.renderCustomEditor?.();
-      iconThemeManager.renderList();
       _initSettingsNav();
       menuScriptsPanel.show();
       eventBus.emit('settings:opened');
@@ -671,11 +674,6 @@ const appController = (() => {
       if (searchView) searchView.style.display = view === 'search' ? 'flex' : 'none';
       const sidebarActions = document.getElementById('sidebarHeaderActions');
       if (sidebarActions) sidebarActions.style.display = view === 'search' ? 'none' : '';
-      document
-        .querySelectorAll('#sidebarHeaderActions > .icon-btn:not(.sidebar-action-outline)')
-        .forEach((btn) => {
-          btn.style.display = view === 'explorer' ? '' : 'none';
-        });
       if (view === 'explorer') outline.refresh();
       if (view === 'explorer') autoexec.renderSection?.();
       if (view === 'search') {
@@ -743,7 +741,6 @@ const appController = (() => {
     document
       .getElementById('btnOpenFolder')
       ?.addEventListener('click', () => workspaceController.openFolderDialog());
-    document.getElementById('btnGuide')?.addEventListener('click', () => _openVelocityWebsite());
     document
       .getElementById('activityBar')
       ?.addEventListener('contextmenu', _showActivityBarContextMenu);
@@ -754,6 +751,44 @@ const appController = (() => {
       if (e.target.closest('.tree-row') || e.target.closest('.tree-root-header')) return;
       if (state.fileTree) ctxMenu.showEmpty(e, state.fileTree);
     });
+
+    const menuBtn = document.getElementById('btnSidebarMenu');
+    if (menuBtn) {
+      menuBtn.addEventListener('click', async () => {
+        const sections = ['Chats', 'Outline', 'Timeline'];
+        const visibleSections = sections.filter((s) => {
+          const sel = {
+            Chats: '.ai-chats-section',
+            Outline: '.outline-section',
+            Timeline: '.tl-section',
+          }[s];
+          const el = sel ? document.querySelector(sel) : null;
+          return el && el.style.display !== 'none';
+        });
+        try {
+          await window.__TAURI__.core.invoke('show_explorer_menu', {
+            sections,
+            visibleSections,
+          });
+        } catch (e) {
+          console.error('Explorer menu error:', e);
+        }
+      });
+
+      window.__TAURI__?.event?.listen('explorer-menu-event', ({ payload: id }) => {
+        if (!id || !id.startsWith('toggle_section:')) return;
+        const name = id.slice('toggle_section:'.length);
+        const sectionMap = {
+          Chats: '.ai-chats-section',
+          Outline: '.outline-section',
+          Timeline: '.tl-section',
+        };
+        const sel = sectionMap[name];
+        if (!sel) return;
+        const el = document.querySelector(sel);
+        if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+      });
+    }
   }
 
   function _setupSettings() {
@@ -879,7 +914,7 @@ const appController = (() => {
     outline.syncChrome?.();
     timeline.syncChrome?.();
     if (sbBottom && !sbBottom.querySelector('.sb-section:not(.is-collapsed)')) {
-      sbBottom.style.height = '';
+      sbBottom.style.height = 'auto';
       delete sbBottom.dataset.userResized;
     }
     if (uiState.panelVisible && panel) {
@@ -971,7 +1006,16 @@ const appController = (() => {
     const active = state.getActive();
     const view = id.startsWith('view:') ? id.replace('view:', '') : '';
     if (
-      ['explorer', 'search', 'datatree', 'accounts', 'pinboard', 'cloud', 'settings'].includes(view)
+      [
+        'explorer',
+        'search',
+        'datatree',
+        'accounts',
+        'pinboard',
+        'cloud',
+        'docs',
+        'settings',
+      ].includes(view)
     ) {
       _switchView(view);
       return;
@@ -1033,8 +1077,6 @@ const appController = (() => {
       scope: ['global'],
       allowInEditor: true,
       handler: async () => {
-        const currentView = document.querySelector('.activity-btn.active')?.dataset.view;
-        if (currentView === 'guide') return;
         await _saveActiveFile();
       },
     });
@@ -1293,6 +1335,7 @@ const appController = (() => {
     updateChecker.syncAutoUpdateUi?.();
     if (uiState.autoUpdate !== false) updateChecker.check();
     else updateChecker.populateVersion?.();
+    document.getElementById('appLoadOverlay')?.classList.add('alo-hidden');
   }
 
   return { init };

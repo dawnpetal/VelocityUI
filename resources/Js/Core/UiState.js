@@ -23,7 +23,14 @@ const uiState = (() => {
   let _windowState = null;
   let _hiddenActivityViews = new Set();
   const VALID_EXECUTORS = new Set(['hydrogen', 'opium']);
-  const VALID_ACTIVITY_VIEWS = new Set(['search', 'datatree', 'accounts', 'pinboard', 'cloud']);
+  const VALID_ACTIVITY_VIEWS = new Set([
+    'search',
+    'datatree',
+    'accounts',
+    'pinboard',
+    'cloud',
+    'docs',
+  ]);
   function snapshot() {
     return {
       sidebarWidth: _sidebarWidth,
@@ -65,7 +72,7 @@ const uiState = (() => {
       _aiPanelWidth = Math.max(260, Math.min(520, loaded.aiPanelWidth));
     if (loaded.activeView)
       _activeView = loaded.activeView === 'datatree' ? 'explorer' : loaded.activeView;
-    if (loaded.dataTreeViewMode && ['explorer', 'scanner'].includes(loaded.dataTreeViewMode))
+    if (loaded.dataTreeViewMode && ['explorer'].includes(loaded.dataTreeViewMode))
       _dataTreeViewMode = loaded.dataTreeViewMode;
     if (loaded.fileTreeCollapsed != null) _fileTreeCollapsed = !!loaded.fileTreeCollapsed;
     if (loaded.aiChatsCollapsed != null) _aiChatsCollapsed = !!loaded.aiChatsCollapsed;
@@ -129,7 +136,7 @@ const uiState = (() => {
     save();
   }
   function setDataTreeViewMode(v) {
-    if (!['explorer', 'scanner'].includes(v)) return;
+    if (!['explorer'].includes(v)) return;
     _dataTreeViewMode = v;
     save();
   }

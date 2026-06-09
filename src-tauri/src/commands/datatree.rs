@@ -1818,8 +1818,19 @@ fn remote_calls_in_source(
             .map(|arg| infer_lua_expr_type(arg, &local_types, &require_map, module_function_returns))
             .collect::<Vec<_>>();
         let arg_signature = format!("{{{}}}", args.join(", "));
-        let remote_path = resolve_require_path(target_expr, script_path, vars)
+        let resolved = resolve_require_path(target_expr, script_path, vars);
+        let remote_path = resolved
+            .clone()
             .unwrap_or_else(|| target_expr.to_string());
+        let is_unresolved_local = resolved.is_none()
+            && !remote_path.starts_with("game.")
+            && !remote_path.contains('.')
+            && remote_classes
+                .get(&remote_path.to_ascii_lowercase())
+                .is_none();
+        if is_unresolved_local {
+            return;
+        }
         let remote_name = remote_path
             .rsplit('.')
             .next()

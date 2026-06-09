@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
+use serde_json::Value;
+
 use crate::error::{VelocityUIError, VelocityUIResult};
-use crate::models::{TimelineHistories, TreeState};
+use crate::models::{TimelineEntry, TimelineHistories, TreeState};
 use crate::paths;
 
 use super::{read_json, write_json};
@@ -32,18 +34,57 @@ impl WorkspaceStateManager {
     pub fn load_timeline(&self, work_dir: &str) -> Option<TimelineHistories> {
         let new_path = Self::timelines_path(work_dir).ok()?;
 
-        if new_path.exists() {
-            return read_json(&new_path).ok();
-        }
+        let raw_path = if new_path.exists() {
+            new_path.clone()
+        } else {
+            let legacy = Self::legacy_timeline_path(work_dir).ok()?;
+            if !legacy.exists() {
+                return None;
+            }
+            legacy
+        };
 
-        let legacy = Self::legacy_timeline_path(work_dir).ok()?;
-        let data: TimelineHistories = read_json(&legacy).ok()?;
+        let data = Self::load_and_migrate(&raw_path)?;
 
-        if write_json(&new_path, &data).is_ok() {
-            let _ = std::fs::remove_file(&legacy);
+        if raw_path != new_path {
+            if write_json(&new_path, &data).is_ok() {
+                let _ = std::fs::remove_file(&raw_path);
+            }
         }
 
         Some(data)
+    }
+
+    fn load_and_migrate(path: &PathBuf) -> Option<TimelineHistories> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let raw: Value = serde_json::from_str(&content).ok()?;
+        let obj = raw.as_object()?;
+
+        let mut result = TimelineHistories::new();
+        for (file_path, entries) in obj {
+            let arr = entries.as_array()?;
+            let converted: Vec<TimelineEntry> = arr
+                .iter()
+                .filter_map(|v| {
+                    if v.is_object() {
+                        serde_json::from_value(v.clone()).ok()
+                    } else if let Some(s) = v.as_str() {
+                        Some(TimelineEntry {
+                            at: 0.0,
+                            content: s.to_owned(),
+                            name: String::new(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !converted.is_empty() {
+                result.insert(file_path.clone(), converted);
+            }
+        }
+
+        Some(result)
     }
 
     fn sanitize_key(work_dir: &str) -> String {

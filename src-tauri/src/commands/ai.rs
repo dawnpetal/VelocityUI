@@ -19,6 +19,7 @@ use tokio::{
 const AI_CONFIG_FILE: &str = "ai-config.json";
 const CODEX_HARNESS_DIR: &str = "ai-harness";
 const DEFAULT_MODEL: &str = "gpt-5.5";
+const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_CODEX_PATH: &str = "/Applications/Codex.app/Contents/Resources/codex";
 static AI_CANCEL_REQUESTS: OnceLock<Mutex<HashMap<String, AiCancelHandle>>> = OnceLock::new();
 
@@ -32,8 +33,13 @@ struct AiCancelHandle {
 pub struct AiConfig {
     #[serde(default)]
     enabled: bool,
+    #[serde(default = "default_provider")]
+    provider: String,
     #[serde(default = "default_model")]
     model: String,
+    #[serde(default = "default_claude_model")]
+    claude_model: String,
+    claude_api_key: Option<String>,
     #[serde(default = "default_true")]
     data_tree_context: bool,
     #[serde(default)]
@@ -48,6 +54,7 @@ pub struct AiConfig {
 pub struct AiConfigState {
     #[serde(flatten)]
     config: AiConfig,
+    has_claude_key: bool,
     has_codex_auth: bool,
     resolved_codex_path: Option<String>,
 }
@@ -103,6 +110,14 @@ fn default_model() -> String {
     DEFAULT_MODEL.to_string()
 }
 
+fn default_claude_model() -> String {
+    DEFAULT_CLAUDE_MODEL.to_string()
+}
+
+fn default_provider() -> String {
+    "codex".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -115,7 +130,10 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: default_provider(),
             model: default_model(),
+            claude_model: default_claude_model(),
+            claude_api_key: None,
             data_tree_context: true,
             inline_suggestions: false,
             codex_path: None,
@@ -154,14 +172,22 @@ fn save_config_file(config: &AiConfig) -> Result<(), String> {
 }
 
 fn normalize_config(config: &mut AiConfig) {
-    if !matches!(
-        config.codex_sandbox.as_str(),
-        "read-only" | "workspace-write"
-    ) {
+    if !matches!(config.codex_sandbox.as_str(), "read-only" | "workspace-write") {
         config.codex_sandbox = default_codex_sandbox();
     }
     if config.model.trim().is_empty() {
         config.model = default_model();
+    }
+    if config.claude_model.trim().is_empty() {
+        config.claude_model = default_claude_model();
+    }
+    if !matches!(config.provider.as_str(), "codex" | "claude") {
+        config.provider = default_provider();
+    }
+    if let Some(key) = &config.claude_api_key {
+        if key.trim().is_empty() {
+            config.claude_api_key = None;
+        }
     }
 }
 
@@ -987,11 +1013,13 @@ Cursor suffix:
 #[tauri::command]
 pub fn ai_get_config() -> Result<AiConfigState, String> {
     let config = load_config();
+    let has_claude_key = config.claude_api_key.as_deref().map(str::trim).is_some_and(|k| !k.is_empty());
     Ok(AiConfigState {
         resolved_codex_path: resolve_codex_path(&config)
             .map(|path| path.to_string_lossy().into_owned()),
-        config,
+        has_claude_key,
         has_codex_auth: has_codex_auth(),
+        config,
     })
 }
 
@@ -999,9 +1027,11 @@ pub fn ai_get_config() -> Result<AiConfigState, String> {
 pub fn ai_save_config(mut config: AiConfig) -> Result<AiConfigState, String> {
     normalize_config(&mut config);
     save_config_file(&config)?;
+    let has_claude_key = config.claude_api_key.as_deref().map(str::trim).is_some_and(|k| !k.is_empty());
     Ok(AiConfigState {
         resolved_codex_path: resolve_codex_path(&config)
             .map(|path| path.to_string_lossy().into_owned()),
+        has_claude_key,
         has_codex_auth: has_codex_auth(),
         config,
     })
@@ -1016,7 +1046,10 @@ pub async fn ai_generate(
     if !config.enabled {
         return Err("AI helper is disabled".to_string());
     }
-    ai_generate_codex(&app, &config, request).await
+    match config.provider.as_str() {
+        "claude" => ai_generate_claude(&app, &config, request).await,
+        _ => ai_generate_codex(&app, &config, request).await,
+    }
 }
 
 fn emit_stream(
@@ -1549,5 +1582,157 @@ async fn ai_generate_codex(
         changes,
         usage,
         rate_limits,
+    })
+}
+
+async fn ai_generate_claude(
+    app: &AppHandle,
+    config: &AiConfig,
+    request: AiGenerateRequest,
+) -> Result<AiGenerateResponse, String> {
+    let api_key = config
+        .claude_api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "Claude API key is not configured".to_string())?;
+
+    let model = if config.claude_model.trim().is_empty() {
+        DEFAULT_CLAUDE_MODEL
+    } else {
+        config.claude_model.trim()
+    };
+
+    let language = request.language.as_deref().unwrap_or("lua");
+    let filename = request.filename.as_deref().unwrap_or("Untitled");
+    let code = request.code.as_deref().unwrap_or("");
+    let selection = request.selection.as_deref().unwrap_or("");
+    let instruction = request.instruction.as_deref().unwrap_or("");
+    let max_tokens = request.max_output_tokens.unwrap_or(2200);
+
+    let system = format!(
+        r#"You are an AI assistant inside VelocityUI, a Roblox/Luau script editor and debug tool.
+
+You help developers write, fix, and understand Lua/Luau scripts for their own Roblox games and private testing builds.
+
+STRICT BOUNDARIES — you must never:
+- Request, access, or reference the local filesystem beyond what is explicitly provided in the user message
+- Request access to photos, iCloud, contacts, location, camera, microphone, or any device resource
+- Make network requests or suggest code that does so outside the Roblox sandbox
+- Access credential files or secrets of any kind
+- Help with credential theft, account abuse, exploit distribution, bypassing platform access controls, or real-world harm
+
+You operate only on the code content provided directly in the message. You do not have filesystem access. You do not have tool use. Answer naturally and concisely.
+
+For Lua/Luau code: prefer Lua 5.1-compatible syntax unless the existing code uses Luau features. Match the style of the provided code."#
+    );
+
+    let user_content = if request.task == "ai_chat" {
+        instruction.to_string()
+    } else {
+        let selection_block = if !selection.is_empty() {
+            format!("\n\nSelected code:\n```{language}\n{selection}\n```")
+        } else {
+            String::new()
+        };
+        format!(
+            "Task: {task}\nFile: {filename}\n\nFull code:\n```{language}\n{code}\n```{selection_block}\n\nInstruction: {instruction}",
+            task = request.task,
+        )
+    };
+
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{ "role": "user", "content": user_content }]
+    });
+
+    let request_id = request.request_id.clone();
+    let cancel_rx = register_cancel_request(&request_id, None);
+
+    let work = async {
+        emit_stream(app, &request_id, "started", None, None, None);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Claude request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<Value>(&body_text)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| format!("HTTP {status}"));
+            return Err(format!("Claude API error: {message}"));
+        }
+
+        let data: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Claude response parse failed: {e}"))?;
+
+        let text = data
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|blocks| {
+                blocks.iter().find_map(|block| {
+                    (block.get("type").and_then(Value::as_str) == Some("text"))
+                        .then(|| block.get("text").and_then(Value::as_str).map(str::to_string))
+                        .flatten()
+                })
+            })
+            .unwrap_or_default();
+
+        let usage = data.get("usage").cloned();
+
+        emit_stream(app, &request_id, "message", None, Some(text.clone()), None);
+        emit_stream(app, &request_id, "completed", None, Some(text.clone()), None);
+
+        Ok((text, usage))
+    };
+
+    let result = if let Some(cancel_rx) = cancel_rx {
+        tokio::select! {
+            timed = timeout(Duration::from_secs(120), work) => {
+                timed.map_err(|_| "Claude request timed out".to_string())?
+            }
+            _ = cancel_rx => {
+                emit_stream(app, &request_id, "cancelled", None, None, None);
+                Err("Claude request cancelled".to_string())
+            }
+        }
+    } else {
+        timeout(Duration::from_secs(120), work)
+            .await
+            .map_err(|_| "Claude request timed out".to_string())?
+    };
+
+    unregister_cancel_request(&request_id);
+    let (text, usage) = result?;
+
+    if text.is_empty() {
+        return Err("Claude did not return a response".to_string());
+    }
+
+    Ok(AiGenerateResponse {
+        text,
+        model: model.to_string(),
+        changes: Vec::new(),
+        usage,
+        rate_limits: None,
     })
 }

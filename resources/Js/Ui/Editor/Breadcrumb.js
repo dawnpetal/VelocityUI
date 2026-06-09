@@ -99,14 +99,44 @@ const Breadcrumb = (() => {
     ic.textContent = _symLabel(kind);
     return ic;
   }
+  function _normPath(p) {
+    return (p ?? '').replace(/\\/g, '/').replace(/\/$/, '');
+  }
+
   function _render(bar, filename, chain) {
     bar.innerHTML = '';
     closePicker();
     const fileId = state.activeFileId;
     const file = fileId ? state.getFile(fileId) : null;
-    const workDir = (state.workDir ?? '').replace(/\/$/, '');
-    let rel = file?.path ?? filename;
-    if (workDir && rel.startsWith(workDir)) rel = rel.slice(workDir.length).replace(/^\//, '');
+    const rawPath = file?.path ?? filename;
+    const normFile = _normPath(rawPath);
+
+    const candidates = [
+      ...(state.roots ?? []).map((r) => _normPath(r.path)),
+      _normPath(state.workDir),
+    ].filter(Boolean);
+
+    let matchedRoot = null;
+    let matchedLen = -1;
+    for (const candidate of candidates) {
+      if (
+        (normFile.startsWith(candidate + '/') || normFile === candidate) &&
+        candidate.length > matchedLen
+      ) {
+        matchedRoot = candidate;
+        matchedLen = candidate.length;
+      }
+    }
+
+    let rel;
+    if (matchedRoot) {
+      const rootName = matchedRoot.split('/').pop();
+      const rest = normFile.slice(matchedRoot.length).replace(/^\//, '');
+      rel = rest ? rootName + '/' + rest : rootName;
+    } else {
+      rel = rawPath.replace(/\\/g, '/').split('/').pop() ?? rawPath;
+    }
+
     const pathParts = rel.split('/').filter(Boolean);
     pathParts.forEach((part, i) => {
       if (i > 0) bar.appendChild(_bcSep());
@@ -116,19 +146,15 @@ const Breadcrumb = (() => {
         'bc-seg bc-path' +
         (isFile && !chain.length ? ' bc-active' : '') +
         (isFile ? ' bc-filename' : ' bc-folder');
-      if (!isFile) {
-        const icon = document.createElement('span');
-        icon.className = 'bc-icon bc-icon-folder';
-        icon.textContent = '⊡';
-        seg.appendChild(icon);
-      }
+      if (isFile) seg.appendChild(helpers.fileIconEl(part));
       const nameEl = document.createElement('span');
       nameEl.textContent = part;
       seg.appendChild(nameEl);
-      const segPath = pathParts
-        .slice(0, i + 1)
-        .reduce((acc, p) => acc + '/' + p, workDir.replace(/\/+$/, ''));
-      const segDir = isFile ? segPath.replace(/\/[^\/]+$/, '') || workDir : segPath;
+      const rootParent = matchedRoot ? matchedRoot.replace(/\/[^/]+$/, '') : (state.workDir ?? '');
+      const segPath = pathParts.slice(0, i + 1).reduce((acc, p) => acc + '/' + p, rootParent);
+      const segDir = isFile
+        ? segPath.replace(/\/[^/]+$/, '') || matchedRoot || state.workDir
+        : segPath;
       seg.addEventListener('click', (e) => {
         e.stopPropagation();
         if (isFile) _openSymbolPicker(seg, _lastSyms, null);

@@ -22,9 +22,22 @@ pub struct SessionData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEntry {
+    pub at: f64,
+    pub content: String,
+    pub name: String,
+}
+
+pub type TimelineHistories = HashMap<String, Vec<TimelineEntry>>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(rename = "sidebarWidth")]
     pub sidebar_width: Option<u32>,
+    #[serde(rename = "sidebarHidden", default)]
+    pub sidebar_hidden: Option<bool>,
+    #[serde(rename = "sidebarLocked", default)]
+    pub sidebar_locked: Option<bool>,
     #[serde(rename = "panelVisible")]
     pub panel_visible: bool,
     #[serde(rename = "aiPanelVisible", default)]
@@ -37,8 +50,18 @@ pub struct UiState {
     pub sb_bottom_height: Option<u32>,
     #[serde(rename = "activeView")]
     pub active_view: String,
+    #[serde(rename = "dataTreeViewMode", default)]
+    pub data_tree_view_mode: Option<String>,
+    #[serde(rename = "fileTreeCollapsed", default)]
+    pub file_tree_collapsed: Option<bool>,
     #[serde(rename = "aiChatsCollapsed", default)]
     pub ai_chats_collapsed: Option<bool>,
+    #[serde(rename = "autoexecCollapsed", default)]
+    pub autoexec_collapsed: Option<bool>,
+    #[serde(rename = "outlineCollapsed", default)]
+    pub outline_collapsed: Option<bool>,
+    #[serde(rename = "timelineCollapsed", default)]
+    pub timeline_collapsed: Option<bool>,
     pub settings: UiSettings,
 }
 
@@ -89,5 +112,3 @@ pub struct ExecHistoryEntry {
     pub script: String,
     pub preview: String,
 }
-
-pub type TimelineHistories = HashMap<String, Vec<String>>;

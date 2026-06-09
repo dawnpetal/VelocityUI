@@ -48,9 +48,7 @@ const persist = (() => {
     try {
       const data = await invoke('load_timeline_cmd', { workDir });
       if (!data) return;
-      state.files.forEach((f) => {
-        if (data[f.path]?.length) timeline.restoreHistory(f.id, data[f.path]);
-      });
+      timeline.setPendingHistories(data);
     } catch {}
   }
 

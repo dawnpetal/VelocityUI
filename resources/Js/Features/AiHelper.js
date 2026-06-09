@@ -3,6 +3,7 @@ const AiHelper = (() => {
   let _editor = null;
   let _config = null;
   let _hasCodexAuth = false;
+  let _hasClaudeKey = false;
   let _resolvedCodexPath = '';
   let _busy = false;
   let _activeRequestId = '';
@@ -27,11 +28,31 @@ const AiHelper = (() => {
   const AI_LOCK_TTL = 15 * 60 * 1000;
   const CHAT_STORE_KEY = 'velocityui.codex.chats.v1';
   const CHAT_FOLDER_STORE_KEY = 'velocityui.codex.chatFolders.v1';
-  const AI_MODELS = [
+  const CODEX_MODELS = [
     { id: 'gpt-5.5', name: '5.5', intelligence: 'High', contextTokens: 400000 },
     { id: 'gpt-5.4', name: '5.4', intelligence: 'High', contextTokens: 400000 },
     { id: 'gpt-5.4-mini', name: '5.4 Mini', intelligence: 'Medium', contextTokens: 200000 },
     { id: 'gpt-5.2', name: '5.2', intelligence: 'Medium', contextTokens: 200000 },
+  ];
+  const CLAUDE_MODELS = [
+    {
+      id: 'claude-opus-4-6',
+      name: 'Claude Opus 4.6',
+      intelligence: 'Highest',
+      contextTokens: 200000,
+    },
+    {
+      id: 'claude-sonnet-4-6',
+      name: 'Claude Sonnet 4.6',
+      intelligence: 'High',
+      contextTokens: 200000,
+    },
+    {
+      id: 'claude-haiku-4-5-20251001',
+      name: 'Claude Haiku 4.5',
+      intelligence: 'Fast',
+      contextTokens: 200000,
+    },
   ];
   const _messages = [
     {
@@ -178,8 +199,17 @@ const AiHelper = (() => {
     _renderChatTree();
   }
 
+  function _provider() {
+    return _config?.provider || 'codex';
+  }
+
+  function _activeModels() {
+    return _provider() === 'claude' ? CLAUDE_MODELS : CODEX_MODELS;
+  }
+
   function _enabled() {
-    return Boolean(_config?.enabled && _hasCodexAuth);
+    if (!_config?.enabled) return false;
+    return _provider() === 'claude' ? _hasClaudeKey : _hasCodexAuth;
   }
 
   function _stripFences(text) {
@@ -256,6 +286,7 @@ const AiHelper = (() => {
       const next = await window.__TAURI__.core.invoke('ai_get_config');
       _config = next || {};
       _hasCodexAuth = !!next?.hasCodexAuth;
+      _hasClaudeKey = !!next?.hasClaudeKey;
       _resolvedCodexPath = next?.resolvedCodexPath || '';
       _syncEditorOptions();
       _renderSettingsState();
@@ -264,12 +295,15 @@ const AiHelper = (() => {
     } catch {
       _config = {
         enabled: false,
+        provider: 'codex',
         model: 'gpt-5.5',
+        claudeModel: 'claude-sonnet-4-6',
         dataTreeContext: true,
         codexPath: '',
         codexSandbox: 'read-only',
       };
       _hasCodexAuth = false;
+      _hasClaudeKey = false;
       _resolvedCodexPath = '';
       return _config;
     }
@@ -298,22 +332,28 @@ const AiHelper = (() => {
     return `${value.slice(0, head)}\n-- ... clipped ...\n${value.slice(-tail)}`;
   }
 
-  function _modelInfo(id = '') {
-    return AI_MODELS.find((item) => item.id === id) || AI_MODELS[0];
+  function _modelInfo(id = '', models = null) {
+    const list = models || _activeModels();
+    return list.find((item) => item.id === id) || list[0];
+  }
+
+  function _currentModelId() {
+    return _provider() === 'claude'
+      ? _config?.claudeModel || CLAUDE_MODELS[0].id
+      : _config?.model || CODEX_MODELS[0].id;
   }
 
   function _renderModelSelect() {
     const select = document.getElementById('aiModelSelect');
     if (!select) return;
-    if (!select.options.length) {
-      select.innerHTML = AI_MODELS.map(
+    const models = _activeModels();
+    select.innerHTML = models
+      .map(
         (item) =>
-          `<option value="${helpers.escapeHtml(item.id)}">${helpers.escapeHtml(
-            `${item.name} ${item.intelligence}`,
-          )}</option>`,
-      ).join('');
-    }
-    select.value = _modelInfo(_config?.model).id;
+          `<option value="${helpers.escapeHtml(item.id)}">${helpers.escapeHtml(`${item.name} · ${item.intelligence}`)}</option>`,
+      )
+      .join('');
+    select.value = _modelInfo(_currentModelId()).id;
   }
 
   async function _renderSnapshotSelect() {
@@ -356,7 +396,7 @@ const AiHelper = (() => {
   }
 
   function _estimateContextRatio(payload) {
-    const model = _modelInfo(_config?.model);
+    const model = _modelInfo(_currentModelId());
     const raw = [
       payload.code,
       payload.selection,
@@ -439,6 +479,14 @@ const AiHelper = (() => {
     );
   }
 
+  function _syncPanelLabels() {
+    const name = _provider() === 'claude' ? 'Claude' : 'Codex';
+    const title = document.querySelector('.ai-side-title');
+    if (title) title.textContent = name;
+    const input = document.getElementById('aiChatInput');
+    if (input) input.placeholder = `Ask ${name} about this workspace`;
+  }
+
   function _selectionRange() {
     const selection = _editor?.getSelection?.();
     if (!selection || selection.isEmpty()) return null;
@@ -496,7 +544,12 @@ const AiHelper = (() => {
       toast.show('Enable AI Helper in Settings first', 'warn', 2200);
       return false;
     }
-    if (!_hasCodexAuth) {
+    if (_provider() === 'claude') {
+      if (!_hasClaudeKey) {
+        toast.show('Claude API key is missing — add it in Settings', 'warn', 3000);
+        return false;
+      }
+    } else if (!_hasCodexAuth) {
       toast.show('Codex auth is missing from ~/.codex/auth.json', 'warn', 3000);
       return false;
     }
@@ -1088,7 +1141,7 @@ const AiHelper = (() => {
             : _renderRichText(item.text, item.streaming);
         return `
           <div class="ai-msg ai-msg--${item.role}${item.tone ? ` ai-msg--${item.tone}` : ''}">
-            <div class="ai-msg-role">${item.role === 'user' ? 'You' : 'Codex'}</div>
+            <div class="ai-msg-role">${item.role === 'user' ? 'You' : _provider() === 'claude' ? 'Claude' : 'Codex'}</div>
             <div class="ai-msg-text">${content}${_renderChangeSummary(item.changes)}</div>
           </div>
         `;
@@ -1096,6 +1149,7 @@ const AiHelper = (() => {
       .join('');
     body.scrollTop = body.scrollHeight;
     _syncSendButton();
+    _syncPanelLabels();
   }
 
   function _renderWorkedLabel(message) {
@@ -1628,9 +1682,12 @@ const AiHelper = (() => {
     const select = document.getElementById('aiModelSelect');
     if (!select) return;
     if (!_config) await _loadConfig();
+    const isClaudeProvider = _provider() === 'claude';
     _config = {
       ...(_config || {}),
-      model: _modelInfo(select.value).id,
+      ...(isClaudeProvider
+        ? { claudeModel: _modelInfo(select.value, CLAUDE_MODELS).id }
+        : { model: _modelInfo(select.value, CODEX_MODELS).id }),
     };
     _renderModelSelect();
     _updateContextMeter();
@@ -1638,11 +1695,12 @@ const AiHelper = (() => {
       const next = await window.__TAURI__.core.invoke('ai_save_config', { config: _config });
       _config = next || _config;
       _hasCodexAuth = !!next?.hasCodexAuth;
+      _hasClaudeKey = !!next?.hasClaudeKey;
       _resolvedCodexPath = next?.resolvedCodexPath || '';
       _renderSettingsState();
       _renderModelSelect();
     } catch (err) {
-      toast.show(err?.message || String(err) || 'Could not save Codex model', 'fail', 3000);
+      toast.show(err?.message || String(err) || 'Could not save model', 'fail', 3000);
     }
   }
 
@@ -1700,9 +1758,11 @@ const AiHelper = (() => {
     _syncChatChrome();
     const panel = document.getElementById('sidebarBottom');
     if (!panel) return;
-    if (!uiState.aiChatsCollapsed && !panel.dataset.userResized) panel.style.height = '360px';
+    if (!uiState.aiChatsCollapsed && !panel.dataset.userResized) {
+      panel.style.height = (uiState.sbBottomHeight > 0 ? uiState.sbBottomHeight : 200) + 'px';
+    }
     if (!panel.querySelector('.sb-section:not(.is-collapsed)')) {
-      panel.style.height = '';
+      panel.style.height = 'auto';
       delete panel.dataset.userResized;
     }
   }
@@ -1740,16 +1800,36 @@ const AiHelper = (() => {
       const el = document.getElementById(id);
       if (el) el.value = value || '';
     };
+    const setHidden = (id, hidden) => {
+      const el = document.getElementById(id);
+      if (el) el.closest('.sp-row')?.classList.toggle('hidden', hidden);
+    };
+    const isClaudeProvider = (_config?.provider || 'codex') === 'claude';
     setChecked('aiEnabledToggle', _config?.enabled);
     setChecked('aiDataTreeToggle', _config?.dataTreeContext);
+    setValue('aiProviderSelect', _config?.provider || 'codex');
     setValue('aiCodexSandboxSelect', _config?.codexSandbox || 'read-only');
+    setValue('aiClaudeApiKey', _config?.claudeApiKey || '');
+    setHidden('aiCodexSandboxSelect', isClaudeProvider);
+    setHidden('aiClaudeApiKey', !isClaudeProvider);
     _renderModelSelect();
   }
 
   async function saveSettingsFromPanel() {
+    const isClaudeProvider =
+      (document.getElementById('aiProviderSelect')?.value || 'codex') === 'claude';
+    const modelSelect = document.getElementById('aiModelSelect');
+    const modelId = modelSelect?.value || '';
     const config = {
       enabled: !!document.getElementById('aiEnabledToggle')?.checked,
-      model: _modelInfo(_config?.model).id,
+      provider: document.getElementById('aiProviderSelect')?.value || 'codex',
+      model: isClaudeProvider
+        ? _config?.model || CODEX_MODELS[0].id
+        : _modelInfo(modelId, CODEX_MODELS).id,
+      claudeModel: isClaudeProvider
+        ? _modelInfo(modelId, CLAUDE_MODELS).id
+        : _config?.claudeModel || CLAUDE_MODELS[0].id,
+      claudeApiKey: document.getElementById('aiClaudeApiKey')?.value?.trim() || null,
       dataTreeContext: !!document.getElementById('aiDataTreeToggle')?.checked,
       inlineSuggestions: false,
       codexPath: null,
@@ -1759,13 +1839,14 @@ const AiHelper = (() => {
       const next = await window.__TAURI__.core.invoke('ai_save_config', { config });
       _config = next || config;
       _hasCodexAuth = !!next?.hasCodexAuth;
+      _hasClaudeKey = !!next?.hasClaudeKey;
       _resolvedCodexPath = next?.resolvedCodexPath || '';
       _renderSettingsState();
       _syncEditorOptions();
       _renderChat();
-      toast.show('Codex settings saved', 'ok', 1600);
+      toast.show('AI settings saved', 'ok', 1600);
     } catch (err) {
-      toast.show(err?.message || String(err) || 'Could not save Codex settings', 'fail', 3600);
+      toast.show(err?.message || String(err) || 'Could not save AI settings', 'fail', 3600);
     }
   }
 
@@ -1774,6 +1855,11 @@ const AiHelper = (() => {
     await _loadConfig();
     _renderSettingsState();
     document.getElementById('aiSaveBtn')?.addEventListener('click', saveSettingsFromPanel);
+    document.getElementById('aiProviderSelect')?.addEventListener('change', () => {
+      if (_config)
+        _config = { ..._config, provider: document.getElementById('aiProviderSelect').value };
+      _renderSettingsState();
+    });
   }
 
   function mountPanel() {

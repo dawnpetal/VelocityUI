@@ -468,6 +468,7 @@ fn main() {
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,
             commands::window::set_app_zoom,
+            commands::window::show_explorer_menu,
             commands::executor::inject_script,
             commands::executor::inject_script_with_client_bridge,
             commands::executor::get_active_port,

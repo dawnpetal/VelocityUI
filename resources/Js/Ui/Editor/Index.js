@@ -312,8 +312,25 @@ const editor = (() => {
       await _showTextFile(f);
     }
   }
+  function _showLoader() {
+    const row = document.querySelector('.tab-row');
+    if (!row) return null;
+    const el = document.createElement('div');
+    el.className = 'tab-row-loader';
+    row.appendChild(el);
+    return el;
+  }
+
   async function _showTextFile(file) {
-    if (file.content === null) await fileManager.ensureContent(file.id);
+    const needsFetch = file.content === null;
+    const loader = needsFetch ? _showLoader() : null;
+    if (needsFetch) {
+      try {
+        await fileManager.ensureContent(file.id);
+      } finally {
+        loader?.remove();
+      }
+    }
     _setPane('monaco');
     document.getElementById('_velocityuiDeletedOverlay')?.remove();
     if (file.deleted) {

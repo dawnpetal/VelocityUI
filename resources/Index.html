@@ -31,13 +31,61 @@
   <link rel="stylesheet" href="Css/Features/Preview.css">
   <link rel="stylesheet" href="Css/Features/Timeline.css">
   <link rel="stylesheet" href="Css/Features/MultiInstance.css">
-  <link rel="stylesheet" href="Css/Features/Guide.css">
   <link rel="stylesheet" href="Css/Features/MenuScripts.css" />
   <link rel="stylesheet" href="Css/Features/Accounts.css">
+  <link rel="stylesheet" href="Css/Features/Docs.css">
   <link rel="stylesheet" href="Css/Global/Enhancements.css">
 </head>
 
 <body spellcheck="false">
+  <div id="appLoadOverlay" aria-hidden="true">
+    <div class="alo-inner">
+      <span class="alo-spinner" aria-hidden="true"></span>
+      <span class="alo-label">Loading</span>
+    </div>
+  </div>
+  <style>
+    #appLoadOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 99999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-base, #0e0e10);
+      transition: opacity 0.45s ease, visibility 0.45s ease;
+    }
+    #appLoadOverlay.alo-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .alo-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .alo-spinner {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      border: 3px solid rgba(255,255,255,0.16);
+      border-top-color: rgba(255,255,255,0.86);
+      animation: alo-spin 0.86s linear infinite;
+    }
+    .alo-label {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0;
+      color: rgba(255,255,255,0.56);
+    }
+    @keyframes alo-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
   <div class="app">
 
     <div class="titlebar" id="titlebar">
@@ -173,6 +221,14 @@
               d="M6.5 22q-.425 0-.712-.288T5.5 21v-4H2.575q-.575 0-.85-.5t0-1L3.5 12.35V10H3q-.425 0-.712-.288T2 9t.288-.712T3 8h7q.425 0 .713.288T11 9t-.288.713T10 10h-.5v2.35l1.775 3.15q.275.5 0 1t-.85.5H7.5v4q0 .425-.288.713T6.5 22M20 20h-7q-.425 0-.712-.288T12 19t.288-.712T13 18h7V6H3q-.425 0-.712-.288T2 5t.288-.712T3 4h17q.825 0 1.413.588T22 6v12q0 .825-.587 1.413T20 20M4.3 15h4.4l-1.2-2.1V10h-2v2.9zm2.2 0" />
           </svg>
         </button>
+        <button class="activity-btn" data-view="docs" title="Docs" aria-label="Docs" aria-pressed="false">
+          <svg class="lucide activity-icon activity-icon--dark" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M7.5 22q-1.45 0-2.475-1.025T4 18.5v-13q0-1.45 1.025-2.475T7.5 2H20v15q-.625 0-1.062.438T18.5 18.5t.438 1.063T20 20v2zm.5-7h2V4H8zm-.5 5h9.325q-.15-.35-.237-.712T16.5 18.5q0-.4.075-.775t.25-.725H7.5q-.65 0-1.075.438T6 18.5q0 .65.425 1.075T7.5 20"/>
+          </svg>
+          <svg class="lucide activity-icon activity-icon--light" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M7.5 22q-1.45 0-2.475-1.025T4 18.5v-13q0-1.45 1.025-2.475T7.5 2H20v15q-.625 0-1.062.438T18.5 18.5t.438 1.063T20 20v2zM6 15.325q.35-.175.725-.25T7.5 15H8V4h-.5q-.625 0-1.062.438T6 5.5zM10 15h8V4h-8zm-4 .325V4zM7.5 20h9.325q-.15-.35-.237-.712T16.5 18.5q0-.4.075-.775t.25-.725H7.5q-.65 0-1.075.438T6 18.5q0 .65.425 1.075T7.5 20"/>
+          </svg>
+        </button>
         <button class="activity-btn" data-view="cloud" title="Cloud Scripts" aria-label="Cloud Scripts"
           aria-pressed="false">
           <svg class="lucide activity-icon activity-icon--dark" viewBox="0 0 36 36" aria-hidden="true">
@@ -187,11 +243,6 @@
           </svg>
         </button>
         <div class="activity-spacer" role="none"></div>
-        <button class="activity-btn" id="btnGuide" title="Velocity Website" aria-label="Open Velocity website">
-          <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="currentColor" d="M11 9h2V7h-2m1 13c-4.41 0-8-3.59-8-8s3.59-8 8-8s8 3.59 8 8s-3.59 8-8 8m0-18A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m-1 15h2v-6h-2z"/>
-          </svg>
-        </button>
         <button class="activity-btn" data-view="settings" title="Settings" aria-label="Settings" aria-pressed="false">
           <svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -217,35 +268,8 @@
         <div class="sidebar-header" id="sidebarHeader">
           <span class="sidebar-label" id="sidebarLabel">Explorer</span>
           <div class="sidebar-header-actions" id="sidebarHeaderActions" role="group" aria-label="Sidebar actions">
-            <button class="icon-btn" id="btnNewFile" title="New File (⌘N)" aria-label="New file">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                stroke-linejoin="round" aria-hidden="true">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="12" y1="18" x2="12" y2="12" />
-                <line x1="9" y1="15" x2="15" y2="15" />
-              </svg>
-            </button>
-            <button class="icon-btn" id="btnNewFolder" title="New Folder" aria-label="New folder">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                stroke-linejoin="round" aria-hidden="true">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                <line x1="12" y1="11" x2="12" y2="17" />
-                <line x1="9" y1="14" x2="15" y2="14" />
-              </svg>
-            </button>
-            <button class="icon-btn" id="btnOpenFolder" title="Open Folder" aria-label="Open folder">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                stroke-linejoin="round" aria-hidden="true">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-            <button class="icon-btn" id="btnRefreshTree" title="Refresh" aria-label="Refresh file tree">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                stroke-linejoin="round" aria-hidden="true">
-                <polyline points="23 4 23 10 17 10" />
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-              </svg>
+            <button class="icon-btn sidebar-menu-btn" id="btnSidebarMenu" title="More actions" aria-label="More actions">
+              <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="3" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="8" cy="13" r="1.2"/></svg>
             </button>
           </div>
         </div>
@@ -261,7 +285,20 @@
                 </svg>
               </span>
               <span class="sb-section-label">Folders</span>
-              <span class="sb-section-meta" id="explorerFilesMeta"></span>
+              <div class="explorer-files-actions">
+                <button class="icon-btn" id="btnNewFile" title="New File (⌘N)" aria-label="New file">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M5 14a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h3v2.5A1.5 1.5 0 0 0 9.5 6H12v.025q.516.048 1 .188v-.799c0-.398-.158-.779-.439-1.061L9.647 1.439A1.5 1.5 0 0 0 8.586 1H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2.261a5.6 5.6 0 0 1-.654-1zM9 2.207L11.793 5H9.5a.5.5 0 0 1-.5-.5zM11.5 7a4.5 4.5 0 1 0 0 9a4.5 4.5 0 0 0 0-9m2.5 5h-2v2a.5.5 0 0 1-1 0v-2H9a.5.5 0 0 1 0-1h2V9a.5.5 0 0 1 1 0v2h2a.5.5 0 0 1 0 1"/></svg>
+                </button>
+                <button class="icon-btn" id="btnNewFolder" title="New Folder" aria-label="New folder">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 4.5V6h3.586a.5.5 0 0 0 .353-.146L7.293 4.5L5.939 3.146A.5.5 0 0 0 5.586 3H3.5A1.5 1.5 0 0 0 2 4.5m-1 0A2.5 2.5 0 0 1 3.5 2h2.086a1.5 1.5 0 0 1 1.06.44L8.207 4H12.5A2.5 2.5 0 0 1 15 6.5v.757a5.5 5.5 0 0 0-1-.657v-.1A1.5 1.5 0 0 0 12.5 5H8.207l-1.56 1.56A1.5 1.5 0 0 1 5.585 7H2v4.5A1.5 1.5 0 0 0 3.5 13h2.707q.149.524.393 1H3.5A2.5 2.5 0 0 1 1 11.5zm15 7a4.5 4.5 0 1 1-9 0a4.5 4.5 0 0 1 9 0M12 9a.5.5 0 0 0-1 0v2H9a.5.5 0 0 0 0 1h2v2a.5.5 0 0 0 1 0v-2h2a.5.5 0 0 0 0-1h-2z"/></svg>
+                </button>
+                <button class="icon-btn" id="btnOpenFolder" title="Open Folder" aria-label="Open folder">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="square" stroke-width="2"><path d="M13 20h9V6H11L9 3.5H2v8.25"/><path d="m6.042 21.502l3.46-3.5l-3.46-3.5m2.258 3.5H.998"/></g></svg>
+                </button>
+                <button class="icon-btn" id="btnRefreshTree" title="Refresh" aria-label="Refresh file tree">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 20v-2h2.75l-.4-.35q-1.3-1.15-1.825-2.625T4 12.05q0-2.775 1.662-4.938T10 4.25v2.1Q8.2 7 7.1 8.563T6 12.05q0 1.125.425 2.188T7.75 16.2l.25.25V14h2v6zm10-.25v-2.1q1.8-.65 2.9-2.212T18 11.95q0-1.125-.425-2.187T16.25 7.8L16 7.55V10h-2V4h6v2h-2.75l.4.35q1.225 1.225 1.788 2.663T20 11.95q0 2.775-1.662 4.938T14 19.75"/></svg>
+                </button>
+              </div>
             </div>
             <div class="sb-section-body explorer-files-body" id="explorerFilesBody">
               <div class="file-tree" id="fileTree" role="tree" aria-label="File explorer"></div>
@@ -338,70 +375,10 @@
           <div id="settingsView" class="sidebar-view sidebar-view--settings" style="display:none"></div>
         </div>
 
-        <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-orientation="vertical"
-          aria-label="Resize sidebar"></div>
 
-        <div class="sidebar-bottom" id="sidebarBottom" style="display:none">
-          <div class="sb-resizer" id="sidebarBottomResizer" role="separator" aria-orientation="horizontal"
-            aria-label="Resize explorer details"></div>
-          <section class="sb-section ai-chats-section" aria-label="Chats">
-            <div class="sb-section-header ai-chats-header" id="aiChatsHeader" role="button" tabindex="0"
-              aria-expanded="true">
-              <span class="sb-arrow ai-chats-arrow open" id="aiChatsArrow" aria-hidden="true">
-                <svg viewBox="0 0 12 12" fill="none">
-                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
-                    stroke-linejoin="round" />
-                </svg>
-              </span>
-              <span class="sb-section-label">Chats</span>
-              <span class="sb-section-meta" id="aiChatsCount"></span>
-              <button class="sb-icon-btn" id="btnAiChatNew" title="New Codex chat" aria-label="New Codex chat">
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
-                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M8 3v10" />
-                  <path d="M3 8h10" />
-                </svg>
-              </button>
-              <button class="sb-icon-btn" id="btnAiChatFolder" title="New chat folder" aria-label="New chat folder">
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M14.5 12.5a1.5 1.5 0 0 1-1.5 1.5H3a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 3 3h3l1.5 2H13A1.5 1.5 0 0 1 14.5 6.5z" />
-                  <path d="M8 7.5v4" />
-                  <path d="M6 9.5h4" />
-                </svg>
-              </button>
-            </div>
-            <div class="sb-section-body ai-chats-body" id="aiChatsBody">
-              <div class="ai-chat-tree" id="aiChatTree" role="tree" aria-label="Codex chats"></div>
-            </div>
-          </section>
-          <section class="sb-section outline-section" aria-label="Outline">
-            <div class="sb-section-header outline-header" id="outlineHeader" role="button" tabindex="0"
-              aria-expanded="true">
-              <span class="sb-arrow outline-arrow open" id="outlineArrow" aria-hidden="true">
-                <svg viewBox="0 0 12 12" fill="none">
-                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
-                    stroke-linejoin="round" />
-                </svg>
-              </span>
-              <span class="sb-section-label">Outline</span>
-              <span class="sb-section-meta" id="outlineCount"></span>
-              <button class="sb-icon-btn" id="btnOutlineRefresh" title="Refresh Outline" aria-label="Refresh outline">
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
-                  stroke-linejoin="round" aria-hidden="true">
-                  <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
-                  <path d="M13.5 2.5v3.2h-3.2" />
-                </svg>
-              </button>
-            </div>
-            <div class="sb-section-body outline-body" id="outlineBody">
-              <div id="outlineView" class="sidebar-view sidebar-view--outline">
-                <div class="outline-empty" id="outlineEmpty">Open a Lua file to see its outline</div>
-                <div class="outline-list" id="outlineList"></div>
-              </div>
-            </div>
-          </section>
-          <section class="sb-section tl-section" aria-label="Timeline">
+        <div class="sb-resizer" id="sidebarBottomResizer" role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel"></div>
+        <div class="sidebar-bottom" id="sidebarBottom">
+<section class="sb-section tl-section" aria-label="Timeline">
             <div class="sb-section-header tl-header" id="tlHeader" role="button" tabindex="0" aria-expanded="true">
               <span class="sb-arrow tl-arrow open" id="tlArrow" aria-hidden="true">
                 <svg viewBox="0 0 12 12" fill="none">
@@ -416,7 +393,64 @@
               <div class="tl-list" id="tlList" role="list"></div>
             </div>
           </section>
+<section class="sb-section outline-section" aria-label="Outline">
+            <div class="sb-section-header outline-header" id="outlineHeader" role="button" tabindex="0"
+              aria-expanded="true">
+              <span class="sb-arrow outline-arrow open" id="outlineArrow" aria-hidden="true">
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="sb-section-label">Outline</span>
+              <span class="sb-section-meta" id="outlineCount"></span>
+              <button class="sb-icon-btn" id="btnOutlineRefresh" title="Refresh Outline" aria-label="Refresh outline">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                  stroke-linejoin="round" aria-hidden="true">
+                  <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2.5v3.2h-3.2" />
+                </svg>
+              </button>
+            </div>
+            <div class="sb-section-body outline-body" id="outlineBody">
+              <div id="outlineView" class="sidebar-view sidebar-view--outline">
+                <div class="outline-empty" id="outlineEmpty">Open a Lua file to see its outline</div>
+                <div class="outline-list" id="outlineList"></div>
+              </div>
+            </div>
+          </section>
+<section class="sb-section ai-chats-section" aria-label="Chats">
+            <div class="sb-section-header ai-chats-header" id="aiChatsHeader" role="button" tabindex="0"
+              aria-expanded="true">
+              <span class="sb-arrow ai-chats-arrow open" id="aiChatsArrow" aria-hidden="true">
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                    stroke-linejoin="round" />
+                </svg>
+              </span>
+              <span class="sb-section-label">Chats</span>
+              <span class="sb-section-meta" id="aiChatsCount"></span>
+              <button class="sb-icon-btn" id="btnAiChatNew" title="New chat" aria-label="New chat">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M8 3v10" /><path d="M3 8h10" />
+                </svg>
+              </button>
+              <button class="sb-icon-btn" id="btnAiChatFolder" title="New chat folder" aria-label="New chat folder">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14.5 12.5a1.5 1.5 0 0 1-1.5 1.5H3a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 3 3h3l1.5 2H13A1.5 1.5 0 0 1 14.5 6.5z" />
+                  <path d="M8 7.5v4" /><path d="M6 9.5h4" />
+                </svg>
+              </button>
+            </div>
+            <div class="sb-section-body ai-chats-body" id="aiChatsBody">
+              <div class="ai-chat-tree" id="aiChatTree" role="tree" aria-label="AI chats"></div>
+            </div>
+          </section>
         </div>
+        <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-orientation="vertical"
+          aria-label="Resize sidebar"></div>
+
       </aside>
 
       <main class="editor-area" role="main" aria-label="Editor">
@@ -535,7 +569,10 @@
         <div class="ai-side-resizer" id="aiSideResizer" role="separator" aria-orientation="vertical"
           aria-label="Resize Codex panel"></div>
         <header class="ai-side-header">
-          <div>
+          <div class="ai-side-brand">
+            <svg class="ai-side-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path stroke="currentColor" stroke-linejoin="round" stroke-width="1.5" d="m15 2l.539 2.392a5.39 5.39 0 0 0 4.07 4.07L22 9l-2.392.539a5.39 5.39 0 0 0-4.07 4.07L15 16l-.539-2.392a5.39 5.39 0 0 0-4.07-4.07L8 9l2.392-.539a5.39 5.39 0 0 0 4.07-4.07zM7 12l.385 1.708a3.85 3.85 0 0 0 2.907 2.907L12 17l-1.708.385a3.85 3.85 0 0 0-2.907 2.907L7 22l-.385-1.708a3.85 3.85 0 0 0-2.907-2.907L2 17l1.708-.385a3.85 3.85 0 0 0 2.907-2.907z"/>
+            </svg>
             <span class="ai-side-title">Codex</span>
           </div>
           <div class="ai-side-actions">
@@ -590,6 +627,7 @@
       <div id="analysisView" class="workspace-view workspace-view--analysis" style="display:none"></div>
       <div id="accountsView" class="workspace-view workspace-view--accounts" style="display:none"></div>
       <div id="pinboardView" class="workspace-view workspace-view--pinboard" style="display:none"></div>
+      <div id="docsView" class="workspace-view workspace-view--docs" style="display:none"></div>
 
       <div id="settingsPanel" class="settings-panel" style="display:none">
         <nav class="sp-nav" id="spNav">
@@ -809,13 +847,13 @@
           <section class="sp-section" id="sp-ai">
             <div class="sp-section-header">
               <span class="sp-section-title">AI Helper</span>
-              <span class="sp-section-desc">Codex panel and DataTree-aware code actions</span>
+              <span class="sp-section-desc">AI panel and DataTree-aware code actions</span>
             </div>
             <div class="sp-rows">
               <div class="sp-row">
                 <div class="sp-row-info">
                   <label class="sp-row-label" for="aiEnabledToggle">Enable AI Helper</label>
-                  <span class="sp-row-hint">Enable the Codex right panel and code actions</span>
+                  <span class="sp-row-hint">Enable the AI right panel and code actions</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="aiEnabledToggle">
@@ -824,8 +862,20 @@
               </div>
               <div class="sp-row">
                 <div class="sp-row-info">
+                  <label class="sp-row-label" for="aiProviderSelect">Provider</label>
+                  <span class="sp-row-hint">Choose between Codex (OpenAI) or Claude (Anthropic)</span>
+                </div>
+                <div class="settings-control">
+                  <select class="settings-select" id="aiProviderSelect" aria-label="AI provider">
+                    <option value="codex">Codex</option>
+                    <option value="claude">Claude</option>
+                  </select>
+                </div>
+              </div>
+              <div class="sp-row">
+                <div class="sp-row-info">
                   <label class="sp-row-label" for="aiCodexSandboxSelect">File Access</label>
-                  <span class="sp-row-hint">Choose whether Codex can edit the open folder</span>
+                  <span class="sp-row-hint">Whether Codex can edit the open folder</span>
                 </div>
                 <div class="settings-control">
                   <select class="settings-select" id="aiCodexSandboxSelect" aria-label="Codex file access">
@@ -836,8 +886,18 @@
               </div>
               <div class="sp-row">
                 <div class="sp-row-info">
+                  <label class="sp-row-label" for="aiClaudeApiKey">Claude API Key</label>
+                  <span class="sp-row-hint">Your Anthropic API key — stored locally, never shared</span>
+                </div>
+                <div class="settings-control">
+                  <input class="settings-input" type="password" id="aiClaudeApiKey"
+                    placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+                </div>
+              </div>
+              <div class="sp-row">
+                <div class="sp-row-info">
                   <label class="sp-row-label" for="aiDataTreeToggle">DataTree Retrieval</label>
-                  <span class="sp-row-hint">Let Codex query a selected DataTree only when needed</span>
+                  <span class="sp-row-hint">Let the AI query a selected DataTree only when needed</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="aiDataTreeToggle" checked>
@@ -868,13 +928,6 @@
             </div>
           </section>
 
-          <section class="sp-section" id="sp-icons">
-            <div class="sp-section-header">
-              <span class="sp-section-title">Icon Themes</span>
-              <span class="sp-section-desc">Choose a file icon set for the explorer</span>
-            </div>
-            <div id="iconThemeList" class="icon-theme-list"></div>
-          </section>
 
           <section class="sp-section" id="sp-shortcuts">
             <div class="sp-section-header">
@@ -968,12 +1021,7 @@
               </div>
             </div>
             <div class="sp-row">
-              <div class="sp-row-info">
-                <span class="sp-row-label">Executor update guide</span>
-                <span class="sp-row-hint sp-row-hint--wrap">Join the Discord &rarr; <strong>#custom-interfaces</strong> &rarr; search
-                  <strong>VelocityUI</strong></span>
-              </div>
-              <button class="about-discord-btn" id="btnDiscord">
+                <button class="about-discord-btn" id="btnDiscord">
                 <svg width="15" height="15" viewBox="0 0 256 199" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><path d="M216.856339 16.5966031C200.285002 8.84328665 182.566144 3.2084988 164.041564 0C161.766523 4.11318106 159.108624 9.64549908 157.276099 14.0464379C137.583995 11.0849896 118.072967 11.0849896 98.7430163 14.0464379C96.9108417 9.64549908 94.1925838 4.11318106 91.8971895 0C73.3526068 3.2084988 55.6133949 8.86399117 39.0420583 16.6376612C5.61752293 67.146514 -3.4433191 116.400813 1.08711069 164.955721C23.2560196 181.510915 44.7403634 191.567697 65.8621325 198.148576C71.0772151 190.971126 75.7283628 183.341335 79.7352139 175.300261C72.104019 172.400575 64.7949724 168.822202 57.8887866 164.667963C59.7209612 163.310589 61.5131304 161.891452 63.2445898 160.431257C105.36741 180.133187 151.134928 180.133187 192.754523 160.431257C194.506336 161.891452 196.298154 163.310589 198.110326 164.667963C191.183787 168.842556 183.854737 172.420929 176.223542 175.320965C180.230393 183.341335 184.861538 190.991831 190.096624 198.16893C211.238746 191.588051 232.743023 181.531619 254.911949 164.955721C260.227747 108.668201 245.831087 59.8662432 216.856339 16.5966031ZM85.4738752 135.09489C72.8290281 135.09489 62.4592217 123.290155 62.4592217 108.914901C62.4592217 94.5396472 72.607595 82.7145587 85.4738752 82.7145587C98.3405064 82.7145587 108.709962 94.5189427 108.488529 108.914901C108.508531 123.290155 98.3405064 135.09489 85.4738752 135.09489ZM170.525237 135.09489C157.88039 135.09489 147.510584 123.290155 147.510584 108.914901C147.510584 94.5396472 157.658606 82.7145587 170.525237 82.7145587C183.391518 82.7145587 193.761324 94.5189427 193.539891 108.914901C193.539891 123.290155 183.391518 135.09489 170.525237 135.09489Z"/></svg>
                 Join Discord
               </button>
@@ -1181,6 +1229,7 @@
   <script src="Js/Ui/Pinboard/PinboardCard.js"></script>
   <script src="Js/Ui/Pinboard/PinboardOps.js"></script>
   <script src="Js/Ui/Pinboard/Pinboard.js"></script>
+  <script src="Js/Ui/Docs/Docs.js"></script>
   <script src="Js/Ui/DataTree/DataTreeMath.js"></script>
   <script src="Js/Ui/DataTree/DataTreeMaterials.js"></script>
   <script src="Js/Ui/DataTree/DataTreeStudioProperties.js"></script>
@@ -1194,7 +1243,6 @@
   <script src="Js/Controllers/PanelController.js"></script>
   <script src="Js/Controllers/EditorController.js"></script>
   <script src="Js/Controllers/WorkspaceController.js"></script>
-  <script src="Js/Ui/Guide.js"></script>
   <script src="Js/Core/UpdateChecker.js"></script>
   <script src="Js/Features/Outline.js"></script>
   <script src="Js/Controllers/AppController.js"></script>

@@ -3,6 +3,7 @@ const outline = (() => {
   let _entries = [];
   let _query = '';
   let _emptyMessage = 'Open a file to see its outline';
+  const _collapsed = new Map();
 
   const KINDS = [
     {
@@ -172,14 +173,18 @@ const outline = (() => {
       header.className = 'outline-group-header';
       header.innerHTML = `<span class="outline-group-chevron"><svg viewBox="0 0 12 12" fill="none"><path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="outline-group-icon" style="color:${cfg?.color}">${ICONS[kind] ?? ''}</span><span>${cfg?.label?.toUpperCase() ?? kind.toUpperCase()}</span><span class="outline-group-count">${group.length}</span>`;
 
-      let collapsed = false;
       const rowsContainer = document.createElement('div');
       rowsContainer.className = 'outline-group-rows';
 
+      const isCollapsed = _collapsed.get(kind) ?? false;
+      rowsContainer.style.display = isCollapsed ? 'none' : '';
+      header.classList.toggle('collapsed', isCollapsed);
+
       header.addEventListener('click', () => {
-        collapsed = !collapsed;
-        rowsContainer.style.display = collapsed ? 'none' : '';
-        header.classList.toggle('collapsed', collapsed);
+        const next = !(_collapsed.get(kind) ?? false);
+        _collapsed.set(kind, next);
+        rowsContainer.style.display = next ? 'none' : '';
+        header.classList.toggle('collapsed', next);
       });
 
       for (const entry of group) {
@@ -257,10 +262,12 @@ const outline = (() => {
         sync();
         const panel = document.getElementById('sidebarBottom');
         if (panel) {
-          if (expanded && !panel.dataset.userResized) panel.style.height = '360px';
+          if (expanded && !panel.dataset.userResized) {
+            panel.style.height = (uiState.sbBottomHeight > 0 ? uiState.sbBottomHeight : 200) + 'px';
+          }
           const allCollapsed = !panel.querySelector('.sb-section:not(.is-collapsed)');
           if (allCollapsed) {
-            panel.style.height = '';
+            panel.style.height = 'auto';
             delete panel.dataset.userResized;
           }
         }

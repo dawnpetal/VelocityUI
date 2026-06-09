@@ -510,7 +510,8 @@ const dataTree = (() => {
   function showAnalysis(mode = null) {
     _activeContainerId = 'analysisView';
     state_.viewMode = 'analysis-workspace';
-    state_.analysisMode = 'remote';
+    if (mode) state_.analysisMode = mode;
+    else if (!state_.analysisMode) state_.analysisMode = 'remote';
     state_.visible = true;
     if (!_inited) {
       const root = _container();
@@ -870,23 +871,69 @@ const dataTree = (() => {
     shell.className = `analysis-shell${state_.importing ? ' is-importing' : ''}${state_.treeLoading ? ' is-tree-loading' : ''}`;
     const snapshot = activeSnapshot();
     const busy = state_.importing;
-    const mode = 'remote';
     const subtitle = busy
       ? 'Importing RBXLX'
       : snapshot?.storagePath
         ? `${(snapshot.nodeCount || 0).toLocaleString()} instances ready`
         : 'Load a DataTree import first';
+
+    const mode = state_.analysisMode || 'remote';
+
     const header = document.createElement('header');
     header.className = 'analysis-topbar';
-    header.innerHTML = `<div class="analysis-title"><h2>Remote Scan</h2><p>${_escape(subtitle)}</p></div><div class="analysis-actions"><span class="analysis-bound-source" title="Remote Scan uses the DataTree that is currently loaded in the main DataTree tab.">Uses main DataTree</span></div>`;
+    header.innerHTML = `
+      <div class="analysis-title"><h2>Remote Scan</h2><p>${_escape(subtitle)}</p></div>
+      <div class="analysis-actions">
+        <div class="analysis-tabs" role="tablist">
+          <button type="button" class="analysis-tab${mode === 'remote' ? ' active' : ''}" data-tab="remote">Remote Scan</button>
+          <button type="button" class="analysis-tab${mode === 'scanner' ? ' active' : ''}" data-tab="scanner">Script Scanner</button>
+        </div>
+      </div>`;
+
+    header.querySelectorAll('.analysis-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        if (state_.analysisMode === tab) return;
+        state_.analysisMode = tab;
+        header
+          .querySelectorAll('.analysis-tab')
+          .forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+        const content = shell.querySelector('.analysis-content');
+        if (content) {
+          content.className = `analysis-content analysis-content--${tab}`;
+          content.replaceChildren();
+          if (tab === 'remote') {
+            if (snapshot?.storagePath) {
+              content.appendChild(_remoteScanPane());
+              requestAnimationFrame(_prepareRemoteScan);
+            } else {
+              content.innerHTML = `<div class="analysis-empty"><strong>No DataTree loaded</strong><p>Remote Scan follows the active place from the main DataTree tab. Import or select an RBXLX there first.</p></div>`;
+            }
+          } else {
+            if (snapshot?.storagePath) {
+              content.appendChild(_moduleScannerPane());
+              _scheduleModuleScanner(0);
+            } else {
+              content.innerHTML = `<div class="analysis-empty"><strong>No DataTree loaded</strong><p>Script Scanner requires an RBXLX import. Import one in the DataTree tab first.</p></div>`;
+            }
+          }
+        }
+      });
+    });
+
     const content = document.createElement('main');
     content.className = `analysis-content analysis-content--${mode}`;
+
     if (!snapshot?.storagePath) {
-      content.innerHTML = `<div class="analysis-empty"><strong>No DataTree loaded</strong><p>Remote Scan follows the active place from the main DataTree tab. Import or select an RBXLX there first.</p></div>`;
-    } else {
+      content.innerHTML = `<div class="analysis-empty"><strong>No DataTree loaded</strong><p>${mode === 'remote' ? 'Remote Scan follows the active place from the main DataTree tab. Import or select an RBXLX there first.' : 'Script Scanner requires an RBXLX import. Import one in the DataTree tab first.'}</p></div>`;
+    } else if (mode === 'remote') {
       content.appendChild(_remoteScanPane());
       requestAnimationFrame(_prepareRemoteScan);
+    } else {
+      content.appendChild(_moduleScannerPane());
+      requestAnimationFrame(() => _scheduleModuleScanner(0));
     }
+
     shell.append(header, content);
     if (state_.importing) shell.appendChild(_importOverlay());
     else if (state_.treeLoading) shell.appendChild(_treeLoadOverlay());
@@ -902,12 +949,8 @@ const dataTree = (() => {
     const saveCooldownLeft = Math.ceil(
       Math.max(0, state_.saveGameCooldownUntil - Date.now()) / 1000,
     );
-    const subtitle = busy
-      ? 'Importing RBXLX'
-      : state_.viewMode === 'scanner'
-        ? 'Script Scanner'
-        : 'RBXLX Explorer';
-    bar.innerHTML = `<div class="dt-title-block"><h2>DataTree</h2><p>${subtitle}</p></div><div class="dt-actions"><div class="dt-mode-switch" role="tablist" aria-label="DataTree view"><button type="button" data-mode="explorer" class="${state_.viewMode === 'explorer' ? 'active' : ''}">Explorer</button><button type="button" data-mode="scanner" class="${state_.viewMode === 'scanner' ? 'active' : ''}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>Scanner</button></div><select class="dt-snapshot-select" aria-label="Saved DataTrees"${busy ? ' disabled' : ''}>${state_.snapshots.map((item) => `<option value="${_escape(item.id)}"${item.id === state_.activeSnapshotId ? ' selected' : ''}>${_escape(item.name || 'Untitled DataTree')}</option>`).join('') || '<option>No imports</option>'}</select><button class="dt-icon-action dt-memory-action" type="button" data-action="${state_.memoryUnloaded ? 'reload-memory' : 'unload-memory'}" title="${state_.memoryUnloaded ? 'Reload this DataTree into memory' : 'Unload this DataTree from memory when you are done inspecting it'}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>${state_.memoryUnloaded ? 'Reload' : 'Unload'}</button><button class="dt-icon-action" type="button" data-action="delete" title="Delete import"${busy ? ' disabled' : ''}>Delete</button><button class="dt-icon-action dt-save-game-action" type="button" data-action="save-current-game" title="${saveCooldownLeft ? `Save current game is cooling down for ${saveCooldownLeft}s` : 'Save current game with optimized USSI preset'}"${busy || saveCooldownLeft ? ' disabled' : ''}>${saveCooldownLeft ? `Save in ${saveCooldownLeft}s` : 'Save current game'}</button><button class="dt-btn dt-btn-primary" data-action="import"${busy ? ' disabled' : ''}>${busy ? 'Importing RBXLX' : 'Import RBXLX'}</button></div>`;
+    const subtitle = busy ? 'Importing RBXLX' : 'RBXLX Explorer';
+    bar.innerHTML = `<div class="dt-title-block"><h2>DataTree</h2><p>${subtitle}</p></div><div class="dt-actions"><select class="dt-snapshot-select" aria-label="Saved DataTrees"${busy ? ' disabled' : ''}>${state_.snapshots.map((item) => `<option value="${_escape(item.id)}"${item.id === state_.activeSnapshotId ? ' selected' : ''}>${_escape(item.name || 'Untitled DataTree')}</option>`).join('') || '<option>No imports</option>'}</select><button class="dt-icon-action dt-memory-action" type="button" data-action="${state_.memoryUnloaded ? 'reload-memory' : 'unload-memory'}" title="${state_.memoryUnloaded ? 'Reload this DataTree into memory' : 'Unload this DataTree from memory when you are done inspecting it'}"${busy || !snapshot?.storagePath ? ' disabled' : ''}>${state_.memoryUnloaded ? 'Reload' : 'Unload'}</button><button class="dt-icon-action" type="button" data-action="delete" title="Delete import"${busy ? ' disabled' : ''}>Delete</button><button class="dt-icon-action dt-save-game-action" type="button" data-action="save-current-game" title="${saveCooldownLeft ? `Save current game is cooling down for ${saveCooldownLeft}s` : 'Save current game with optimized USSI preset'}"${busy || saveCooldownLeft ? ' disabled' : ''}>${saveCooldownLeft ? `Save in ${saveCooldownLeft}s` : 'Save current game'}</button><button class="dt-btn dt-btn-primary" data-action="import"${busy ? ' disabled' : ''}>${busy ? 'Importing RBXLX' : 'Import RBXLX'}</button></div>`;
     const select = bar.querySelector('.dt-snapshot-select');
     select?.addEventListener('change', async () => {
       if (state_.importing) return;
@@ -923,16 +966,6 @@ const dataTree = (() => {
       .querySelector('[data-action="save-current-game"]')
       ?.addEventListener('click', saveCurrentGame);
     bar.querySelector('[data-action="import"]')?.addEventListener('click', () => importRbxlx());
-    bar.querySelectorAll('[data-mode]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const mode = button.dataset.mode === 'scanner' ? 'scanner' : 'explorer';
-        if (state_.viewMode === mode) return;
-        state_.viewMode = mode;
-        uiState.setDataTreeViewMode?.(mode);
-        render();
-        if (mode === 'scanner') _scheduleModuleScanner(0);
-      });
-    });
     if (!snapshot) {
       bar.querySelector('[data-action="delete"]')?.setAttribute('disabled', '');
     }
@@ -1857,7 +1890,8 @@ ${JSON.stringify(packet, null, 2)}
       if (node.path && node.nodeId != null) remoteNodesByPath.set(node.path.toLowerCase(), node);
     }
     for (const call of calls) {
-      const key = call.remoteKey || call.remotePath || call.remoteName || call.evidence;
+      const key = (call.remoteName || '').toLowerCase();
+      if (!key) continue;
       const remoteNode = call.remotePath
         ? remoteNodesByPath.get(String(call.remotePath).toLowerCase())
         : null;
@@ -2705,7 +2739,14 @@ Return a short summary, then fenced JSON:
             ? `${count.toLocaleString()} result${count === 1 ? '' : 's'}`
             : 'Ready to scan scripts'
           : 'Import a DataTree first';
-    const rows = scanner.results
+    const results = scanner.query.trim()
+      ? scanner.results
+      : [...scanner.results].sort((a, b) =>
+          (a.name || a.className || '').localeCompare(b.name || b.className || '', undefined, {
+            sensitivity: 'base',
+          }),
+        );
+    const rows = results
       .map((hit) => {
         const icon = _iconMarkup(_classIcon(hit.className), 'dt-render-icon');
         return `<button type="button" class="dt-module-row" data-node-id="${_escape(hit.id)}"><span class="dt-module-row-icon">${icon}</span><span class="dt-module-row-main"><strong>${_escape(hit.name || hit.className || 'Script')}</strong><small>${_escape(hit.path || '')}</small></span><span class="dt-module-row-matches">${Number(hit.matches || 0).toLocaleString()}</span></button>`;
@@ -2766,7 +2807,8 @@ Return a short summary, then fenced JSON:
     } finally {
       if (run !== _moduleScanRun) return;
       scanner.busy = false;
-      if (state_.visible && state_.viewMode === 'scanner') {
+      const paneInDom = _container()?.querySelector('.dt-module-scanner');
+      if (state_.visible && paneInDom) {
         _replace('.dt-module-scanner', _moduleScannerPane());
         if (shouldRestoreFocus) {
           requestAnimationFrame(() => {
@@ -2784,8 +2826,9 @@ Return a short summary, then fenced JSON:
     const scanner = state_.moduleScanner;
     const status = _container()?.querySelector('.dt-module-searchbar small');
     if (!status) return;
+    status.classList.toggle('dt-module-status--busy', scanner.busy);
     status.textContent = scanner.busy
-      ? 'Scanning scripts'
+      ? 'Scanning scripts\u2026'
       : scanner.error
         ? scanner.error
         : scanner.scannedAt

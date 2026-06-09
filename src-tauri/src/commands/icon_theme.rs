@@ -9,13 +9,13 @@ pub fn icon_theme_load(ctx: State<'_, AppContext>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn icon_theme_get_active(ctx: State<'_, AppContext>) -> String {
-    ctx.IconTheme.get_active()
+pub fn icon_theme_get_active(_ctx: State<'_, AppContext>) -> String {
+    "material".to_string()
 }
 
 #[tauri::command]
-pub fn icon_theme_get_installed(ctx: State<'_, AppContext>) -> Vec<String> {
-    ctx.IconTheme.get_installed()
+pub fn icon_theme_get_installed(_ctx: State<'_, AppContext>) -> Vec<String> {
+    vec!["material".to_string()]
 }
 
 #[tauri::command]
@@ -24,39 +24,34 @@ pub fn icon_theme_get_registry(ctx: State<'_, AppContext>) -> Vec<ThemePack> {
 }
 
 #[tauri::command]
-pub fn icon_theme_is_installed(id: String, ctx: State<'_, AppContext>) -> bool {
-    ctx.IconTheme.is_installed(&id)
+pub fn icon_theme_is_installed(id: String, _ctx: State<'_, AppContext>) -> bool {
+    id == "material"
 }
 
 #[tauri::command]
-pub fn icon_theme_is_active(id: String, ctx: State<'_, AppContext>) -> bool {
-    ctx.IconTheme.is_active(&id)
+pub fn icon_theme_is_active(id: String, _ctx: State<'_, AppContext>) -> bool {
+    id == "material"
 }
 
 #[tauri::command]
-pub fn icon_theme_activate(id: String, ctx: State<'_, AppContext>) -> Result<bool, String> {
-    ctx.IconTheme.activate(id).map_err(|e| e.to_string())
+pub fn icon_theme_activate(_id: String, _ctx: State<'_, AppContext>) -> Result<bool, String> {
+    Ok(false)
 }
 
 #[tauri::command]
-pub async fn icon_theme_install(id: String, ctx: State<'_, AppContext>) -> Result<(), String> {
-    ctx.IconTheme
-        .install(&id, ctx.Network.client())
-        .await
-        .map_err(|e| e.to_string())
+pub async fn icon_theme_install(_id: String, _ctx: State<'_, AppContext>) -> Result<(), String> {
+    Ok(())
 }
 
 #[tauri::command]
-pub fn icon_theme_uninstall(id: String, ctx: State<'_, AppContext>) -> Result<bool, String> {
-    ctx.IconTheme.uninstall(&id).map_err(|e| e.to_string())
+pub fn icon_theme_uninstall(_id: String, _ctx: State<'_, AppContext>) -> Result<bool, String> {
+    Ok(false)
 }
 
 #[tauri::command]
 pub fn icon_theme_load_installed_icons(
-    theme_id: String,
-    ctx: State<'_, AppContext>,
+    _theme_id: String,
+    _ctx: State<'_, AppContext>,
 ) -> Result<Option<(serde_json::Value, String)>, String> {
-    ctx.IconTheme
-        .load_installed_icons(&theme_id)
-        .map_err(|e| e.to_string())
+    Ok(None)
 }

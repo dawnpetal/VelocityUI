@@ -1,4 +1,4 @@
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size};
 
 use crate::app::AppContext;
 
@@ -68,4 +68,41 @@ pub fn set_app_zoom(app: AppHandle, scale_factor: f64) -> Result<(), String> {
         .ok_or_else(|| "main window not found".to_string())?
         .set_zoom(zoom)
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn show_explorer_menu(
+    app: AppHandle,
+    sections: Vec<String>,
+    visible_sections: Vec<String>,
+) -> Result<(), String> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    let mut builder = MenuBuilder::new(&app);
+
+    for section in &sections {
+        let label = if visible_sections.contains(section) {
+            format!("✓  {section}")
+        } else {
+            format!("    {section}")
+        };
+        let item = MenuItemBuilder::with_id(format!("toggle_section:{section}"), label)
+            .build(&app)
+            .map_err(|e: tauri::Error| e.to_string())?;
+        builder = builder.item(&item);
+    }
+
+    let menu = builder.build().map_err(|e: tauri::Error| e.to_string())?;
+
+    window.on_menu_event(|win, event| {
+        let _ = win.emit("explorer-menu-event", event.id().0.clone());
+    });
+
+    window.popup_menu(&menu).map_err(|e: tauri::Error| e.to_string())?;
+
+    Ok(())
 }

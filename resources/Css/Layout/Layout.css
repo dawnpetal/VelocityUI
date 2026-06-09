@@ -285,9 +285,9 @@ body {
 .sidebar-header {
   display: flex;
   align-items: center;
-  padding: 0 8px 0 14px;
-  height: 40px;
-  min-height: 40px;
+  padding: 0 6px 0 12px;
+  height: 30px;
+  min-height: 30px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
 }
@@ -347,9 +347,8 @@ body {
 
 .file-tree {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px 0;
+  min-height: 0;
+  overflow: hidden;
   position: relative;
 }
 
@@ -448,11 +447,22 @@ body {
   gap: 8px;
 }
 
-.ai-side-title {
-  display: block;
+.ai-side-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ai-side-logo {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .ai-side-title {
+  display: block;
   color: var(--text1);
   font-size: 12px;
   font-weight: 600;
