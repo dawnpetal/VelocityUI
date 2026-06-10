@@ -124,7 +124,7 @@ const WebLanguages = (() => {
           const ln = i + 1;
           for (const t of raw.match(/<\/?[a-zA-Z][^>]*>/g) ?? []) {
             let m;
-            if ((m = t.match(/^<([a-zA-Z][a-zA-Z0-9-]*)([^>]*?)(?<!\/)>$/))) {
+            if ((m = t.match(/^<([a-zA-Z][a-zA-Z0-9-]*)([^>]*[^\/])?>$/))) {
               const tag = m[1].toLowerCase();
               if (VOID.has(tag)) continue;
               const r = {

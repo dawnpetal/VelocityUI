@@ -444,7 +444,7 @@ const ExplorerDnd = (() => {
     if (row) return _destinationForNode(ExplorerTree.findNode(row.dataset.id), true);
     const rootHeader = el.closest('.tree-root-header');
     if (rootHeader) return ExplorerTree.findNode(rootHeader.dataset.id)?.path ?? null;
-    return state.roots.at(-1)?.path ?? null;
+    return state.roots[roots.length - 1]?.path ?? null;
   }
   async function _nativeExternalDrop(paths, destDir) {
     if (_handlingDrop) return;

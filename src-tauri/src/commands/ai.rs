@@ -8,7 +8,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
+
+use crate::app::AppContext;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{ChildStdin, Command},
@@ -1041,13 +1043,15 @@ pub fn ai_save_config(mut config: AiConfig) -> Result<AiConfigState, String> {
 pub async fn ai_generate(
     app: AppHandle,
     request: AiGenerateRequest,
+    ctx: State<'_, AppContext>,
 ) -> Result<AiGenerateResponse, String> {
     let config = load_config();
     if !config.enabled {
         return Err("AI helper is disabled".to_string());
     }
+    let client = ctx.Network.client().clone();
     match config.provider.as_str() {
-        "claude" => ai_generate_claude(&app, &config, request).await,
+        "claude" => ai_generate_claude(&app, &config, request, &client).await,
         _ => ai_generate_codex(&app, &config, request).await,
     }
 }
@@ -1589,6 +1593,7 @@ async fn ai_generate_claude(
     app: &AppHandle,
     config: &AiConfig,
     request: AiGenerateRequest,
+    client: &reqwest::Client,
 ) -> Result<AiGenerateResponse, String> {
     let api_key = config
         .claude_api_key
@@ -1654,7 +1659,6 @@ For Lua/Luau code: prefer Lua 5.1-compatible syntax unless the existing code use
     let work = async {
         emit_stream(app, &request_id, "started", None, None, None);
 
-        let client = reqwest::Client::new();
         let response = client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", api_key)

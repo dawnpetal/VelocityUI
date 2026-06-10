@@ -215,6 +215,7 @@
   border-radius: 2px;
   pointer-events: none;
   z-index: 100;
+  box-shadow: 0 0 5px var(--accent);
   box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
@@ -255,6 +256,7 @@
   top: 0;
   bottom: 0;
   width: 1px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 13%, transparent);
   pointer-events: none;
   opacity: 1;
@@ -652,6 +654,7 @@
 }
 
 .sp-nav-item:hover {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   color: var(--text1);
 }
@@ -663,6 +666,7 @@
 .sp-nav-item.active {
   color: var(--accent);
   border-left-color: var(--accent);
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
@@ -731,6 +735,7 @@
 
 .sp-row:hover {
   border-color: var(--border);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 60%, var(--bg2));
 }
 
@@ -848,6 +853,7 @@
 .manual-update-apply {
   height: 30px;
   border: 1px solid var(--border-strong);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 92%, var(--text0) 8%);
   color: var(--text1);
   box-shadow:
@@ -888,13 +894,16 @@
 .manual-update-download:hover:not(:disabled),
 .manual-update-apply:hover:not(:disabled) {
   background: var(--bg4);
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
   color: var(--text0);
 }
 
 .manual-update-download:disabled,
 .manual-update-apply:disabled {
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 86%, var(--text3) 14%);
+  border-color: var(--border);
   border-color: color-mix(in srgb, var(--border) 76%, var(--text3) 24%);
   color: var(--text4);
   box-shadow: none;
@@ -907,7 +916,9 @@
   align-items: center;
   gap: 6px;
   background: transparent;
+  border: 1px solid #5865f2;
   border: 1px solid color-mix(in srgb, #5865f2 55%, var(--border-strong));
+  color: #8891f8;
   color: color-mix(in srgb, #8891f8 80%, var(--text1));
   font-family: var(--font-ui);
   font-size: 11.5px;
@@ -924,6 +935,7 @@
 }
 
 .about-discord-btn:hover {
+  background: rgba(88, 101, 242, 0.12);
   background: color-mix(in srgb, #5865f2 12%, transparent);
   border-color: #5865f2;
   color: #a5aeff;
@@ -982,6 +994,7 @@
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 86%, transparent);
 }
 
@@ -994,6 +1007,7 @@
   width: 42px;
   height: 42px;
   place-items: center;
+  border: 1px solid var(--text0);
   border: 1px solid color-mix(in srgb, var(--text0) 12%, transparent);
   border-radius: 10px;
   background:
@@ -1028,6 +1042,7 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text2);
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 74%, transparent);
   font: 11.5px/1.5 var(--font-ui);
 }
@@ -1119,6 +1134,7 @@
 
 .theme-card.active {
   border-color: var(--accent);
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, var(--bg2));
 }
 
@@ -1135,6 +1151,7 @@
   height: 7px;
   border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
   box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
@@ -1194,6 +1211,7 @@
 
 .icon-theme-row.active {
   border-color: var(--accent);
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, var(--bg2));
 }
 
@@ -1234,6 +1252,7 @@
   color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   padding: 2px 7px;
   border-radius: 4px;
@@ -1317,6 +1336,7 @@
 .settings-select:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 2%, transparent);
 }
 
@@ -1373,6 +1393,7 @@
   border-radius: 9px;
   position: relative;
   transition: background 0.18s;
+  border: 1px solid var(--border-strong);
   border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
 }
 
@@ -1435,10 +1456,12 @@
 
 .settings-action-btn--danger {
   color: var(--fail) !important;
+  border-color: var(--fail) !important;
   border-color: color-mix(in srgb, var(--fail) 50%, transparent) !important;
 }
 
 .settings-action-btn--danger:hover {
+  background: var(--fail) !important;
   background: color-mix(in srgb, var(--fail) 10%, transparent) !important;
   border-color: var(--fail) !important;
 }
@@ -1457,6 +1480,7 @@
 .ctx-menu {
   position: fixed;
   z-index: 9999;
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 96%, transparent);
   border: 1px solid var(--border-strong);
   border-radius: 9px;
@@ -1623,7 +1647,9 @@
 }
 
 .toast-action-primary {
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, var(--bg3));
   color: var(--text0);
 }
@@ -1870,6 +1896,7 @@
 }
 
 .log-line.ok {
+  border-left-color: var(--ok);
   border-left-color: color-mix(in srgb, var(--ok) 40%, transparent);
 }
 
@@ -1878,10 +1905,12 @@
 }
 
 .log-line.ok .log-ts {
+  color: var(--ok);
   color: color-mix(in srgb, var(--ok) 35%, var(--text3));
 }
 
 .log-line.warn {
+  border-left-color: var(--warn);
   border-left-color: color-mix(in srgb, var(--warn) 40%, transparent);
 }
 
@@ -1890,10 +1919,12 @@
 }
 
 .log-line.warn .log-ts {
+  color: var(--warn);
   color: color-mix(in srgb, var(--warn) 35%, var(--text3));
 }
 
 .log-line.fail {
+  border-left-color: var(--fail);
   border-left-color: color-mix(in srgb, var(--fail) 40%, transparent);
 }
 
@@ -1902,10 +1933,12 @@
 }
 
 .log-line.fail .log-ts {
+  color: var(--fail);
   color: color-mix(in srgb, var(--fail) 35%, var(--text3));
 }
 
 .log-line.info {
+  border-left-color: rgba(77, 158, 245, 0.4);
   border-left-color: color-mix(in srgb, #4d9ef5 40%, transparent);
 }
 
@@ -1914,12 +1947,16 @@
 }
 
 .log-line.info .log-ts {
+  color: #4d9ef5;
   color: color-mix(in srgb, #4d9ef5 35%, var(--text3));
 }
 
 .log-line.info .log-channel {
+  color: #4d9ef5;
   color: color-mix(in srgb, #4d9ef5 60%, var(--text3));
+  background: rgba(77, 158, 245, 0.08);
   background: color-mix(in srgb, #4d9ef5 8%, transparent);
+  border-color: rgba(77, 158, 245, 0.2);
   border-color: color-mix(in srgb, #4d9ef5 20%, transparent);
 }
 
@@ -1946,14 +1983,20 @@
 }
 
 .log-line.warn .log-channel {
+  color: var(--warn);
   color: color-mix(in srgb, var(--warn) 60%, var(--text3));
+  background: var(--warn);
   background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 20%, transparent);
 }
 
 .log-line.fail .log-channel {
+  color: var(--fail);
   color: color-mix(in srgb, var(--fail) 60%, var(--text3));
+  background: var(--fail);
   background: color-mix(in srgb, var(--fail) 8%, transparent);
+  border-color: var(--fail);
   border-color: color-mix(in srgb, var(--fail) 20%, transparent);
 }
 
@@ -2410,20 +2453,25 @@
   padding: 5px 12px;
   color: var(--accent);
   background: var(--accent-dim);
+  border-top: 1px solid var(--accent);
   border-top: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .pb-status-bar.pb-status-ok {
   max-height: 120px;
   padding: 5px 12px;
   color: var(--ok);
+  background: var(--ok);
   background: color-mix(in srgb, var(--ok) 7%, var(--bg1));
+  border-top: 1px solid var(--ok);
   border-top: 1px solid color-mix(in srgb, var(--ok) 20%, transparent);
 }
 .pb-status-bar.pb-status-fail {
   max-height: 120px;
   padding: 5px 12px;
   color: var(--fail);
+  background: var(--fail);
   background: color-mix(in srgb, var(--fail) 7%, var(--bg1));
+  border-top: 1px solid var(--fail);
   border-top: 1px solid color-mix(in srgb, var(--fail) 20%, transparent);
 }
 
@@ -2523,6 +2571,7 @@
   min-width: 0;
   border-bottom: 1px solid var(--border);
   padding: 0 14px 0 16px;
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 88%, var(--bg0));
 }
 
@@ -2559,8 +2608,10 @@
 .dt-btn,
 .dt-icon-action {
   height: 28px;
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   border-radius: 6px;
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 82%, transparent);
   color: var(--text1);
   font: 650 11.5px var(--font-ui);
@@ -2587,12 +2638,15 @@
 .dt-btn:hover,
 .dt-icon-action:hover {
   border-color: var(--border-strong);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 72%, transparent);
   color: var(--text0);
 }
 
 .dt-btn-primary {
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, var(--bg2));
   color: var(--text0);
 }
@@ -2700,14 +2754,17 @@
   width: 142px;
   height: 28px;
   flex-shrink: 0;
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   border-radius: 7px;
   padding: 0 8px;
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 78%, transparent);
   color: var(--text2);
 }
 
 .dt-search:focus-within {
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border-strong));
   background: var(--bg2);
 }
@@ -2756,19 +2813,23 @@
 }
 
 .dt-tree-row:hover {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
 .dt-tree-row.active {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 8%, var(--accent) 9%);
   color: var(--text0);
 }
 
 @keyframes dt-row-flash {
   0% {
+    background: var(--accent);
     background: color-mix(in srgb, var(--accent) 32%, transparent);
   }
   100% {
+    background: var(--text0);
     background: color-mix(in srgb, var(--text0) 8%, var(--accent) 9%);
   }
 }
@@ -2846,11 +2907,13 @@
 }
 
 .dt-node-class {
+  color: var(--text2);
   color: color-mix(in srgb, var(--text2) 72%, transparent);
   font: 10.5px var(--font-ui);
 }
 
 .dt-tree-row.active .dt-node-class {
+  color: var(--text0);
   color: color-mix(in srgb, var(--text0) 58%, transparent);
 }
 
@@ -2878,6 +2941,7 @@
 .dt-details {
   display: flex;
   flex-direction: column;
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 92%, var(--bg0));
 }
 
@@ -2949,6 +3013,7 @@
   display: block;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 48%, transparent);
 }
 
@@ -2956,6 +3021,7 @@
   display: grid;
   grid-template-columns: minmax(92px, 0.4fr) minmax(0, 1fr) max-content;
   min-height: 28px;
+  border-bottom: 1px solid var(--border);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
 }
 
@@ -2975,6 +3041,7 @@
   align-items: center;
   gap: 7px;
   padding: 7px 12px;
+  border-left: 1px solid var(--border);
   border-left: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
 }
 
@@ -2989,6 +3056,7 @@
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 82%, white 18%);
   border-radius: 4px;
   background: var(--dt-kv-swatch);
@@ -3017,6 +3085,7 @@
   border-radius: 4px;
   padding: 2px 7px;
   color: var(--text1);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 68%, transparent);
   font: 10.5px var(--font-ui);
 }
@@ -3050,6 +3119,7 @@
   border-radius: 999px;
   padding: 4px 8px;
   color: var(--text2);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 62%, transparent);
   font: 750 10px var(--font-ui);
   letter-spacing: 0.06em;
@@ -3075,11 +3145,14 @@
 
 .dt-preview-tools button:hover {
   color: var(--text0);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
 .dt-preview-tools button.active {
+  border-color: var(--border-strong);
   border-color: color-mix(in srgb, var(--border-strong) 60%, transparent);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 72%, transparent);
   color: var(--text0);
 }
@@ -3137,6 +3210,7 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 88%, var(--bg0));
 }
 
@@ -3161,8 +3235,10 @@
   place-items: center;
   width: 112px;
   height: 112px;
+  border: 1px solid var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border-strong));
   border-radius: 16px;
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 82%, transparent);
   transform: translate(-50%, -50%);
 }
@@ -3253,6 +3329,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px 8px;
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 82%, transparent);
   color: var(--text1);
   font: 750 10px var(--font-ui);
@@ -3279,6 +3356,7 @@
 .dt-asset-open {
   border: 1px solid var(--border);
   border-radius: 7px;
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 62%, transparent);
 }
 
@@ -3307,6 +3385,7 @@
 
 .dt-asset-open:hover {
   border-color: var(--border-strong);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 72%, transparent);
 }
 

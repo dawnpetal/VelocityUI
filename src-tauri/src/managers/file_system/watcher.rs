@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -207,8 +207,13 @@ fn raw_changes_from_event(event: &notify::Event) -> Vec<RawChange> {
     }
 }
 
+struct WatchEntry {
+    _watcher: RecommendedWatcher,
+    shutdown: Arc<AtomicBool>,
+}
+
 pub struct WatcherManager {
-    map: DashMap<u32, RecommendedWatcher>,
+    map: DashMap<u32, WatchEntry>,
     next_id: AtomicU32,
 }
 
@@ -223,9 +228,14 @@ impl WatcherManager {
     pub fn watch(&self, app: &AppHandle, path: &str) -> VelocityUIResult<u32> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let state = WatchState::new(app.clone(), id);
-        let state_cb = Arc::clone(&state);
+        let shutdown = Arc::new(AtomicBool::new(false));
 
+        let state_cb = Arc::clone(&state);
+        let shutdown_cb = Arc::clone(&shutdown);
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if shutdown_cb.load(Ordering::Relaxed) {
+                return;
+            }
             let Ok(event) = res else { return };
 
             let changes = raw_changes_from_event(&event);
@@ -258,11 +268,13 @@ impl WatcherManager {
             .watch(Path::new(path), RecursiveMode::Recursive)
             .map_err(|e| VelocityUIError::Other(e.to_string()))?;
 
-        self.map.insert(id, watcher);
-
         let state_flusher = Arc::clone(&state);
+        let shutdown_flusher = Arc::clone(&shutdown);
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(COALESCE_WINDOW_MS));
+            if shutdown_flusher.load(Ordering::Relaxed) {
+                break;
+            }
             let mut guard = match state_flusher.lock() {
                 Ok(g) => g,
                 Err(_) => break,
@@ -278,10 +290,14 @@ impl WatcherManager {
             }
         });
 
+        self.map.insert(id, WatchEntry { _watcher: watcher, shutdown });
+
         Ok(id)
     }
 
     pub fn unwatch(&self, id: u32) {
-        self.map.remove(&id);
+        if let Some((_, entry)) = self.map.remove(&id) {
+            entry.shutdown.store(true, Ordering::Relaxed);
+        }
     }
 }

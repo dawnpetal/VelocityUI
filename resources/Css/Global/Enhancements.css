@@ -1,4 +1,5 @@
 :root {
+  --text4: var(--text3);
   --text4: color-mix(in srgb, var(--text3) 68%, #000);
   --text-muted: var(--text3);
   --text: var(--text0);
@@ -8,11 +9,17 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --surface-0: var(--bg0);
+  --surface-1: var(--bg1);
   --surface-1: color-mix(in srgb, var(--bg1) 88%, #000);
+  --surface-2: var(--bg2);
   --surface-2: color-mix(in srgb, var(--bg2) 92%, #fff 2%);
+  --surface-3: var(--bg3);
   --surface-3: color-mix(in srgb, var(--bg3) 92%, #fff 3%);
+  --line-soft: var(--border);
   --line-soft: color-mix(in srgb, var(--border) 82%, transparent);
+  --line-strong: var(--border-strong);
   --line-strong: color-mix(in srgb, var(--border-strong) 90%, transparent);
+  --focus-ring: 0 0 0 1px var(--accent);
   --focus-ring: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
   --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.18);
   --shadow-md: 0 18px 48px rgba(0, 0, 0, 0.28);
@@ -26,41 +33,70 @@
   --tl-close-icon: #802f30;
   --tl-minimize-icon: #7e640c;
   --tl-maximize-icon: #1e632d;
+  --tl-separator: var(--text2);
   --tl-separator: color-mix(in srgb, var(--text2) 40%, transparent);
   --native-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --native-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --native-fast: 120ms var(--native-ease);
   --native-med: 180ms var(--native-ease-out);
+  --native-bg: var(--bg0);
   --native-bg: color-mix(in srgb, var(--bg0) 96%, #000 4%);
+  --native-chrome: var(--bg1);
   --native-chrome: color-mix(in srgb, var(--bg1) 80%, transparent);
+  --native-panel: var(--bg1);
   --native-panel: color-mix(in srgb, var(--bg1) 88%, var(--bg0) 12%);
+  --native-panel-raised: var(--bg2);
   --native-panel-raised: color-mix(in srgb, var(--bg2) 70%, var(--bg1) 30%);
+  --native-field: var(--bg0);
   --native-field: color-mix(in srgb, var(--bg0) 78%, #000 22%);
+  --native-hover: var(--text0);
   --native-hover: color-mix(in srgb, var(--text0) 6%, transparent);
+  --native-pressed: var(--text0);
   --native-pressed: color-mix(in srgb, var(--text0) 9%, transparent);
+  --native-line: var(--text0);
   --native-line: color-mix(in srgb, var(--text0) 8%, transparent);
+  --native-line-strong: var(--text0);
   --native-line-strong: color-mix(in srgb, var(--text0) 14%, transparent);
+  --native-line-faint: var(--text0);
   --native-line-faint: color-mix(in srgb, var(--text0) 5%, transparent);
+  --native-text: var(--text0);
   --native-text: color-mix(in srgb, var(--text0) 92%, #fff 8%);
+  --native-text-2: var(--text1);
   --native-text-2: color-mix(in srgb, var(--text1) 76%, var(--text0) 24%);
+  --native-text-3: var(--text2);
   --native-text-3: color-mix(in srgb, var(--text2) 72%, var(--text1) 28%);
+  --native-text-4: var(--text3);
   --native-text-4: color-mix(in srgb, var(--text3) 72%, var(--text2) 28%);
+  --native-focus: 0 0 0 1px var(--text0);
   --native-focus: 0 0 0 1px color-mix(in srgb, var(--text0) 16%, transparent);
   --native-shadow-soft: 0 10px 32px rgba(0, 0, 0, 0.18);
   --vx-bg: var(--bg0);
+  --vx-panel: var(--bg1);
   --vx-panel: color-mix(in srgb, var(--bg1) 92%, #000 8%);
+  --vx-panel-2: var(--bg2);
   --vx-panel-2: color-mix(in srgb, var(--bg2) 90%, #000 10%);
+  --vx-panel-3: var(--bg3);
   --vx-panel-3: color-mix(in srgb, var(--bg3) 88%, #000 12%);
+  --vx-border: var(--border);
   --vx-border: color-mix(in srgb, var(--border) 88%, #fff 12%);
+  --vx-border-strong: var(--border-strong);
   --vx-border-strong: color-mix(in srgb, var(--border-strong) 82%, #fff 18%);
+  --vx-muted-border: var(--border);
   --vx-muted-border: color-mix(in srgb, var(--border) 58%, transparent);
   --vx-text: var(--text0);
+  --vx-text-soft: var(--text1);
   --vx-text-soft: color-mix(in srgb, var(--text1) 92%, #fff 8%);
+  --vx-text-muted: var(--text2);
   --vx-text-muted: color-mix(in srgb, var(--text2) 88%, #fff 12%);
+  --vx-text-dim: var(--text3);
   --vx-text-dim: color-mix(in srgb, var(--text3) 82%, #fff 18%);
+  --vx-control: var(--bg2);
   --vx-control: color-mix(in srgb, var(--bg2) 94%, #fff 6%);
+  --vx-control-hover: var(--bg3);
   --vx-control-hover: color-mix(in srgb, var(--bg3) 92%, #fff 8%);
+  --vx-code-bg: var(--bg0);
   --vx-code-bg: color-mix(in srgb, var(--bg0) 86%, #000 14%);
+  --vx-ring: 0 0 0 2px var(--text0);
   --vx-ring: 0 0 0 2px color-mix(in srgb, var(--text0) 8%, transparent);
   --glass-surface: var(--surface-1);
   --glass-surface-soft: var(--surface-1);
@@ -68,7 +104,9 @@
   --glass-field: var(--surface-0);
   --glass-border: var(--line-soft);
   --glass-border-strong: var(--line-strong);
+  --glass-highlight: inset 0 1px 0 var(--text0);
   --glass-highlight: inset 0 1px 0 color-mix(in srgb, var(--text0) 4%, transparent);
+  --glass-highlight-soft: inset 0 1px 0 var(--text0);
   --glass-highlight-soft: inset 0 1px 0 color-mix(in srgb, var(--text0) 2.5%, transparent);
   --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
 }
@@ -90,6 +128,7 @@ body::after {
 }
 
 ::selection {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--text0);
 }
@@ -187,6 +226,7 @@ button:focus-visible {
 .titlebar {
   height: 34px !important;
   min-height: 34px !important;
+  background: var(--bg1) !important;
   background: color-mix(in srgb, var(--bg1) 82%, transparent) !important;
   border-bottom: 1px solid var(--glass-border) !important;
   box-shadow:
@@ -258,6 +298,7 @@ button:focus-visible {
   padding-inline: 10px;
   border: 1px solid var(--glass-border) !important;
   border-radius: 8px !important;
+  background: var(--bg3) !important;
   background: color-mix(in srgb, var(--bg3) 52%, transparent) !important;
   color: var(--text3);
   pointer-events: auto;
@@ -272,6 +313,7 @@ button:focus-visible {
 .titlebar-command:hover,
 .titlebar-command:focus-within {
   color: var(--text1);
+  background: var(--bg3) !important;
   background: color-mix(in srgb, var(--bg3) 62%, transparent) !important;
   border-color: var(--glass-border-strong) !important;
   box-shadow: var(--glass-highlight-soft) !important;
@@ -287,6 +329,7 @@ button:focus-visible {
   flex-shrink: 0;
   padding: 1px 5px;
   border-radius: var(--radius-xs);
+  background: var(--bg5);
   background: color-mix(in srgb, var(--bg5) 50%, transparent);
   font-size: 9.5px;
   color: var(--text3);
@@ -373,6 +416,7 @@ button:focus-visible {
 }
 
 .titlebar-layout-btn.locked svg {
+  color: var(--warn);
   color: color-mix(in srgb, var(--warn) 76%, var(--text0));
 }
 
@@ -417,6 +461,7 @@ button:focus-visible {
 
 .command-item:hover,
 .command-item.active {
+  background: var(--bg4);
   background: color-mix(in srgb, var(--bg4) 62%, transparent);
   color: var(--text0);
 }
@@ -443,6 +488,7 @@ button:focus-visible {
   min-width: 32px;
   padding: 2px 6px;
   border-radius: var(--radius-xs);
+  background: var(--bg5);
   background: color-mix(in srgb, var(--bg5) 46%, transparent);
   color: var(--text3);
   font-size: 10px;
@@ -460,6 +506,7 @@ button:focus-visible {
   min-width: 48px;
   padding: 7px 5px;
   gap: 7px;
+  background: var(--bg1) !important;
   background: color-mix(in srgb, var(--bg1) 72%, transparent) !important;
   border-right: 1px solid var(--glass-border) !important;
   box-shadow: none;
@@ -469,6 +516,7 @@ button:focus-visible {
   width: 37px;
   height: 37px;
   border-radius: 9px;
+  color: var(--text2);
   color: color-mix(in srgb, var(--text2) 84%, var(--text4));
   background: transparent;
   transform: none;
@@ -489,6 +537,7 @@ button:focus-visible {
 
 .activity-btn:hover {
   color: var(--native-text-2) !important;
+  background: rgba(255, 255, 255, 0.09) !important;
   background: color-mix(in srgb, #fff 9%, transparent) !important;
   border-color: var(--glass-border) !important;
   box-shadow: var(--glass-highlight-soft) !important;
@@ -502,7 +551,9 @@ button:focus-visible {
 
 .activity-btn.active {
   color: var(--native-text) !important;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 9%, transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--text0) !important;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text0) 10%, transparent) !important;
 }
 
@@ -539,6 +590,7 @@ button:focus-visible {
 .sidebar {
   width: 218px;
   min-width: 180px;
+  background: var(--bg1) !important;
   background: color-mix(in srgb, var(--bg1) 64%, transparent) !important;
   border-right: 1px solid var(--glass-border) !important;
   box-shadow: none;
@@ -656,6 +708,7 @@ button:focus-visible {
 .sidebar-icon-btn:hover,
 .status-layout-btn:hover {
   color: var(--text0);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 58%, transparent);
   box-shadow: none;
 }
@@ -675,11 +728,13 @@ button:focus-visible {
 .status-layout-btn.active,
 .status-layout-btn.locked {
   color: var(--text1);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 62%, transparent);
   opacity: 1;
 }
 
 .status-layout-btn.locked {
+  color: var(--warn);
   color: color-mix(in srgb, var(--warn) 62%, var(--text1));
 }
 
@@ -742,6 +797,7 @@ button:focus-visible {
 
 .tab:hover {
   color: var(--text1);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 52%, transparent);
 }
 
@@ -793,7 +849,9 @@ button:focus-visible {
   place-items: center;
   flex-shrink: 0;
   color: var(--text3);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 36%, transparent);
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
   border-radius: var(--radius-sm);
   transition:
@@ -804,11 +862,14 @@ button:focus-visible {
 
 .tab-new-btn:hover {
   color: var(--text0);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 48%, transparent);
+  border-color: var(--border);
   border-color: color-mix(in srgb, var(--border) 72%, transparent);
 }
 
 .tab-new-btn:active {
+  background: var(--bg4);
   background: color-mix(in srgb, var(--bg4) 52%, transparent);
 }
 
@@ -891,6 +952,7 @@ button:focus-visible {
 .status-clickable:hover,
 #statusFileSize:hover {
   color: var(--text0);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 7%, transparent);
 }
 
@@ -946,6 +1008,7 @@ button:focus-visible {
 
 .status-popover-row:hover,
 .status-popover-row.checked {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 6%, transparent);
   color: var(--text0);
 }
@@ -1002,11 +1065,14 @@ button:focus-visible {
 }
 
 .tree-row:hover {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
 .tree-row--creating {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 6%, transparent);
+  outline: 1px solid var(--accent);
   outline: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
   outline-offset: -1px;
 }
@@ -1018,18 +1084,21 @@ button:focus-visible {
   padding: 0 5px;
   border-radius: var(--radius-xs);
   background: var(--surface-0);
+  border: 1px solid var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line-soft));
   color: var(--text0);
   font-size: 11.5px;
 }
 
 .tree-row.active {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 8%, transparent);
   border-radius: 0;
   margin: 0;
 }
 
 .tree-row.selected {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 8%, transparent);
   border-radius: 0;
   margin: 0;
@@ -1075,6 +1144,7 @@ button:focus-visible {
   padding: 0 5px;
   line-height: 14px;
   color: var(--text4);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 4%, transparent);
   border-color: transparent;
 }
@@ -1083,6 +1153,7 @@ button:focus-visible {
 .tree-row.active .tree-folder-count {
   opacity: 1;
   color: var(--text3);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 56%, transparent);
 }
 
@@ -1106,6 +1177,7 @@ button:focus-visible {
   padding: 1px 5px;
   border: 0;
   border-radius: 999px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
   color: var(--text4);
   font-family: var(--font-mono);
@@ -1116,6 +1188,7 @@ button:focus-visible {
 }
 
 .tree-row.autoexec-root .tree-autoexec-badge {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
   color: var(--text4);
 }
@@ -1253,6 +1326,7 @@ button:focus-visible {
 
 .autoexec-script-row.active,
 .autoexec-script-row.selected {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 8%, transparent);
 }
 
@@ -1293,6 +1367,7 @@ button:focus-visible {
   min-height: 22px;
   gap: 4px;
   padding: 0 6px;
+  border-bottom: 1px solid var(--text0) !important;
   border-bottom: 1px solid color-mix(in srgb, var(--text0) 6%, transparent) !important;
   background: transparent !important;
   color: var(--text3);
@@ -1301,6 +1376,7 @@ button:focus-visible {
 
 .explorer-files-header,
 .autoexec-header {
+  border-bottom-color: var(--text0) !important;
   border-bottom-color: color-mix(in srgb, var(--text0) 4%, transparent) !important;
 }
 
@@ -1695,6 +1771,7 @@ button:focus-visible {
 
 .outline-meta {
   max-width: 100%;
+  color: var(--text4);
   color: color-mix(in srgb, var(--text4) 88%, transparent);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1852,6 +1929,7 @@ button:focus-visible {
 .log-ts::selection,
 .log-text::selection,
 .log-channel::selection {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 32%, transparent);
   color: var(--text0);
 }
@@ -1861,6 +1939,7 @@ button:focus-visible {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  background: var(--bg0);
   background: color-mix(in srgb, var(--bg0) 76%, var(--surface-1));
 }
 
@@ -1888,6 +1967,7 @@ button:focus-visible {
 
 .search-input-wrap:focus-within {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
 }
@@ -1901,6 +1981,7 @@ button:focus-visible {
 }
 
 .search-input::placeholder {
+  color: var(--text4);
   color: color-mix(in srgb, var(--text4) 82%, transparent);
 }
 
@@ -1937,12 +2018,15 @@ button:focus-visible {
 
 .search-toggle:hover {
   color: var(--text2);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
 .search-toggle.active {
   color: var(--text0);
+  border-color: var(--text3);
   border-color: color-mix(in srgb, var(--text3) 18%, transparent);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 7%, transparent);
 }
 
@@ -1968,6 +2052,7 @@ button:focus-visible {
 
 .search-filter-row:focus-within {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
 }
@@ -1995,6 +2080,7 @@ button:focus-visible {
 }
 
 .filter-input::placeholder {
+  color: var(--text4);
   color: color-mix(in srgb, var(--text4) 82%, transparent);
 }
 
@@ -2023,6 +2109,7 @@ button:focus-visible {
 }
 
 .search-result-file:hover {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
   color: var(--text0);
 }
@@ -2035,6 +2122,7 @@ button:focus-visible {
   min-width: 18px;
   padding: 1px 5px;
   border: 1px solid var(--line-soft);
+  background: var(--surface-3);
   background: color-mix(in srgb, var(--surface-3) 72%, transparent);
   color: var(--text3);
 }
@@ -2049,6 +2137,7 @@ button:focus-visible {
 }
 
 .search-result-line:hover {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
@@ -2065,9 +2154,11 @@ button:focus-visible {
 }
 
 .result-text mark {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 12%, transparent);
   color: var(--text0);
   border-radius: 3px;
+  box-shadow: inset 0 -1px 0 var(--text0);
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text0) 24%, transparent);
 }
 
@@ -2114,6 +2205,7 @@ button:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
+  background: var(--bg5);
   background: color-mix(in srgb, var(--bg5) 72%, transparent);
   border: 2px solid transparent;
   border-radius: 999px;
@@ -2121,6 +2213,7 @@ button:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  background: var(--text3);
   background: color-mix(in srgb, var(--text3) 70%, transparent);
   background-clip: padding-box;
 }
@@ -2209,6 +2302,7 @@ button:focus-visible {
 .bc-seg:hover,
 .bc-seg.bc-picker-open {
   color: var(--text0);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
@@ -2253,6 +2347,7 @@ button:focus-visible {
 
 .bc-pick-search:focus {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
   outline: none;
@@ -2268,6 +2363,7 @@ button:focus-visible {
 .bc-pick-row:hover,
 .bc-pick-active,
 .bc-pick-focused {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 6%, transparent) !important;
 }
 
@@ -2293,6 +2389,7 @@ button:focus-visible {
 .sp-nav-item.active {
   color: var(--accent);
   background: var(--accent-dim);
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
@@ -2407,6 +2504,7 @@ button:focus-visible {
   border: 0;
   border-radius: var(--radius-sm);
   color: var(--text3);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 45%, transparent);
   box-shadow: none;
 }
@@ -2419,6 +2517,7 @@ button:focus-visible {
 .mi-toggle-btn:hover,
 .mi-toggle-btn.active {
   color: var(--text1);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 68%, transparent);
   border: 0;
 }
@@ -2428,7 +2527,9 @@ button:focus-visible {
   max-width: 150px;
   padding: 0 9px;
   border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 58%, transparent);
   color: var(--text3);
   font-size: 11px;
@@ -2437,7 +2538,9 @@ button:focus-visible {
 
 .mi-select-btn:hover,
 .mi-select-btn.open {
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 62%, transparent);
+  border-color: var(--border-strong);
   border-color: color-mix(in srgb, var(--border-strong) 64%, transparent);
   color: var(--text1);
 }
@@ -2457,6 +2560,7 @@ button:focus-visible {
 
 .mi-item.selected {
   color: var(--accent);
+  background: rgba(255, 255, 255, 0.09) !important;
   background: color-mix(in srgb, #fff 9%, transparent) !important;
   border-color: var(--glass-border) !important;
   box-shadow: var(--glass-highlight-soft) !important;
@@ -2489,6 +2593,7 @@ button:focus-visible {
 .msp-textarea:focus,
 .bc-pick-search:focus {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
 }
@@ -2607,8 +2712,11 @@ button:focus-visible {
 }
 
 .acc-kill-all-btn:not(:disabled):hover {
+  color: var(--danger, #ef6262);
   color: color-mix(in srgb, var(--danger, #ef6262) 72%, var(--text0));
+  border-color: var(--danger, #ef6262);
   border-color: color-mix(in srgb, var(--danger, #ef6262) 30%, var(--border));
+  background: var(--danger, #ef6262);
   background: color-mix(in srgb, var(--danger, #ef6262) 10%, var(--bg2));
 }
 
@@ -2691,8 +2799,11 @@ button:focus-visible {
 }
 
 .acc-default-badge {
+  color: var(--warn);
   color: color-mix(in srgb, var(--warn) 78%, var(--text0));
+  background: var(--warn);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid var(--warn);
   border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
 }
 
@@ -2708,13 +2819,18 @@ button:focus-visible {
 
 .acc-status-pill {
   color: var(--text4);
+  background: var(--bg4);
   background: color-mix(in srgb, var(--bg4) 34%, transparent);
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 34%, transparent);
 }
 
 .acc-status-pill--running {
+  color: var(--ok);
   color: color-mix(in srgb, var(--ok) 76%, var(--text0));
+  background: var(--ok);
   background: color-mix(in srgb, var(--ok) 10%, transparent);
+  border-color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 24%, transparent);
 }
 
@@ -2732,46 +2848,63 @@ button:focus-visible {
 
 .acc-btn-launch {
   color: var(--accent);
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .acc-btn-launch:hover {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .acc-btn-launch--running {
+  color: var(--danger, #ef6262);
   color: color-mix(in srgb, var(--danger, #ef6262) 75%, var(--text0));
+  background: var(--danger, #ef6262);
   background: color-mix(in srgb, var(--danger, #ef6262) 11%, transparent);
+  border-color: var(--danger, #ef6262);
   border-color: color-mix(in srgb, var(--danger, #ef6262) 24%, transparent);
 }
 
 .acc-btn-launch--running:hover {
+  background: var(--danger, #ef6262);
   background: color-mix(in srgb, var(--danger, #ef6262) 17%, transparent);
 }
 
 .acc-action-btn {
   color: var(--text3);
+  background: var(--bg3);
   background: color-mix(in srgb, var(--bg3) 34%, transparent);
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 34%, transparent);
 }
 
 .acc-action-btn:hover {
   color: var(--text0);
+  background: var(--bg4);
   background: color-mix(in srgb, var(--bg4) 42%, transparent);
+  border-color: var(--border);
   border-color: color-mix(in srgb, var(--border) 58%, transparent);
 }
 
 .acc-action-btn--starred,
 .acc-action-btn--starred:hover {
+  color: var(--warn);
   color: color-mix(in srgb, var(--warn) 82%, var(--text0));
+  background: var(--warn);
   background: color-mix(in srgb, var(--warn) 11%, transparent);
+  border-color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 26%, transparent);
 }
 
 .acc-action-btn--danger:hover {
+  color: var(--danger, #ef6262);
   color: color-mix(in srgb, var(--danger, #ef6262) 75%, var(--text0));
+  background: var(--danger, #ef6262);
   background: color-mix(in srgb, var(--danger, #ef6262) 11%, transparent);
+  border-color: var(--danger, #ef6262);
   border-color: color-mix(in srgb, var(--danger, #ef6262) 24%, transparent);
 }
 
@@ -2798,14 +2931,18 @@ button:focus-visible {
 .acc-cookie-input {
   height: 30px;
   border-radius: var(--radius-sm);
+  background: var(--bg0);
   background: color-mix(in srgb, var(--bg0) 54%, transparent);
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 48%, transparent);
   color: var(--text0);
   font-size: 12px;
 }
 
 .acc-cookie-input:focus {
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 2px var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
@@ -2814,7 +2951,9 @@ button:focus-visible {
   height: 30px;
   border-radius: var(--radius-sm);
   color: var(--text0);
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 28%, var(--bg3));
+  border: 1px solid var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   transition:
     opacity 140ms cubic-bezier(0.2, 0, 0, 1),
@@ -2823,6 +2962,7 @@ button:focus-visible {
 
 .acc-add-btn:hover {
   opacity: 1;
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 36%, var(--bg3));
 }
 
@@ -2836,8 +2976,10 @@ button:focus-visible {
   gap: 8px;
   min-height: 220px;
   height: auto;
+  border: 1px dashed var(--border);
   border: 1px dashed color-mix(in srgb, var(--border) 44%, transparent);
   border-radius: var(--radius-md);
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 26%, transparent);
 }
 
@@ -2874,7 +3016,9 @@ button:focus-visible {
 }
 
 .sp-nav-item.active {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 9%, var(--bg2));
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
   color: var(--accent);
 }
@@ -2912,6 +3056,7 @@ button:focus-visible {
 .dt-render-frame--canvas,
 .dt-inspector-panel pre,
 .dt-value-card textarea {
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   border-color: var(--glass-border) !important;
   box-shadow: var(--glass-highlight-soft) !important;
@@ -2955,6 +3100,7 @@ button:focus-visible {
 
 .fab-icon-btn:hover,
 .fab-pin:hover {
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 7%, transparent);
   transform: none;
 }
@@ -2988,6 +3134,7 @@ button:focus-visible {
   z-index: 120;
   display: none;
   padding: 32px;
+  background: var(--bg0);
   background: color-mix(in srgb, var(--bg0) 68%, transparent);
   backdrop-filter: blur(22px);
 }
@@ -3074,8 +3221,10 @@ button:focus-visible {
   min-width: 0;
   height: 38px;
   padding: 0 10px;
+  border: 1px solid var(--border);
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   border-radius: 9px;
+  background: var(--bg2);
   background: color-mix(in srgb, var(--bg2) 72%, transparent);
 }
 
@@ -3093,6 +3242,7 @@ button:focus-visible {
   width: 28px;
   height: 22px;
   padding: 0;
+  border: 1px solid var(--border-strong);
   border: 1px solid color-mix(in srgb, var(--border-strong) 76%, transparent);
   border-radius: 6px;
   background: transparent;
@@ -3227,6 +3377,7 @@ button:focus-visible {
   padding: 2px;
   border: 1px solid var(--glass-border);
   border-radius: 7px;
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 82%, transparent);
 }
 
@@ -3243,11 +3394,13 @@ button:focus-visible {
 
 .dt-mode-switch button:hover:not(:disabled) {
   color: var(--native-text);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 6%, transparent);
 }
 
 .dt-mode-switch button.active {
   color: var(--native-text);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 10%, transparent);
 }
 
@@ -3309,7 +3462,9 @@ button:focus-visible {
 .pb-add-btn,
 .pb-empty-btn,
 .cloud-action-btn.execute {
+  border-color: var(--text0) !important;
   border-color: color-mix(in srgb, var(--text0) 18%, transparent) !important;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 8%, transparent) !important;
   color: var(--native-text) !important;
 }
@@ -3319,6 +3474,7 @@ button:focus-visible {
 .pb-add-btn:hover,
 .pb-empty-btn:hover,
 .cloud-action-btn.execute:hover {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 12%, transparent) !important;
   color: var(--native-text) !important;
 }
@@ -3396,6 +3552,7 @@ button:focus-visible {
   border: 1px solid var(--glass-border-strong);
   border-radius: 9px;
   padding: 0 15px;
+  background: var(--bg0);
   background: color-mix(in srgb, var(--bg0) 78%, transparent);
   color: var(--native-text);
 }
@@ -3482,6 +3639,7 @@ button:focus-visible {
   border: 1px solid var(--glass-border);
   border-radius: 10px;
   padding: 0;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 7%, transparent);
   color: var(--native-text);
   text-align: left;
@@ -3489,6 +3647,7 @@ button:focus-visible {
 
 .dt-module-row:hover {
   border-color: var(--glass-border-strong);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 10%, transparent);
 }
 
@@ -3527,6 +3686,7 @@ button:focus-visible {
 
 .dt-module-row-matches {
   justify-self: center;
+  color: var(--accent);
   color: color-mix(in srgb, var(--accent) 82%, white);
   font: 520 22px/1 var(--font-ui);
 }
@@ -3630,6 +3790,7 @@ button:focus-visible {
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 7%, transparent);
   color: var(--native-text-3);
   font: 650 11px/1 var(--font-ui);
@@ -3657,11 +3818,13 @@ button:focus-visible {
 
 .dt-logic-tree {
   border-right: 1px solid var(--glass-border);
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 92%, var(--surface-1));
 }
 
 .dt-logic-inspector {
   border-left: 1px solid var(--glass-border);
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 94%, var(--surface-1));
 }
 
@@ -3696,9 +3859,11 @@ button:focus-visible {
   width: 100%;
   min-height: 48px;
   margin-bottom: 5px;
+  border: 1px solid var(--native-text);
   border: 1px solid color-mix(in srgb, var(--native-text) 5%, transparent);
   border-radius: 7px;
   padding: 0 8px;
+  background: var(--surface-1);
   background: color-mix(in srgb, var(--surface-1) 72%, transparent);
   color: var(--native-text-2);
   text-align: left;
@@ -3710,6 +3875,7 @@ button:focus-visible {
   width: 22px;
   height: 22px;
   border-radius: 6px;
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--native-text);
   font: 780 10px/1 var(--font-mono);
@@ -3775,6 +3941,7 @@ button:focus-visible {
 
 .dt-logic-edge {
   opacity: 0.13;
+  stroke: var(--native-text);
   stroke: color-mix(in srgb, var(--native-text) 26%, transparent);
   stroke-width: 0.7;
   transition:
@@ -3789,16 +3956,19 @@ button:focus-visible {
 
 .dt-logic-edge.hot {
   opacity: 1;
+  stroke: #fff !important;
   stroke: color-mix(in srgb, #fff 86%, var(--accent)) !important;
   stroke-width: 2.35;
 }
 
 .dt-logic-edge--requires {
+  stroke: var(--accent);
   stroke: color-mix(in srgb, var(--accent) 58%, var(--native-text));
 }
 
 .dt-logic-edge--fires_remote,
 .dt-logic-edge--listens_remote {
+  stroke: #48a7ff;
   stroke: color-mix(in srgb, #48a7ff 74%, var(--native-text));
 }
 
@@ -3807,13 +3977,17 @@ button:focus-visible {
 }
 
 .dt-logic-map-node circle {
+  fill: var(--surface-2);
   fill: color-mix(in srgb, var(--surface-2) 62%, var(--native-bg));
+  stroke: var(--native-text);
   stroke: color-mix(in srgb, var(--native-text) 18%, transparent);
   stroke-width: 1.2;
 }
 
 .dt-logic-bubble circle {
+  fill: var(--accent);
   fill: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+  stroke: #fff;
   stroke: color-mix(in srgb, #fff 22%, var(--accent));
   stroke-width: 1.35;
   filter: drop-shadow(0 12px 28px rgb(0 0 0 / 0.28));
@@ -3824,7 +3998,9 @@ button:focus-visible {
 }
 
 .dt-logic-bubble.noise circle {
+  fill: var(--surface-2);
   fill: color-mix(in srgb, var(--surface-2) 72%, var(--native-bg));
+  stroke: var(--native-text);
   stroke: color-mix(in srgb, var(--native-text) 18%, transparent);
   filter: none;
 }
@@ -3841,15 +4017,18 @@ button:focus-visible {
 }
 
 .dt-logic-bubble-label {
+  fill: var(--native-text) !important;
   fill: color-mix(in srgb, var(--native-text) 82%, transparent) !important;
   font: 760 9.5px/1 var(--font-ui) !important;
   letter-spacing: 0;
   paint-order: stroke;
+  stroke: var(--native-bg);
   stroke: color-mix(in srgb, var(--native-bg) 86%, transparent);
   stroke-width: 3px;
 }
 
 .dt-logic-system-label {
+  fill: var(--native-text);
   fill: color-mix(in srgb, var(--native-text) 28%, transparent);
   font: 780 9px/1 var(--font-ui);
   letter-spacing: 0.06em;
@@ -3890,9 +4069,11 @@ button:focus-visible {
 
 .dt-logic-ai-block {
   margin-bottom: 10px;
+  border: 1px solid var(--native-text);
   border: 1px solid color-mix(in srgb, var(--native-text) 6%, transparent);
   border-radius: 8px;
   padding: 10px;
+  background: var(--surface-1);
   background: color-mix(in srgb, var(--surface-1) 74%, transparent);
 }
 
@@ -3919,6 +4100,7 @@ button:focus-visible {
   min-height: 20px;
   border-radius: 999px;
   padding: 4px 7px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 6%, transparent);
   color: var(--native-text-3);
   font: 620 10px/1.1 var(--font-ui);
@@ -3960,6 +4142,7 @@ button:focus-visible {
   padding: 12px;
   border: 1px solid var(--glass-border);
   border-radius: 8px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 5%, transparent);
 }
 
@@ -4121,6 +4304,7 @@ button:focus-visible {
   padding: 2px;
   border: 1px solid var(--glass-border);
   border-radius: 7px;
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 82%, transparent);
 }
 
@@ -4138,6 +4322,7 @@ button:focus-visible {
 .analysis-switch button:hover:not(:disabled),
 .analysis-switch button.active {
   color: var(--native-text);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 10%, transparent);
 }
 
@@ -4180,6 +4365,7 @@ button:focus-visible {
   border: 1px solid var(--glass-border);
   border-radius: 7px;
   padding: 0 9px;
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 78%, transparent);
   color: var(--native-text-4);
   font: 680 10.5px var(--font-ui);
@@ -4194,6 +4380,7 @@ button:focus-visible {
   padding: 2px;
   border: 1px solid var(--glass-border);
   border-radius: 6px;
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 82%, transparent);
   gap: 1px;
 }
@@ -4215,11 +4402,13 @@ button:focus-visible {
 
 .analysis-tab:hover {
   color: var(--native-text);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 8%, transparent);
 }
 
 .analysis-tab.active {
   color: var(--native-text);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 12%, transparent);
 }
 
@@ -4393,6 +4582,7 @@ button:focus-visible {
 }
 
 .dt-remote-row:hover {
+  background: var(--native-text);
   background: color-mix(in srgb, var(--native-text) 5%, transparent);
   color: var(--native-text);
 }
@@ -4403,6 +4593,7 @@ button:focus-visible {
   width: 23px;
   height: 23px;
   border-radius: 6px;
+  background: rgba(72, 167, 255, 0.16);
   background: color-mix(in srgb, #48a7ff 16%, transparent);
   color: var(--native-text);
   font: 800 10px/1 var(--font-mono);
@@ -4503,9 +4694,11 @@ button:focus-visible {
 }
 
 .dt-remote-panel--error {
+  border: 1px solid #ff6b6b;
   border: 1px solid color-mix(in srgb, #ff6b6b 32%, var(--glass-border));
   border-radius: 7px;
   padding: 10px;
+  background: rgba(255, 107, 107, 0.06);
   background: color-mix(in srgb, #ff6b6b 6%, transparent);
 }
 
@@ -4517,6 +4710,7 @@ button:focus-visible {
 
 .dt-remote-prediction {
   margin-top: 0;
+  border-bottom: 1px solid var(--native-text);
   border-bottom: 1px solid color-mix(in srgb, var(--native-text) 5%, transparent);
   padding: 9px 0;
   color: var(--native-text-2);
@@ -4621,11 +4815,13 @@ button:focus-visible {
 
 .dt-analysis-steps {
   border-right: 1px solid var(--glass-border);
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 93%, var(--surface-1));
 }
 
 .dt-analysis-details {
   border-left: 1px solid var(--glass-border);
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 94%, var(--surface-1));
 }
 
@@ -4634,10 +4830,12 @@ button:focus-visible {
   padding: 12px;
   border: 1px solid var(--glass-border);
   border-radius: 8px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 4.5%, transparent);
 }
 
 .dt-analysis-card--error {
+  border-color: #ff6b6b;
   border-color: color-mix(in srgb, #ff6b6b 28%, var(--glass-border));
 }
 
@@ -4661,9 +4859,11 @@ button:focus-visible {
   gap: 8px;
   min-height: 58px;
   margin-bottom: 7px;
+  border: 1px solid var(--native-text);
   border: 1px solid color-mix(in srgb, var(--native-text) 5%, transparent);
   border-radius: 8px;
   padding: 0 9px;
+  background: var(--surface-1);
   background: color-mix(in srgb, var(--surface-1) 70%, transparent);
   color: var(--native-text-2);
 }
@@ -4674,6 +4874,7 @@ button:focus-visible {
   width: 24px;
   height: 24px;
   border-radius: 999px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 6%, transparent);
   color: var(--native-text-3);
   font: 760 10px/1 var(--font-mono);
@@ -4709,12 +4910,15 @@ button:focus-visible {
 }
 
 .dt-analysis-step.is-running {
+  border-color: var(--native-text);
   border-color: color-mix(in srgb, var(--native-text) 20%, transparent);
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 8%, transparent);
 }
 
 .dt-analysis-step.is-running > span {
   color: var(--native-text);
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
@@ -4771,6 +4975,7 @@ button:focus-visible {
 
 .dt-analysis-link {
   opacity: 0.38;
+  stroke: #fff;
   stroke: color-mix(in srgb, #fff 28%, var(--accent));
   stroke-width: 1.35;
 }
@@ -4781,20 +4986,26 @@ button:focus-visible {
 }
 
 .dt-analysis-node circle {
+  fill: var(--surface-2);
   fill: color-mix(in srgb, var(--surface-2) 76%, var(--native-bg));
+  stroke: #fff;
   stroke: color-mix(in srgb, #fff 18%, var(--accent));
   stroke-width: 1.25;
   filter: drop-shadow(0 14px 28px rgb(0 0 0 / 0.24));
 }
 
 .dt-analysis-node--game circle {
+  fill: var(--text0);
   fill: color-mix(in srgb, var(--text0) 9%, var(--surface-2));
+  stroke: #fff;
   stroke: color-mix(in srgb, #fff 36%, var(--accent));
   stroke-width: 1.6;
 }
 
 .dt-analysis-node--child circle {
+  fill: var(--surface-1);
   fill: color-mix(in srgb, var(--surface-1) 82%, var(--native-bg));
+  stroke: var(--native-text);
   stroke: color-mix(in srgb, var(--native-text) 20%, transparent);
   filter: none;
 }
@@ -4812,10 +5023,12 @@ button:focus-visible {
 }
 
 .dt-analysis-node-label {
+  fill: var(--native-text) !important;
   fill: color-mix(in srgb, var(--native-text) 88%, transparent) !important;
   font: 770 11px/1 var(--font-ui) !important;
   letter-spacing: 0 !important;
   paint-order: stroke;
+  stroke: var(--native-bg);
   stroke: color-mix(in srgb, var(--native-bg) 90%, transparent);
   stroke-width: 3px;
 }
@@ -4879,9 +5092,11 @@ button:focus-visible {
 .dt-analysis-mini-row {
   min-height: 44px;
   margin-bottom: 6px;
+  border: 1px solid var(--native-text);
   border: 1px solid color-mix(in srgb, var(--native-text) 5%, transparent);
   border-radius: 7px;
   padding: 8px 9px;
+  background: var(--surface-1);
   background: color-mix(in srgb, var(--surface-1) 68%, transparent);
   color: var(--native-text-2);
 }
@@ -4948,12 +5163,23 @@ button:focus-visible {
   }
 }
 
-@container dt-topbar (max-width: 680px) {
+@media (max-width: 680px) {
   .dt-snapshot-select,
   .analysis-snapshot-select,
   .dt-memory-action,
   .dt-save-game-action {
     display: none !important;
+  }
+}
+
+@supports (container-type: inline-size) {
+  @container dt-topbar (max-width: 680px) {
+    .dt-snapshot-select,
+    .analysis-snapshot-select,
+    .dt-memory-action,
+    .dt-save-game-action {
+      display: none !important;
+    }
   }
 }
 
@@ -4996,6 +5222,7 @@ button:focus-visible {
   cursor: col-resize;
   border-left: 1px solid var(--glass-border);
   border-right: 1px solid var(--glass-border);
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 90%, var(--bg2));
 }
 
@@ -5009,6 +5236,7 @@ button:focus-visible {
 
 .dt-side-splitter:hover::before,
 .dt-side-splitter.dragging::before {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
@@ -5040,6 +5268,7 @@ button:focus-visible {
 
 .dt-rail-splitter:hover::before,
 .dt-rail-splitter.dragging::before {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
@@ -5070,7 +5299,9 @@ button:focus-visible {
   padding: 0 9px;
   border: 1px solid var(--glass-border);
   border-radius: 999px;
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--text0);
   color: color-mix(in srgb, var(--text0) 92%, var(--accent));
   font: 780 10.5px/1 var(--font-ui);
 }
@@ -5083,6 +5314,7 @@ button:focus-visible {
 
 .dt-stage-card p {
   margin: 6px 0 12px;
+  color: var(--text2);
   color: color-mix(in srgb, var(--text2) 92%, var(--text0));
   font: 600 12px/1.45 var(--font-ui);
 }
@@ -5091,6 +5323,7 @@ button:focus-visible {
   height: 4px;
   overflow: hidden;
   border-radius: 999px;
+  background: var(--text0);
   background: color-mix(in srgb, var(--text0) 9%, transparent);
 }
 
@@ -5099,6 +5332,7 @@ button:focus-visible {
   width: 46%;
   height: 100%;
   border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent));
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 42%, #fff));
   animation: dt-stage-scan 960ms cubic-bezier(0.5, 0, 0.2, 1) infinite;
 }
@@ -5159,6 +5393,7 @@ button:focus-visible {
 
 .dt-search:focus-within {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
 }
@@ -5197,17 +5432,20 @@ button:focus-visible {
 }
 
 .dt-tree-row:hover {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 5%, transparent) !important;
 }
 
 .dt-tree-row.active {
   color: var(--native-text) !important;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 8%, transparent) !important;
   box-shadow: none !important;
 }
 
 .dt-tree-row.active .dt-node-class,
 .dt-tree-row.active .dt-disclosure {
+  color: rgba(255, 255, 255, 0.72);
   color: color-mix(in srgb, white 72%, transparent);
 }
 
@@ -5311,6 +5549,7 @@ button:focus-visible {
 }
 
 .dt-kv-row:hover {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
@@ -5372,7 +5611,9 @@ button:focus-visible {
 }
 
 .dt-kv-value input:focus {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 11%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
@@ -5383,6 +5624,7 @@ button:focus-visible {
   padding: 2px 7px;
   border: 1px solid var(--glass-border) !important;
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06) !important;
   background: color-mix(in srgb, #ffffff 6%, transparent) !important;
   color: var(--native-text-2) !important;
   font: 760 9.5px/1 var(--font-ui);
@@ -5409,6 +5651,7 @@ button:focus-visible {
 .cloud-filter-tag {
   border: 1px solid var(--glass-border) !important;
   border-radius: 6px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
   background: color-mix(in srgb, #ffffff 6%, transparent) !important;
   color: var(--native-text-3) !important;
 }
@@ -5416,6 +5659,7 @@ button:focus-visible {
 .dt-details {
   display: block !important;
   overflow: auto;
+  background: var(--native-bg) !important;
   background: color-mix(in srgb, var(--native-bg) 94%, var(--bg1)) !important;
   scroll-behavior: auto;
 }
@@ -5436,8 +5680,10 @@ button:focus-visible {
   display: flex;
   align-items: center;
   padding: 0 12px !important;
+  border-bottom: 1px solid var(--native-text) !important;
   border-bottom: 1px solid color-mix(in srgb, var(--native-text) 10%, transparent) !important;
   background: var(--native-bg) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) !important;
   box-shadow: 0 1px 0 color-mix(in srgb, #fff 4%, transparent) !important;
 }
 
@@ -5467,14 +5713,18 @@ button:focus-visible {
   z-index: 7;
   display: block;
   padding: 7px 10px;
+  border-bottom: 1px solid var(--native-text);
   border-bottom: 1px solid color-mix(in srgb, var(--native-text) 10%, transparent);
+  background: var(--native-bg) !important;
   background: color-mix(in srgb, var(--native-bg) 97%, var(--bg1)) !important;
 }
 
 .dt-property-filter input {
   height: 28px;
+  border: 1px solid var(--native-text);
   border: 1px solid color-mix(in srgb, var(--native-text) 12%, transparent);
   border-radius: 6px;
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 82%, var(--bg2));
   color: var(--native-text);
   font: 600 11.5px var(--font-ui);
@@ -5501,8 +5751,11 @@ button:focus-visible {
   z-index: 6;
   min-height: 29px;
   padding: 0 10px;
+  border-top: 1px solid var(--native-text);
   border-top: 1px solid color-mix(in srgb, var(--native-text) 7%, transparent);
+  border-bottom: 1px solid var(--native-text) !important;
   border-bottom: 1px solid color-mix(in srgb, var(--native-text) 10%, transparent) !important;
+  background: var(--native-bg) !important;
   background: color-mix(in srgb, var(--native-bg) 92%, var(--bg2)) !important;
   box-shadow: none !important;
 }
@@ -5520,11 +5773,14 @@ button:focus-visible {
 .dt-kv-row {
   grid-template-columns: minmax(136px, 0.62fr) minmax(72px, 1fr) minmax(42px, max-content);
   min-height: 32px;
+  border-bottom: 1px solid var(--native-text) !important;
   border-bottom: 1px solid color-mix(in srgb, var(--native-text) 7%, transparent) !important;
+  background: var(--native-bg);
   background: color-mix(in srgb, var(--native-bg) 98%, var(--bg1));
 }
 
 .dt-kv-row:hover {
+  background: var(--accent) !important;
   background: color-mix(in srgb, var(--accent) 10%, var(--native-bg)) !important;
 }
 
@@ -5535,6 +5791,7 @@ button:focus-visible {
 }
 
 .dt-kv-value {
+  border-left: 1px solid var(--native-text);
   border-left: 1px solid color-mix(in srgb, var(--native-text) 7%, transparent);
 }
 
@@ -5544,7 +5801,9 @@ button:focus-visible {
 
 .dt-kv-row em {
   opacity: 0.68;
+  border-color: var(--native-text) !important;
   border-color: color-mix(in srgb, var(--native-text) 10%, transparent) !important;
+  background: var(--native-text) !important;
   background: color-mix(in srgb, var(--native-text) 5%, transparent) !important;
 }
 
@@ -5929,6 +6188,7 @@ button:focus-visible {
   display: grid;
   place-items: center;
   padding: 24px;
+  background: var(--bg0);
   background: color-mix(in srgb, var(--bg0) 58%, transparent);
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
@@ -5957,6 +6217,7 @@ button:focus-visible {
   height: 28px;
   flex: 0 0 auto;
   border-radius: 50%;
+  border: 2px solid var(--accent);
   border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
   animation: dt-busy-spin 820ms linear infinite;
@@ -5981,6 +6242,7 @@ button:focus-visible {
   display: grid;
   place-items: center;
   padding: 28px;
+  background: rgba(0, 0, 0, 0.56);
   background: color-mix(in srgb, #000 56%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -6178,6 +6440,7 @@ button:focus-visible {
   height: 5px;
   overflow: hidden;
   border-radius: 999px;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 10%, transparent) !important;
 }
 
@@ -6187,6 +6450,7 @@ button:focus-visible {
   height: 100%;
   width: 2%;
   border-radius: inherit;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 70%, transparent) !important;
   transition: width 160ms cubic-bezier(0.2, 0, 0, 1);
 }
@@ -6248,6 +6512,7 @@ button:focus-visible {
   padding: 0 7px !important;
   border: 1px solid var(--glass-border) !important;
   border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.05) !important;
   background: color-mix(in srgb, #fff 5%, transparent) !important;
   color: var(--native-text-3) !important;
   font: 700 11px/1 var(--font-ui) !important;
@@ -6307,6 +6572,7 @@ button:focus-visible {
 
 .pb-search-row:focus-within {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 78%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
 }
@@ -6479,6 +6745,7 @@ button:focus-visible {
   justify-content: space-between !important;
   padding: 10px 14px !important;
   border-top: 1px solid var(--glass-border) !important;
+  background: var(--bg1) !important;
   background: color-mix(in srgb, var(--bg1) 52%, transparent) !important;
 }
 
@@ -6592,6 +6859,7 @@ button:focus-visible {
 
 .cloud-search-wrap:focus-within {
   border-color: var(--glass-border-strong) !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 76%, transparent) !important;
   box-shadow: var(--glass-highlight-soft) !important;
 }
@@ -6622,6 +6890,7 @@ button:focus-visible {
 .cloud-filter-btn.active,
 .cloud-filter-toggle.active {
   border-color: var(--glass-border-strong) !important;
+  background: rgba(255, 255, 255, 0.09) !important;
   background: color-mix(in srgb, #fff 9%, transparent) !important;
   color: var(--native-text) !important;
 }
@@ -6679,7 +6948,9 @@ button:focus-visible {
   right: 8px !important;
   border: 1px solid var(--glass-border) !important;
   border-radius: 6px !important;
+  background: rgba(0, 0, 0, 0.68) !important;
   background: color-mix(in srgb, #000 68%, transparent) !important;
+  color: rgba(255, 255, 255, 0.78) !important;
   color: color-mix(in srgb, #fff 78%, transparent) !important;
   font: 760 9.5px var(--font-ui) !important;
   letter-spacing: 0.04em !important;
@@ -6731,6 +7002,7 @@ button:focus-visible {
 .sk-banner,
 .sk-line,
 .sk-btn {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 6%, transparent) !important;
 }
 
@@ -6903,8 +7175,11 @@ button:focus-visible {
   --line-soft: rgba(168, 88, 132, 0.24);
   --line-strong: rgba(151, 64, 113, 0.36);
   --surface-0: var(--light-editor);
+  --surface-1: var(--light-editor);
   --surface-1: color-mix(in srgb, var(--light-editor) 82%, var(--light-chrome));
+  --surface-2: var(--light-hover);
   --surface-2: color-mix(in srgb, var(--light-hover) 88%, var(--light-editor));
+  --surface-3: var(--light-selected);
   --surface-3: color-mix(in srgb, var(--light-selected) 78%, var(--light-editor));
 }
 
@@ -6920,8 +7195,11 @@ button:focus-visible {
   --line-soft: rgba(112, 81, 178, 0.24);
   --line-strong: rgba(93, 61, 158, 0.36);
   --surface-0: var(--light-editor);
+  --surface-1: var(--light-editor);
   --surface-1: color-mix(in srgb, var(--light-editor) 82%, var(--light-chrome));
+  --surface-2: var(--light-hover);
   --surface-2: color-mix(in srgb, var(--light-hover) 88%, var(--light-editor));
+  --surface-3: var(--light-selected);
   --surface-3: color-mix(in srgb, var(--light-selected) 78%, var(--light-editor));
 }
 
@@ -6937,8 +7215,11 @@ button:focus-visible {
   --line-soft: rgba(128, 96, 65, 0.24);
   --line-strong: rgba(106, 75, 47, 0.36);
   --surface-0: var(--light-editor);
+  --surface-1: var(--light-editor);
   --surface-1: color-mix(in srgb, var(--light-editor) 82%, var(--light-chrome));
+  --surface-2: var(--light-hover);
   --surface-2: color-mix(in srgb, var(--light-hover) 88%, var(--light-editor));
+  --surface-3: var(--light-selected);
   --surface-3: color-mix(in srgb, var(--light-selected) 78%, var(--light-editor));
 }
 
@@ -6971,6 +7252,7 @@ button:focus-visible {
 [data-theme='pink'] .titlebar,
 [data-theme='purple'] .titlebar,
 [data-theme='light'] .titlebar {
+  background: var(--bg1) !important;
   background: color-mix(in srgb, var(--bg1) 82%, transparent) !important;
   border-bottom-color: var(--glass-border) !important;
   box-shadow:
@@ -6989,7 +7271,9 @@ button:focus-visible {
 [data-theme='light'] .titlebar-command,
 [data-theme='light'] .titlebar-instance-select,
 [data-theme='light'] .titlebar-device-btn {
+  background: var(--light-editor);
   background: color-mix(in srgb, var(--light-editor) 82%, var(--light-chrome));
+  border-color: var(--border);
   border-color: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
@@ -7107,6 +7391,7 @@ button:focus-visible {
 [data-theme='pink'] .tab-new-btn,
 [data-theme='purple'] .tab-new-btn,
 [data-theme='light'] .tab-new-btn {
+  background: var(--light-editor);
   background: color-mix(in srgb, var(--light-editor) 70%, var(--light-chrome-2));
   border-color: var(--line-soft);
 }
@@ -7124,6 +7409,7 @@ button:focus-visible {
 [data-theme='light'] .tree-row.active,
 [data-theme='light'] .tree-row.selected {
   background: var(--light-selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
@@ -7161,6 +7447,7 @@ button:focus-visible {
 [data-theme='pink'] .sp-nav-item:hover,
 [data-theme='purple'] .sp-nav-item:hover,
 [data-theme='light'] .sp-nav-item:hover {
+  background: var(--light-editor);
   background: color-mix(in srgb, var(--light-editor) 54%, var(--light-chrome-2));
   color: var(--text0);
 }
@@ -7168,7 +7455,9 @@ button:focus-visible {
 [data-theme='pink'] .sp-nav-item.active,
 [data-theme='purple'] .sp-nav-item.active,
 [data-theme='light'] .sp-nav-item.active {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 9%, var(--light-editor));
+  border-color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
   color: var(--accent);
 }
@@ -7191,6 +7480,7 @@ button:focus-visible {
 [data-theme='light'] .sp-shortcut-row,
 [data-theme='light'] .icon-theme-row,
 [data-theme='light'] .msp-item {
+  background: var(--light-editor);
   background: color-mix(in srgb, var(--light-editor) 74%, var(--light-chrome));
   border-color: var(--line-soft);
 }
@@ -7226,6 +7516,7 @@ button:focus-visible {
       color-mix(in srgb, var(--theme-card-d) 82%, var(--light-chrome)) 58%,
       color-mix(in srgb, var(--theme-card-c) 10%, var(--light-editor))
     );
+  border-color: var(--theme-card-a);
   border-color: color-mix(in srgb, var(--theme-card-a) 20%, var(--border));
 }
 
@@ -7244,6 +7535,7 @@ button:focus-visible {
       color-mix(in srgb, var(--theme-card-d) 76%, var(--light-chrome)) 58%,
       color-mix(in srgb, var(--theme-card-c) 15%, var(--light-editor))
     );
+  border-color: var(--theme-card-a);
   border-color: color-mix(in srgb, var(--theme-card-a) 38%, var(--border));
 }
 
@@ -7267,6 +7559,7 @@ button:focus-visible {
 [data-theme='pink'] .theme-card,
 [data-theme='purple'] .theme-card,
 [data-theme='light'] .theme-card {
+  background: var(--light-row);
   background: color-mix(in srgb, var(--light-row) 76%, var(--light-chrome));
   border-color: var(--line-soft);
 }
@@ -7281,6 +7574,7 @@ button:focus-visible {
 [data-theme='pink'] .theme-card.active,
 [data-theme='purple'] .theme-card.active,
 [data-theme='light'] .theme-card.active {
+  background: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, var(--light-row));
   border-color: var(--accent);
 }
@@ -7309,6 +7603,7 @@ button:focus-visible {
 [data-theme='light'] .msp-input,
 [data-theme='light'] .msp-textarea,
 [data-theme='light'] .range-value {
+  background: var(--light-editor);
   background: color-mix(in srgb, var(--light-editor) 72%, var(--light-chrome-2));
   border-color: var(--line-soft);
   color: var(--text0);
@@ -7327,6 +7622,7 @@ button:focus-visible {
 [data-theme='pink'] .sp-shortcut-row kbd,
 [data-theme='purple'] .sp-shortcut-row kbd,
 [data-theme='light'] .sp-shortcut-row kbd {
+  background: var(--light-editor);
   background: color-mix(in srgb, var(--light-editor) 80%, var(--light-chrome-2));
   border-color: var(--line-strong);
   color: var(--text1);
@@ -7395,6 +7691,7 @@ button:focus-visible {
 [data-theme='purple'] .monaco-hover .actions,
 [data-theme='light'] .monaco-hover .hover-row.status-bar,
 [data-theme='light'] .monaco-hover .actions {
+  background: var(--accent) !important;
   background: color-mix(in srgb, var(--accent) 10%, var(--surface-0)) !important;
 }
 
@@ -7503,10 +7800,15 @@ button:focus-visible {
 :root {
   --ui-motion-fast: 120ms cubic-bezier(0.2, 0, 0, 1);
   --ui-motion-med: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  --pb-panel: var(--surface-1);
   --pb-panel: color-mix(in srgb, var(--surface-1) 94%, transparent);
+  --pb-panel-soft: var(--surface-1);
   --pb-panel-soft: color-mix(in srgb, var(--surface-1) 82%, transparent);
+  --pb-panel-hover: var(--surface-2);
   --pb-panel-hover: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  --pb-field: var(--surface-0);
   --pb-field: color-mix(in srgb, var(--surface-0) 92%, transparent);
+  --pb-code: var(--bg0);
   --pb-code: color-mix(in srgb, var(--bg0) 88%, transparent);
 }
 
@@ -7568,13 +7870,16 @@ button:focus-visible {
 .workspace-view--pinboard {
   min-height: 0 !important;
   flex-direction: column !important;
+  background: var(--bg0) !important;
   background: color-mix(in srgb, var(--bg0) 96%, transparent) !important;
 }
 
 .pb-toolbar {
   min-height: 96px !important;
+  background: var(--surface-1) !important;
   background: color-mix(in srgb, var(--surface-1) 90%, transparent) !important;
   border-bottom: 1px solid var(--line-soft) !important;
+  box-shadow: inset 0 1px 0 var(--text0) !important;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text0) 2.25%, transparent) !important;
 }
 
@@ -7594,6 +7899,7 @@ button:focus-visible {
   min-width: 24px !important;
   height: 21px !important;
   border-color: var(--line-soft) !important;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 4%, transparent) !important;
   color: var(--text2) !important;
 }
@@ -7609,8 +7915,10 @@ button:focus-visible {
   height: 30px !important;
   border: 1px solid var(--line-soft) !important;
   border-radius: 8px !important;
+  background: var(--surface-1) !important;
   background: color-mix(in srgb, var(--surface-1) 78%, transparent) !important;
   color: var(--text1) !important;
+  box-shadow: inset 0 1px 0 var(--text0) !important;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text0) 2%, transparent) !important;
   font: 650 12px/1 var(--font-ui) !important;
 }
@@ -7636,12 +7944,15 @@ button:focus-visible {
   border: 1px solid var(--line-soft) !important;
   border-radius: 10px !important;
   background: var(--pb-field) !important;
+  box-shadow: inset 0 1px 0 var(--text0) !important;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text0) 2%, transparent) !important;
 }
 
 .pb-search-row:focus-within {
   border-color: var(--line-strong) !important;
+  background: var(--surface-0) !important;
   background: color-mix(in srgb, var(--surface-0) 96%, transparent) !important;
+  box-shadow: inset 0 1px 0 var(--text0) !important;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text0) 2%, transparent) !important;
 }
 
@@ -7666,6 +7977,7 @@ button:focus-visible {
   min-height: 184px !important;
   border: 1px solid var(--line-soft) !important;
   border-radius: 12px !important;
+  background: var(--surface-1) !important;
   background: color-mix(in srgb, var(--surface-1) 88%, transparent) !important;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text0) 2.25%, transparent),
@@ -7674,6 +7986,7 @@ button:focus-visible {
 
 .pb-card:hover {
   border-color: var(--line-strong) !important;
+  background: var(--surface-2) !important;
   background: color-mix(in srgb, var(--surface-2) 92%, transparent) !important;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text0) 2.8%, transparent),
@@ -7696,6 +8009,7 @@ button:focus-visible {
   height: 21px !important;
   border: 1px solid var(--line-soft) !important;
   border-radius: 999px !important;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 4%, transparent) !important;
   color: var(--text2) !important;
   font: 650 9.5px/1 var(--font-ui) !important;
@@ -7710,6 +8024,7 @@ button:focus-visible {
   border-radius: 8px !important;
   background: var(--pb-code) !important;
   color: var(--text1) !important;
+  box-shadow: inset 2px 0 0 var(--text0) !important;
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text0) 9%, transparent) !important;
   font: 600 11.5px/1.54 var(--font-mono) !important;
 }
@@ -7723,6 +8038,7 @@ button:focus-visible {
   min-height: 48px !important;
   padding: 9px 14px !important;
   border-top: 1px solid var(--line-soft) !important;
+  background: var(--surface-1) !important;
   background: color-mix(in srgb, var(--surface-1) 68%, transparent) !important;
 }
 
@@ -7750,12 +8066,15 @@ button:focus-visible {
 
 .credit-card {
   border-color: var(--line-soft) !important;
+  background: var(--surface-1) !important;
   background: color-mix(in srgb, var(--surface-1) 88%, transparent) !important;
+  box-shadow: inset 0 1px 0 var(--text0) !important;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text0) 2%, transparent) !important;
 }
 
 .credit-card:hover {
   border-color: var(--line-strong) !important;
+  background: var(--surface-2) !important;
   background: color-mix(in srgb, var(--surface-2) 88%, transparent) !important;
 }
 
@@ -7787,6 +8106,7 @@ button:focus-visible {
 }
 
 html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light']) .tab.active {
+  border-color: var(--text0) !important;
   border-color: color-mix(in srgb, var(--text0) 24%, transparent) !important;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--text0) 5%, transparent), transparent 72%),
@@ -7864,6 +8184,7 @@ html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light'
 }
 
 .tab:hover {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 5%, transparent) !important;
   box-shadow: none !important;
 }
@@ -7871,6 +8192,7 @@ html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light'
 .tab.active {
   color: var(--text0) !important;
   border-color: transparent !important;
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 4%, transparent) !important;
   box-shadow: none !important;
 }
@@ -7879,6 +8201,7 @@ html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light'
 [data-theme='purple'] .tab.active,
 [data-theme='light'] .tab.active {
   border-color: transparent !important;
+  background: var(--accent) !important;
   background: color-mix(in srgb, var(--accent) 8%, transparent) !important;
   box-shadow: none !important;
 }
@@ -7906,6 +8229,7 @@ html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light'
 }
 
 #btnTogglePanel.status-layout-btn:hover {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 6%, transparent) !important;
   color: var(--text0) !important;
   box-shadow: none !important;
@@ -7913,6 +8237,7 @@ html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light'
 }
 
 #btnTogglePanel.status-layout-btn.active {
+  background: var(--text0) !important;
   background: color-mix(in srgb, var(--text0) 8%, transparent) !important;
   color: var(--text0) !important;
   box-shadow: none !important;
@@ -7966,9 +8291,11 @@ html:not([data-theme='pink']):not([data-theme='purple']):not([data-theme='light'
   height: 26px;
   pointer-events: auto;
   cursor: pointer;
+  background: var(--bg1);
   background: color-mix(in srgb, var(--bg1) 96%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--glass-border);
   border-bottom: 1px solid color-mix(in srgb, var(--glass-border) 70%, transparent);
   outline: none !important;
   will-change: top;

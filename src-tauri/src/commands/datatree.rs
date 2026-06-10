@@ -20,7 +20,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-const SNAPSHOT_CACHE_LIMIT: usize = 4;
+const SNAPSHOT_CACHE_LIMIT: usize = 2;
 const SNAPSHOT_READ_BUFFER_BYTES: usize = 1024 * 1024;
 const XML_READ_BUFFER_BYTES: usize = 512 * 1024;
 const XML_EVENT_BUFFER_BYTES: usize = 64 * 1024;
@@ -743,12 +743,53 @@ fn is_heavy_snapshot_value(key: &str, value: &Value) -> bool {
 
 fn make_snapshot_light(snapshot: &mut DataTreeSnapshot) {
     for node in snapshot.nodes.iter_mut() {
-        let prop_types = node.property_types.clone();
-        for (key, value) in node.properties.iter_mut() {
-            if is_script_property(key, &prop_types) {
+        let prop_keys: Vec<String> = node.properties.keys().cloned().collect();
+        for key in prop_keys {
+            if is_script_property(&key, &node.property_types) {
                 continue;
             }
-            if is_heavy_snapshot_value(key, value) {
+            if let Some(value) = node.properties.get_mut(&key) {
+                if is_heavy_snapshot_value(&key, value) {
+                    if let Value::String(text) = value {
+                        let marker = format!(
+                            "__dt_heavy__:{} bytes preserved in native snapshot",
+                            text.len()
+                        );
+                        *value = Value::String(marker);
+                    }
+                }
+            }
+        }
+        let attr_keys: Vec<String> = node.attributes.keys().cloned().collect();
+        for key in attr_keys {
+            if is_script_property(&key, &node.attribute_types) {
+                continue;
+            }
+            if let Some(value) = node.attributes.get_mut(&key) {
+                if matches!(value, Value::String(text) if text.len() > 512)
+                    || is_heavy_snapshot_value(&key, value)
+                {
+                    if let Value::String(text) = value {
+                        let marker = format!(
+                            "__dt_heavy__:{} bytes preserved in native snapshot",
+                            text.len()
+                        );
+                        *value = Value::String(marker);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn make_node_light(node: &mut DataTreeNode) {
+    let prop_keys: Vec<String> = node.properties.keys().cloned().collect();
+    for key in prop_keys {
+        if is_script_property(&key, &node.property_types) {
+            continue;
+        }
+        if let Some(value) = node.properties.get_mut(&key) {
+            if is_heavy_snapshot_value(&key, value) {
                 if let Value::String(text) = value {
                     let marker = format!(
                         "__dt_heavy__:{} bytes preserved in native snapshot",
@@ -758,13 +799,15 @@ fn make_snapshot_light(snapshot: &mut DataTreeSnapshot) {
                 }
             }
         }
-        let attr_types = node.attribute_types.clone();
-        for (key, value) in node.attributes.iter_mut() {
-            if is_script_property(key, &attr_types) {
-                continue;
-            }
+    }
+    let attr_keys: Vec<String> = node.attributes.keys().cloned().collect();
+    for key in attr_keys {
+        if is_script_property(&key, &node.attribute_types) {
+            continue;
+        }
+        if let Some(value) = node.attributes.get_mut(&key) {
             if matches!(value, Value::String(text) if text.len() > 512)
-                || is_heavy_snapshot_value(key, value)
+                || is_heavy_snapshot_value(&key, value)
             {
                 if let Value::String(text) = value {
                     let marker = format!(
@@ -773,41 +816,6 @@ fn make_snapshot_light(snapshot: &mut DataTreeSnapshot) {
                     );
                     *value = Value::String(marker);
                 }
-            }
-        }
-    }
-}
-
-fn make_node_light(node: &mut DataTreeNode) {
-    let prop_types = node.property_types.clone();
-    for (key, value) in node.properties.iter_mut() {
-        if is_script_property(key, &prop_types) {
-            continue;
-        }
-        if is_heavy_snapshot_value(key, value) {
-            if let Value::String(text) = value {
-                let marker = format!(
-                    "__dt_heavy__:{} bytes preserved in native snapshot",
-                    text.len()
-                );
-                *value = Value::String(marker);
-            }
-        }
-    }
-    let attr_types = node.attribute_types.clone();
-    for (key, value) in node.attributes.iter_mut() {
-        if is_script_property(key, &attr_types) {
-            continue;
-        }
-        if matches!(value, Value::String(text) if text.len() > 512)
-            || is_heavy_snapshot_value(key, value)
-        {
-            if let Value::String(text) = value {
-                let marker = format!(
-                    "__dt_heavy__:{} bytes preserved in native snapshot",
-                    text.len()
-                );
-                *value = Value::String(marker);
             }
         }
     }

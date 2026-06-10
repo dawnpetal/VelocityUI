@@ -2472,7 +2472,7 @@ const LuaIntelligence = (() => {
     const labelsByBlock = new Map([[root, new Map()]]);
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
-      const current = stack.at(-1);
+      const current = stack[stack.length - 1];
       _recordSyntaxStatement(current, token);
       if (token.value === 'function') {
         const params = _functionParams(tokens, i);
@@ -2539,7 +2539,7 @@ const LuaIntelligence = (() => {
         continue;
       }
       if (token.value === 'end') {
-        const block = stack.at(-1);
+        const block = stack[stack.length - 1];
         if (!block || block.kind === 'root' || block.kind === 'repeat') {
           markers.push({
             start: token.start,
@@ -2563,7 +2563,7 @@ const LuaIntelligence = (() => {
         continue;
       }
       if (token.value === 'until') {
-        const block = stack.at(-1);
+        const block = stack[stack.length - 1];
         if (!block || block.kind !== 'repeat') {
           markers.push({
             start: token.start,
@@ -2588,7 +2588,7 @@ const LuaIntelligence = (() => {
           severity: 'error',
         });
       }
-      if (token.value === '...' && !functionStack.at(-1)?.vararg) {
+      if (token.value === '...' && !functionStack[functionStack.length - 1]?.vararg) {
         markers.push({
           start: token.start,
           end: token.end,
@@ -2725,7 +2725,7 @@ const LuaIntelligence = (() => {
         stack.pop();
         continue;
       }
-      const table = stack.at(-1);
+      const table = stack[stack.length - 1];
       if (
         !table ||
         table.functionDepth !== functionDepth ||
@@ -2757,7 +2757,7 @@ const LuaIntelligence = (() => {
         else if (token.value === ')' || token.value === ']' || token.value === '}')
           bracketDepth = Math.max(0, bracketDepth - 1);
       }
-      const current = stack.at(-1);
+      const current = stack[stack.length - 1];
       if (
         current?.terminatedBy &&
         token.line > (current.terminatedBy.endLine ?? current.terminatedBy.line) &&
@@ -3007,8 +3007,14 @@ const LuaIntelligence = (() => {
       if (token.value === 'function') {
         const localName = tokens[i - 1]?.value === 'local' ? tokens[i + 1] : null;
         if (localName?.type === 'name')
-          _defineLocal(scopes.at(-1), localName, 'function', semantics, declarationStarts);
-        const fnScope = _scope(scopes.at(-1));
+          _defineLocal(
+            scopes[scopes.length - 1],
+            localName,
+            'function',
+            semantics,
+            declarationStarts,
+          );
+        const fnScope = _scope(scopes[scopes.length - 1]);
         scopes.push(fnScope);
         functionScopeOpeners.set(token, fnScope);
         if (_isColonFunction(tokens, i)) {
@@ -3028,7 +3034,7 @@ const LuaIntelligence = (() => {
         continue;
       }
       if (token.value === 'for') {
-        const loopScope = _scope(scopes.at(-1));
+        const loopScope = _scope(scopes[scopes.length - 1]);
         scopes.push(loopScope);
         for (const local of _loopVariableTokens(tokens, i))
           _defineLocal(loopScope, local, 'loop', semantics, declarationStarts);
@@ -3036,12 +3042,12 @@ const LuaIntelligence = (() => {
       }
       if (token.value === 'do' || token.value === 'then' || token.value === 'repeat') {
         if (token.value === 'do' && tokens[i - 1]?.value === 'for') continue;
-        scopes.push(_scope(scopes.at(-1)));
+        scopes.push(_scope(scopes[scopes.length - 1]));
         continue;
       }
       if (token.value === 'else' || token.value === 'elseif') {
         if (scopes.length > 1) scopes.pop();
-        scopes.push(_scope(scopes.at(-1)));
+        scopes.push(_scope(scopes[scopes.length - 1]));
         continue;
       }
       if (token.value === 'end' || token.value === 'until') {
@@ -3051,14 +3057,14 @@ const LuaIntelligence = (() => {
       if (token.value === 'local') {
         if (tokens[i + 1]?.value === 'function') continue;
         for (const local of _localVariableTokens(tokens, i))
-          _defineLocal(scopes.at(-1), local, 'local', semantics, declarationStarts);
+          _defineLocal(scopes[scopes.length - 1], local, 'local', semantics, declarationStarts);
         continue;
       }
       if (token.type !== 'name') continue;
       if (_inRanges(token, luauTypes.ranges)) continue;
       if (declarationStarts.has(token.start) || _isDefinitionToken(tokens, i)) continue;
       if (_isNonReferenceName(tokens, i)) continue;
-      const def = _resolveDefinition(scopes.at(-1), token.value);
+      const def = _resolveDefinition(scopes[scopes.length - 1], token.value);
       if (def) {
         def.uses++;
         references.push({ token, definition: def });
@@ -3958,7 +3964,7 @@ const LuaIntelligence = (() => {
     const candidates = analyze(model).byName.get(word.word) ?? [];
     if (!candidates.length) return null;
     const cursorOffset = _positionOffset(model, position);
-    return candidates.filter((sym) => sym.offset <= cursorOffset).at(-1) ?? null;
+    return candidates.filter((sym) => sym.offset <= cursorOffset).slice(-1)[0] ?? null;
   }
 
   function _wordLocations(model, word) {

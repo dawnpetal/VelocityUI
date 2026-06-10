@@ -735,7 +735,7 @@ const AiHelper = (() => {
     )
       return;
     message.events = message.events || [];
-    const last = message.events.at(-1);
+    const last = message.events[message.events.length - 1];
     if (last?.kind === kind && last.text === clean) return;
     message.events.push({
       ...(meta || {}),
@@ -1180,7 +1180,7 @@ const AiHelper = (() => {
           Number.isFinite(Number(event.textOffset)) ? Number(event.textOffset) : textLength,
         ),
       );
-      const last = groups.at(-1);
+      const last = groups[groups.length - 1];
       if (last && Math.abs(last.offset - offset) <= 2) {
         last.events.push(event);
       } else {
@@ -1206,7 +1206,7 @@ const AiHelper = (() => {
     }
 
     if (!message?.streaming) {
-      const finalStart = groups.at(-1)?.offset ?? source.length;
+      const finalStart = groups[groups.length - 1]?.offset ?? source.length;
       const workSource = source.slice(0, finalStart);
       const finalSource = source.slice(finalStart).trim() || source;
       const workHtml = _renderTimelineChunks(workSource, groups, false);

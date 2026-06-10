@@ -157,7 +157,7 @@ const state = (() => {
     _unsaved.delete(id);
     if (_previewId === id) _previewId = null;
     if (_activeId === id) {
-      _activeId = _tabs.at(-1) ?? null;
+      _activeId = _tabs[_tabs.length - 1] ?? null;
       _emit('file:activated', {
         id: _activeId,
         file: _activeId ? (_files.get(_activeId) ?? null) : null,

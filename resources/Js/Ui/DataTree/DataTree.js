@@ -12,7 +12,7 @@ const dataTree = (() => {
   const LEGACY_STORE_FILE = 'datatrees.json';
   const SNAPSHOT_DIR = 'datatree-snapshots';
   const ASSET_CACHE_DIR = 'Cache/Assets';
-  const MAX_RENDER_ROWS = 720;
+  const TREE_ROW_HEIGHT = 27;
   const SNAPSHOT_LIMIT = 6;
   const ASSET_RATE_LIMIT_COUNT = 192;
   const ASSET_RATE_LIMIT_WINDOW_MS = 3000;
@@ -47,8 +47,8 @@ const dataTree = (() => {
   const VIEWPORT_PERFORMANCE_MODE = false;
   const MAX_VIEWPORT_LIGHTS = 8;
   const INTERACTIVE_VIEWPORT_LIGHTS = 4;
-  const MAX_VIEWPORT_DPR = 1.5;
-  const COMPLEX_VIEWPORT_DPR = 1.25;
+  const MAX_VIEWPORT_DPR = 1.25;
+  const COMPLEX_VIEWPORT_DPR = 1.0;
   const INTERACTIVE_VIEWPORT_DPR = 1;
   const CONTACT_AO_SCALE = 0.5;
   const ANY_MIME = '*' + '/' + '*';
@@ -174,6 +174,8 @@ const dataTree = (() => {
   let _saveTimer = null;
   let _previewWarmupTimer = null;
   let _activeRowEl = null;
+  let _dtVlist = null;
+  let _dtFlatRows = [];
   const _assetFetchWindow = [];
   const ICON_ALIASES = {
     Instance: 'Class',
@@ -693,6 +695,7 @@ const dataTree = (() => {
     snapshot.nodeCount = snapshot.nodes?.length || 0;
     _hydrateMaterialRegistry(snapshot);
     _ensureDepths(snapshot);
+    delete snapshot.nodes;
   }
 
   async function _hydrateAsync(snapshot, { chunkMs = 5 } = {}) {
@@ -733,6 +736,7 @@ const dataTree = (() => {
     _hydrateMaterialRegistry(snapshot);
     if (nodes.some((node) => !Number.isFinite(node.depth)))
       await _ensureDepthsAsync(snapshot, chunkMs);
+    delete snapshot.nodes;
   }
 
   function _hydrateMaterialRegistry(snapshot) {
@@ -823,6 +827,7 @@ const dataTree = (() => {
     if (!root) return;
     if (root.querySelector('.dt-tree-list')) _rememberScroll(root);
     _disposeViewports(root);
+    _dtDestroyVlist();
     root.innerHTML = '';
     root.appendChild(_view());
     _restoreScroll(root);
@@ -3208,62 +3213,86 @@ end`;
     return pane;
   }
 
-  function _renderTreeList(list, snapshot) {
-    if (!list) return;
-    _activeRowEl = null;
-    list.replaceChildren();
-    if (!snapshot) {
-      list.innerHTML =
-        '<div class="dt-empty">Import a saved place file to inspect its hierarchy.</div>';
+  function _dtRebuildFlatRows(snapshot) {
+    _dtFlatRows = [];
+    if (!snapshot?.byId) return;
+    const query = state_.query.trim().toLowerCase();
+    if (query) {
+      for (const node of snapshot.byId?.values() || []) {
+        if (_nodeMatches(node, query)) {
+          _dtFlatRows.push({ node, depth: _depth(snapshot, node) });
+        }
+      }
+      state_.visibleOverflow = 0;
       return;
     }
-    if (!snapshot.byId && !snapshot.nodes?.length) {
+    const walk = (parentId, depth) => {
+      for (const node of snapshot.children.get(parentId) || []) {
+        _dtFlatRows.push({ node, depth });
+        if (state_.expanded.has(node.id)) walk(node.id, depth + 1);
+      }
+    };
+    walk(0, 0);
+    state_.visibleOverflow = 0;
+  }
+
+  function _dtDestroyVlist() {
+    _dtVlist?.destroy?.();
+    _dtVlist = null;
+  }
+
+  function _dtMountVlist(list, snapshot) {
+    _dtDestroyVlist();
+    list.replaceChildren();
+    if (!snapshot?.byId) {
       list.innerHTML = '<div class="dt-empty">Loading explorer tree...</div>';
       return;
     }
-    const rows = _visibleRows(snapshot);
-    if (!rows.length) {
-      list.innerHTML = '<div class="dt-empty">No matching instances.</div>';
+    _dtRebuildFlatRows(snapshot);
+    if (!_dtFlatRows.length) {
+      list.innerHTML =
+        '<div class="dt-empty">' +
+        (state_.query
+          ? 'No matching instances.'
+          : 'Import a saved place file to inspect its hierarchy.') +
+        '</div>';
       return;
     }
-    const fragment = document.createDocumentFragment();
-    for (const row of rows) fragment.appendChild(_treeRow(snapshot, row.node, row.depth));
-    if (state_.visibleOverflow > 0) fragment.appendChild(_overflowRow());
-    list.appendChild(fragment);
+    list.style.overflow = 'auto';
+    list.style.position = 'relative';
+    _dtVlist = VirtualList.create({
+      container: list,
+      getCount: () => _dtFlatRows.length,
+      getItem: (i) => _dtFlatRows[i],
+      renderRow: (i, item) => {
+        if (!item) return null;
+        return _treeRow(snapshot, item.node, item.depth);
+      },
+      getItemHeight: () => TREE_ROW_HEIGHT,
+    });
+    _dtVlist.update(_dtFlatRows.length);
+  }
+
+  function _renderTreeList(list, snapshot) {
+    _dtMountVlist(list, snapshot);
   }
 
   function _refreshTreeList(snapshot = activeSnapshot()) {
     const list = _container()?.querySelector('.dt-tree-list');
     if (!list) return;
-    const top = list.scrollTop;
-    _renderTreeList(list, snapshot);
-    list.scrollTop = top;
+    if (!_dtVlist) {
+      _dtMountVlist(list, snapshot);
+      return;
+    }
+    const prevScroll = list.scrollTop;
+    _dtRebuildFlatRows(snapshot);
+    _dtVlist.update(_dtFlatRows.length);
+    list.scrollTop = prevScroll;
   }
 
   function _visibleRows(snapshot) {
-    const query = state_.query.trim().toLowerCase();
-    const rows = [];
-    let total = 0;
-    if (query) {
-      for (const node of snapshot.nodes || []) {
-        if (!_nodeMatches(node, query)) continue;
-        total += 1;
-        if (rows.length < MAX_RENDER_ROWS) rows.push({ node, depth: _depth(snapshot, node) });
-      }
-      state_.visibleOverflow = Math.max(0, total - rows.length);
-      return rows;
-    }
-    const walk = (parentId, depth) => {
-      for (const node of snapshot.children.get(parentId) || []) {
-        total += 1;
-        if (rows.length < MAX_RENDER_ROWS) rows.push({ node, depth });
-        if (rows.length >= MAX_RENDER_ROWS) continue;
-        if (state_.expanded.has(node.id)) walk(node.id, depth + 1);
-      }
-    };
-    walk(0, 0);
-    state_.visibleOverflow = Math.max(0, total - rows.length);
-    return rows;
+    _dtRebuildFlatRows(snapshot);
+    return _dtFlatRows;
   }
 
   function _nodeMatches(node, query) {
@@ -3462,10 +3491,12 @@ end`;
 
   function _flashTreeNode(nodeId) {
     requestAnimationFrame(() => {
+      const id = Number(nodeId);
+      const idx = _dtFlatRows.findIndex((r) => r.node.id === id);
+      if (idx !== -1 && _dtVlist) _dtVlist.scrollToIndex(idx);
       requestAnimationFrame(() => {
-        const row = _container()?.querySelector(`.dt-tree-row[data-node-id="${Number(nodeId)}"]`);
+        const row = _container()?.querySelector(`.dt-tree-row[data-node-id="${id}"]`);
         if (!row) return;
-        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
         row.classList.add('dt-tree-row--flash');
         setTimeout(() => row.classList.remove('dt-tree-row--flash'), 700);
       });
@@ -3527,8 +3558,14 @@ end`;
     _cancelViewportBuild();
     if (snapshot) snapshot.activeNodeId = id;
     _activeRowEl?.classList.remove('active');
-    _activeRowEl =
-      rowEl || _container()?.querySelector(`.dt-tree-row[data-node-id="${String(id)}"]`) || null;
+    if (rowEl) {
+      _activeRowEl = rowEl;
+    } else {
+      const idx = _dtFlatRows.findIndex((r) => r.node.id === id);
+      if (idx !== -1 && _dtVlist) _dtVlist.scrollToIndex(idx);
+      _activeRowEl =
+        _container()?.querySelector(`.dt-tree-row[data-node-id="${String(id)}"]`) || null;
+    }
     _activeRowEl?.classList.add('active');
     if (state_.previewReady) _replace('.dt-preview-pane', _previewPane());
     _replace('.dt-details', _detailsPane());
@@ -3610,6 +3647,8 @@ end`;
     delete snapshot.byId;
     delete snapshot.children;
     delete snapshot.searchIndex;
+    _dtFlatRows = [];
+    _dtDestroyVlist();
   }
 
   function _toggleNode(id) {
@@ -3617,45 +3656,20 @@ end`;
     else state_.expanded.add(id);
   }
 
-  function _toggleNodeInPlace(snapshot, node, depth, row) {
-    const wasOpen = state_.expanded.has(node.id);
+  function _toggleNodeInPlace(snapshot, node, _depth, _row) {
     _toggleNode(node.id);
     _persistSnapshotState(snapshot);
-    if (state_.query.trim() || state_.visibleOverflow > 0) {
-      _refreshTreeList(snapshot);
-      return;
-    }
-    row.querySelector('.dt-disclosure')?.classList.toggle('open', !wasOpen);
-    if (wasOpen) {
-      _removeRenderedChildren(row, depth);
-      return;
-    }
-    const rows = _descendantRows(snapshot, node.id, depth + 1);
-    const currentRows = _container()?.querySelectorAll('.dt-tree-row').length || 0;
-    if (currentRows + rows.length > MAX_RENDER_ROWS) {
-      _refreshTreeList(snapshot);
-      return;
-    }
-    row.after(...rows.map((item) => _treeRow(snapshot, item.node, item.depth)));
+    _refreshTreeList(snapshot);
   }
 
-  function _removeRenderedChildren(row, depth) {
-    let next = row.nextElementSibling;
-    while (next?.classList?.contains('dt-tree-row') && Number(next.dataset.depth || 0) > depth) {
-      const current = next;
-      next = next.nextElementSibling;
-      current.remove();
-    }
-  }
+  function _removeRenderedChildren(_row, _depth) {}
 
   function _descendantRows(snapshot, parentId, depth) {
     const rows = [];
     const walk = (id, rowDepth) => {
       for (const child of snapshot.children.get(id) || []) {
         rows.push({ node: child, depth: rowDepth });
-        if (rows.length >= MAX_RENDER_ROWS) return;
         if (state_.expanded.has(child.id)) walk(child.id, rowDepth + 1);
-        if (rows.length >= MAX_RENDER_ROWS) return;
       }
     };
     walk(parentId, depth);
@@ -3817,7 +3831,7 @@ end`;
         _viewportCameraKey(snapshot, node),
       );
       _loadViewportAssets(scene.assets, node.id, buildKey, state_.viewportBuild.token);
-      // Release CPU mesh only AFTER _mountViewport has uploaded it to the GPU.
+
       _releaseSceneCpuMesh(scene);
       state_.sceneCache.delete(buildKey);
       state_.viewportBuild.activeAssetKeys = _sceneAssetKeys(scene);
@@ -4134,7 +4148,7 @@ end`;
   async function _buildSceneProgressive(parts, key, token, snapshot = null) {
     if (!parts.length) return { ..._emptyScene(), sky: _sceneSky(snapshot) };
     const budget = _sceneBudget(parts.length);
-    const mesh = _meshBuilder();
+    const mesh = _meshBuilder(Math.min(budget.maxVertices, parts.length * 96));
     const guide = _lineBuilder();
     const points = _pointCollector();
     const assetMap = new Map();
@@ -4425,11 +4439,11 @@ end`;
   }
 
   function _sceneLights(snapshot, parts = []) {
-    const nodes = snapshot?.nodes || [];
-    if (!nodes.length || !parts.length) return [];
+    const nodeIter = snapshot?.byId?.values() || [][Symbol.iterator]();
+    if (!parts.length) return [];
     const partById = new Map(parts.map((part) => [part.id, part]));
     const lights = [];
-    for (const node of nodes) {
+    for (const node of nodeIter) {
       const className = String(node.className || '').toLowerCase();
       if (!/^(pointlight|spotlight|surfacelight)$/.test(className)) continue;
       const host = partById.get(node.parentId);
@@ -5232,7 +5246,7 @@ end`;
   function _buildScene(parts) {
     if (!parts.length) return { ..._emptyScene(), sky: _sceneSky(activeSnapshot()) };
     const budget = _sceneBudget(parts.length);
-    const mesh = _meshBuilder();
+    const mesh = _meshBuilder(Math.min(budget.maxVertices, parts.length * 96));
     const guide = _lineBuilder();
     const points = _pointCollector();
     const assetMap = new Map();
@@ -5310,46 +5324,128 @@ end`;
   }
 
   function _sceneBudget(partCount) {
+    const large = partCount > 800;
+    const huge = partCount > 3000;
     return {
-      maxVertices: Number.POSITIVE_INFINITY,
-      sphereLat: 24,
-      sphereLon: 48,
-      cylinderSegments: 64,
+      maxVertices: huge ? 400000 : large ? 600000 : 900000,
+      sphereLat: huge ? 10 : large ? 14 : 20,
+      sphereLon: huge ? 20 : large ? 28 : 40,
+      cylinderSegments: huge ? 18 : large ? 28 : 48,
     };
   }
 
-  function _meshBuilder() {
-    const positions = [];
-    const normals = [];
-    const colors = [];
-    const flags = [];
-    const matIds = [];
+  function _meshBuilder(estimatedVertices = 65536) {
+    const CHUNK = estimatedVertices * 3;
+    let _cap = Math.max(CHUNK, 4096);
+    let _len = 0;
+    let positions = new Float32Array(_cap);
+    let normals = new Float32Array(_cap);
+    let colors = new Float32Array((_cap * 4) / 3);
+    let flags = new Float32Array(_cap / 3);
+    let matIds = new Float32Array(_cap / 3);
     const textured = new Map();
     let _currentFlag = 0;
     let _currentMatId = 0;
+
+    const _grow = () => {
+      _cap *= 2;
+      const p2 = new Float32Array(_cap);
+      p2.set(positions);
+      positions = p2;
+      const n2 = new Float32Array(_cap);
+      n2.set(normals);
+      normals = n2;
+      const c2 = new Float32Array((_cap * 4) / 3);
+      c2.set(colors);
+      colors = c2;
+      const f2 = new Float32Array(_cap / 3);
+      f2.set(flags);
+      flags = f2;
+      const m2 = new Float32Array(_cap / 3);
+      m2.set(matIds);
+      matIds = m2;
+    };
+
+    const _pushVertex = (point, normal, color, alpha) => {
+      if (_len * 3 + 3 > _cap) _grow();
+      const n = _norm(normal);
+      const p3 = _len * 3,
+        c4 = _len * 4;
+      positions[p3] = point[0];
+      positions[p3 + 1] = point[1];
+      positions[p3 + 2] = point[2];
+      normals[p3] = n[0];
+      normals[p3 + 1] = n[1];
+      normals[p3 + 2] = n[2];
+      colors[c4] = color[0] / 255;
+      colors[c4 + 1] = color[1] / 255;
+      colors[c4 + 2] = color[2] / 255;
+      colors[c4 + 3] = alpha;
+      flags[_len] = _currentFlag;
+      matIds[_len] = _currentMatId;
+      _len++;
+    };
+
     const textureGroup = (texture) => {
       const key = texture?.key || '';
       if (!key) return null;
       if (!textured.has(key)) {
+        const cap = 4096;
         textured.set(key, {
           texture,
-          positions: [],
-          normals: [],
-          colors: [],
-          uvs: [],
-          flags: [],
+          cap,
+          len: 0,
+          positions: new Float32Array(cap * 3),
+          normals: new Float32Array(cap * 3),
+          colors: new Float32Array(cap * 4),
+          uvs: new Float32Array(cap * 2),
+          flags: new Float32Array(cap),
         });
       }
       return textured.get(key);
     };
-    const pushTexturedVertex = (group, point, normal, uv, color, alpha) => {
-      const n = _norm(normal);
-      group.positions.push(point[0], point[1], point[2]);
-      group.normals.push(n[0], n[1], n[2]);
-      group.colors.push(color[0] / 255, color[1] / 255, color[2] / 255, alpha);
-      group.uvs.push(uv?.[0] || 0, uv?.[1] || 0);
-      group.flags.push(_currentFlag);
+
+    const _growGroup = (g) => {
+      g.cap *= 2;
+      const p2 = new Float32Array(g.cap * 3);
+      p2.set(g.positions);
+      g.positions = p2;
+      const n2 = new Float32Array(g.cap * 3);
+      n2.set(g.normals);
+      g.normals = n2;
+      const c2 = new Float32Array(g.cap * 4);
+      c2.set(g.colors);
+      g.colors = c2;
+      const u2 = new Float32Array(g.cap * 2);
+      u2.set(g.uvs);
+      g.uvs = u2;
+      const f2 = new Float32Array(g.cap);
+      f2.set(g.flags);
+      g.flags = f2;
     };
+
+    const pushTexturedVertex = (group, point, normal, uv, color, alpha) => {
+      if (group.len >= group.cap) _growGroup(group);
+      const n = _norm(normal);
+      const p3 = group.len * 3,
+        c4 = group.len * 4,
+        u2 = group.len * 2;
+      group.positions[p3] = point[0];
+      group.positions[p3 + 1] = point[1];
+      group.positions[p3 + 2] = point[2];
+      group.normals[p3] = n[0];
+      group.normals[p3 + 1] = n[1];
+      group.normals[p3 + 2] = n[2];
+      group.colors[c4] = color[0] / 255;
+      group.colors[c4 + 1] = color[1] / 255;
+      group.colors[c4 + 2] = color[2] / 255;
+      group.colors[c4 + 3] = alpha;
+      group.uvs[u2] = uv?.[0] || 0;
+      group.uvs[u2 + 1] = uv?.[1] || 0;
+      group.flags[group.len] = _currentFlag;
+      group.len++;
+    };
+
     return {
       setFlag(f) {
         _currentFlag = f || 0;
@@ -5367,65 +5463,58 @@ end`;
       },
       tri(a, b, c, color, alpha = 1) {
         const normal = _norm(_cross(_sub(b, a), _sub(c, a)));
-        this.triNormal(a, b, c, normal, normal, normal, color, alpha);
+        _pushVertex(a, normal, color, alpha);
+        _pushVertex(b, normal, color, alpha);
+        _pushVertex(c, normal, color, alpha);
       },
       triNormal(a, b, c, na, nb, nc, color, alpha = 1) {
-        for (const [point, normal] of [
-          [a, na],
-          [b, nb],
-          [c, nc],
-        ]) {
-          const n = _norm(normal);
-          positions.push(point[0], point[1], point[2]);
-          normals.push(n[0], n[1], n[2]);
-          colors.push(color[0] / 255, color[1] / 255, color[2] / 255, alpha);
-          flags.push(_currentFlag);
-          matIds.push(_currentMatId);
-        }
+        _pushVertex(a, na, color, alpha);
+        _pushVertex(b, nb, color, alpha);
+        _pushVertex(c, nc, color, alpha);
       },
       quad(a, b, c, d, color, alpha = 1) {
-        this.tri(a, b, c, color, alpha);
-        this.tri(a, c, d, color, alpha);
+        const n0 = _norm(_cross(_sub(b, a), _sub(c, a)));
+        const n1 = _norm(_cross(_sub(c, a), _sub(d, a)));
+        _pushVertex(a, n0, color, alpha);
+        _pushVertex(b, n0, color, alpha);
+        _pushVertex(c, n0, color, alpha);
+        _pushVertex(a, n1, color, alpha);
+        _pushVertex(c, n1, color, alpha);
+        _pushVertex(d, n1, color, alpha);
       },
       vertexCount() {
-        return positions.length / 3;
+        return _len;
       },
       visualVertexCount() {
-        let texturedVertices = 0;
-        for (const group of textured.values()) texturedVertices += group.positions.length / 3;
-        return positions.length / 3 + texturedVertices;
+        let tv = 0;
+        for (const g of textured.values()) tv += g.len;
+        return _len + tv;
       },
       finish() {
-        const texturedGroups = [...textured.values()].map((group) => ({
-          texture: group.texture,
-          positions: new Float32Array(group.positions),
-          normals: new Float32Array(group.normals),
-          colors: new Float32Array(group.colors),
-          uvs: new Float32Array(group.uvs),
-          flags: new Float32Array(group.flags),
-          vertexCount: group.positions.length / 3,
-          triangleCount: group.positions.length / 9,
+        const texturedGroups = [...textured.values()].map((g) => ({
+          texture: g.texture,
+          positions: g.positions.subarray(0, g.len * 3),
+          normals: g.normals.subarray(0, g.len * 3),
+          colors: g.colors.subarray(0, g.len * 4),
+          uvs: g.uvs.subarray(0, g.len * 2),
+          flags: g.flags.subarray(0, g.len),
+          vertexCount: g.len,
+          triangleCount: Math.floor(g.len / 3),
         }));
-        const texturedVertexCount = texturedGroups.reduce(
-          (sum, group) => sum + group.vertexCount,
-          0,
-        );
-        const texturedTriangleCount = texturedGroups.reduce(
-          (sum, group) => sum + group.triangleCount,
-          0,
-        );
+        const tvc = texturedGroups.reduce((s, g) => s + g.vertexCount, 0);
+        const ttc = texturedGroups.reduce((s, g) => s + g.triangleCount, 0);
         return {
-          positions: new Float32Array(positions),
-          normals: new Float32Array(normals),
-          colors: new Float32Array(colors),
-          flags: new Float32Array(flags),
-          matIds: new Float32Array(matIds),
-          vertexCount: positions.length / 3,
-          triangleCount: positions.length / 9,
-          texturedVertexCount,
-          texturedTriangleCount,
-          visualVertexCount: positions.length / 3 + texturedVertexCount,
-          visualTriangleCount: positions.length / 9 + texturedTriangleCount,
+          positions: positions.subarray(0, _len * 3),
+          normals: normals.subarray(0, _len * 3),
+          colors: colors.subarray(0, _len * 4),
+          flags: flags.subarray(0, _len),
+          matIds: matIds.subarray(0, _len),
+          vertexCount: _len,
+          triangleCount: Math.floor(_len / 3),
+          texturedVertexCount: tvc,
+          texturedTriangleCount: ttc,
+          visualVertexCount: _len + tvc,
+          visualTriangleCount: Math.floor(_len / 3) + ttc,
           textured: texturedGroups,
         };
       },
@@ -6374,6 +6463,7 @@ end`;
       frame = requestAnimationFrame(draw);
     };
     buffers = _createViewportBuffers(gl, scene, program, () => schedule());
+    _releaseSceneCpuMesh(scene);
 
     const resize = new ResizeObserver(() => schedule());
     const deleteBuffers = () => {
@@ -6403,6 +6493,7 @@ end`;
         _saveViewportCamera(cameraKey, camera);
       }
       buffers = _createViewportBuffers(gl, scene, program, () => schedule());
+      _releaseSceneCpuMesh(scene);
       const frame = canvas.closest('.dt-render-frame--canvas');
       if (frame) {
         const skyTop = nextScene.sky?.cssTop || VIEWPORT_BACKDROP_SKY.cssTop;
@@ -6917,12 +7008,24 @@ end`;
         ),
       );
       const lights = _selectViewportLights(scene.lights || [], camera, lightCapacity);
-      const positions = new Float32Array(lightCapacity * 3);
-      const colors = new Float32Array(lightCapacity * 3);
-      const ranges = new Float32Array(lightCapacity);
-      const directions = new Float32Array(lightCapacity * 3);
-      const kinds = new Float32Array(lightCapacity);
-      const coneCos = new Float32Array(lightCapacity);
+      if (!program._lightBufs || program._lightBufs.capacity !== lightCapacity) {
+        program._lightBufs = {
+          capacity: lightCapacity,
+          positions: new Float32Array(lightCapacity * 3),
+          colors: new Float32Array(lightCapacity * 3),
+          ranges: new Float32Array(lightCapacity),
+          directions: new Float32Array(lightCapacity * 3),
+          kinds: new Float32Array(lightCapacity),
+          coneCos: new Float32Array(lightCapacity),
+        };
+      }
+      const { positions, colors, ranges, directions, kinds, coneCos } = program._lightBufs;
+      positions.fill(0);
+      colors.fill(0);
+      ranges.fill(0);
+      directions.fill(0);
+      kinds.fill(0);
+      coneCos.fill(0);
       lights.forEach((light, index) => {
         positions.set(light.position || [0, 0, 0], index * 3);
         colors.set(light.color || [0, 0, 0], index * 3);
@@ -7031,12 +7134,15 @@ end`;
       _selectNode(bestId);
 
       requestAnimationFrame(() => {
-        const row = _container()?.querySelector(`.dt-tree-row[data-node-id="${bestId}"]`);
-        if (row) {
-          row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-          row.classList.add('dt-tree-row--flash');
-          setTimeout(() => row.classList.remove('dt-tree-row--flash'), 600);
-        }
+        const vpIdx = _dtFlatRows.findIndex((r) => r.node.id === bestId);
+        if (vpIdx !== -1 && _dtVlist) _dtVlist.scrollToIndex(vpIdx);
+        requestAnimationFrame(() => {
+          const row = _container()?.querySelector(`.dt-tree-row[data-node-id="${bestId}"]`);
+          if (row) {
+            row.classList.add('dt-tree-row--flash');
+            setTimeout(() => row.classList.remove('dt-tree-row--flash'), 600);
+          }
+        });
       });
     }
   }
