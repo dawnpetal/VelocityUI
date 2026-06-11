@@ -308,12 +308,12 @@ const dataTree = (() => {
     if (!snapshot.storagePath) return snapshot;
     const full = light
       ? await window.__TAURI__.core.invoke('datatree_load_explorer_snapshot', {
-          path: snapshot.storagePath,
-        })
+        path: snapshot.storagePath,
+      })
       : await window.__TAURI__.core.invoke('datatree_load_snapshot', {
-          path: snapshot.storagePath,
-          light,
-        });
+        path: snapshot.storagePath,
+        light,
+      });
     snapshot.nodes = full.nodes || [];
     snapshot.materialVariantNodes =
       full.materialVariantNodes || snapshot.materialVariantNodes || [];
@@ -392,7 +392,7 @@ const dataTree = (() => {
         };
         _restoreSnapshotState(snapshot);
         state_.previewTab = 'raw';
-        _ensureActiveNodeDetailLoaded(snapshot).catch(() => {});
+        _ensureActiveNodeDetailLoaded(snapshot).catch(() => { });
       })
       .catch((err) => {
         if (_isActiveSnapshotLoad(token, snapshotId))
@@ -472,7 +472,7 @@ const dataTree = (() => {
 
   function _saveSoon() {
     clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(() => _save().catch(() => {}), 220);
+    _saveTimer = setTimeout(() => _save().catch(() => { }), 220);
   }
 
   async function flushSave() {
@@ -1197,15 +1197,15 @@ const dataTree = (() => {
       scores.set(
         node.id,
         d * 0.38 +
-          pr * 0.3 +
-          bridgeWeight * 0.14 +
-          sourceWeight * 0.07 +
-          relationBoost +
-          kindBoost +
-          kindPenalty +
-          gameplayHint +
-          utilityPenalty +
-          uiPenalty,
+        pr * 0.3 +
+        bridgeWeight * 0.14 +
+        sourceWeight * 0.07 +
+        relationBoost +
+        kindBoost +
+        kindPenalty +
+        gameplayHint +
+        utilityPenalty +
+        uiPenalty,
       );
     }
     const ranked = [...nodes].sort((a, b) => (scores.get(b.id) || 0) - (scores.get(a.id) || 0));
@@ -1531,7 +1531,7 @@ const dataTree = (() => {
       try {
         const parsed = JSON.parse(fencedJson[1]);
         if (Array.isArray(parsed?.systems)) return parsed;
-      } catch {}
+      } catch { }
     }
     const sections = [];
     const lines = clean.split('\n');
@@ -1565,14 +1565,14 @@ const dataTree = (() => {
   function _logicAiTreeMarkup(plan) {
     const sections = Array.isArray(plan?.systems)
       ? plan.systems.map((system) => ({
-          title: system.label || system.id || 'System',
-          items: [
-            system.kind,
-            system.confidence,
-            ...(system.entrypoints || []),
-            ...(system.remotes || []),
-          ].filter(Boolean),
-        }))
+        title: system.label || system.id || 'System',
+        items: [
+          system.kind,
+          system.confidence,
+          ...(system.entrypoints || []),
+          ...(system.remotes || []),
+        ].filter(Boolean),
+      }))
       : plan?.sections || [];
     return `<section class="dt-logic-system"><div class="dt-logic-system-head"><span>AI Structure</span><small>${sections.length} sections</small></div>${sections
       .slice(0, 18)
@@ -1586,21 +1586,21 @@ const dataTree = (() => {
   function _logicAiPlanMarkup(plan) {
     const sections = Array.isArray(plan?.systems)
       ? plan.systems.map((system) => ({
-          title: system.label || system.id || 'System',
-          body: [
-            system.kind ? `Kind: ${system.kind}` : '',
-            system.confidence ? `Confidence: ${system.confidence}` : '',
-            system.repeatPattern ? `Pattern: ${system.repeatPattern}` : '',
-          ].filter(Boolean),
-          items: [
-            ...(system.entrypoints || []).map((item) => `Entrypoint: ${item}`),
-            ...(system.clientControllers || []).map((item) => `Client: ${item}`),
-            ...(system.serverAuthority || []).map((item) => `Server: ${item}`),
-            ...(system.modules || []).map((item) => `Module: ${item}`),
-            ...(system.remotes || []).map((item) => `Remote: ${item}`),
-            ...(system.configs || []).map((item) => `Config: ${item}`),
-          ],
-        }))
+        title: system.label || system.id || 'System',
+        body: [
+          system.kind ? `Kind: ${system.kind}` : '',
+          system.confidence ? `Confidence: ${system.confidence}` : '',
+          system.repeatPattern ? `Pattern: ${system.repeatPattern}` : '',
+        ].filter(Boolean),
+        items: [
+          ...(system.entrypoints || []).map((item) => `Entrypoint: ${item}`),
+          ...(system.clientControllers || []).map((item) => `Client: ${item}`),
+          ...(system.serverAuthority || []).map((item) => `Server: ${item}`),
+          ...(system.modules || []).map((item) => `Module: ${item}`),
+          ...(system.remotes || []).map((item) => `Remote: ${item}`),
+          ...(system.configs || []).map((item) => `Config: ${item}`),
+        ],
+      }))
       : plan?.sections || [];
     return `<div class="dt-logic-card dt-logic-card--overview"><span>AI analysis</span><h3>Discovered game systems</h3><p>The chat answer is now captured here as a modular structure. Use this view as the readable Logic Web; the bubble map stays a lightweight local index.</p></div>${sections
       .slice(0, 10)
@@ -1611,13 +1611,12 @@ const dataTree = (() => {
           )
             .slice(0, 2)
             .map((line) => `<p>${_escape(line)}</p>`)
-            .join('')}${
-            (section.items || []).length
-              ? `<div>${section.items
-                  .slice(0, 10)
-                  .map((item) => `<span>${_escape(item)}</span>`)
-                  .join('')}</div>`
-              : ''
+            .join('')}${(section.items || []).length
+            ? `<div>${section.items
+              .slice(0, 10)
+              .map((item) => `<span>${_escape(item)}</span>`)
+              .join('')}</div>`
+            : ''
           }</div>`,
       )
       .join('')}`;
@@ -1717,9 +1716,9 @@ ${JSON.stringify(packet, null, 2)}
   function _logicPills(items = []) {
     return items?.length
       ? `<div>${items
-          .slice(0, 28)
-          .map((item) => `<span>${_escape(item)}</span>`)
-          .join('')}</div>`
+        .slice(0, 28)
+        .map((item) => `<span>${_escape(item)}</span>`)
+        .join('')}</div>`
       : '<small class="dt-logic-muted">None detected</small>';
   }
 
@@ -2337,19 +2336,19 @@ ${JSON.stringify(packet, null, 2)}
     const systems = Array.isArray(plan?.systems)
       ? plan.systems.slice(0, 14)
       : (humanGraph?.groups || [])
-          .filter((group) => !group.uiNoise)
-          .slice(0, 10)
-          .map((group) => ({
-            id: group.id,
-            label: group.name,
-            kind: group.kind,
-            confidence: 'local',
-            description: `${group.count.toLocaleString()} grouped member${group.count === 1 ? '' : 's'} in ${group.systemName}`,
-            children: [
-              ...group.configKeys.slice(0, 4).map((label) => ({ label, kind: 'config' })),
-              ...group.exports.slice(0, 4).map((label) => ({ label, kind: 'export' })),
-            ],
-          }));
+        .filter((group) => !group.uiNoise)
+        .slice(0, 10)
+        .map((group) => ({
+          id: group.id,
+          label: group.name,
+          kind: group.kind,
+          confidence: 'local',
+          description: `${group.count.toLocaleString()} grouped member${group.count === 1 ? '' : 's'} in ${group.systemName}`,
+          children: [
+            ...group.configKeys.slice(0, 4).map((label) => ({ label, kind: 'config' })),
+            ...group.exports.slice(0, 4).map((label) => ({ label, kind: 'export' })),
+          ],
+        }));
     if (!graph) {
       return `<div class="dt-analysis-map-empty"><span class="dt-busy-spinner"></span><strong>Preparing local index</strong><p>Scripts, modules, configs, and remotes are being grouped before AI analysis starts.</p></div>`;
     }
@@ -2382,7 +2381,7 @@ ${JSON.stringify(packet, null, 2)}
             ((system.children || []).length +
               (system.remotes || []).length +
               (system.configs || []).length) *
-              3,
+            3,
           );
         return `<line class="dt-analysis-link" x1="${cx}" y1="${cy}" x2="${x}" y2="${y}"></line><g class="dt-analysis-node dt-analysis-node--system" transform="translate(${x} ${y})"><circle r="${size}"></circle><text>${_escape(_analysisKindGlyph(system.kind))}</text><text class="dt-analysis-node-label" y="${size + 20}">${_escape(system.label || system.id || 'System')}</text><title>${_escape(system.hover || system.description || system.summary || system.label || 'System')}</title></g>${children}`;
       })
@@ -2402,24 +2401,21 @@ ${JSON.stringify(packet, null, 2)}
     const localConfigs = (graph?.nodes || [])
       .filter((node) => /config/i.test(node.kind) || node.configKeys?.length)
       .slice(0, 7);
-    return `<div class="dt-analysis-card"><span>Deep-dive target</span><h3>RBXLX + AI workflow</h3><p>The AI is asked to inspect configs, modules, remotes, templates, runtime clones, and repeated prefabs before it writes the final map.</p></div><section class="dt-analysis-section"><strong>Mechanism branches</strong>${
-      systems
+    return `<div class="dt-analysis-card"><span>Deep-dive target</span><h3>RBXLX + AI workflow</h3><p>The AI is asked to inspect configs, modules, remotes, templates, runtime clones, and repeated prefabs before it writes the final map.</p></div><section class="dt-analysis-section"><strong>Mechanism branches</strong>${systems
         .slice(0, 8)
         .map(
           (system) =>
             `<div class="dt-analysis-mini-row"><b>${_escape(system.label || system.id || 'System')}</b><small>${_escape(system.kind || 'gameplay')} · ${_escape(system.confidence || 'inferred')}</small></div>`,
         )
         .join('') || '<p>No AI map yet.</p>'
-    }</section><section class="dt-analysis-section"><strong>Remote arg predictions</strong>${
-      remotes
+      }</section><section class="dt-analysis-section"><strong>Remote arg predictions</strong>${remotes
         .slice(0, 8)
         .map(
           (remote) =>
             `<div class="dt-analysis-mini-row"><b>${_escape(remote.name || remote.remote || 'Remote')}</b><small>${_escape(remote.args || remote.arguments || remote.predictedArgs || 'args unknown')} · ${_escape(remote.confidence || 'unverified')}</small></div>`,
         )
         .join('') || '<p>Run the remotes stage to predict payloads.</p>'
-    }</section><section class="dt-analysis-section"><strong>Configs to inspect</strong>${
-      configs
+      }</section><section class="dt-analysis-section"><strong>Configs to inspect</strong>${configs
         .slice(0, 6)
         .map(
           (config) =>
@@ -2433,7 +2429,7 @@ ${JSON.stringify(packet, null, 2)}
         )
         .join('') ||
       '<p>No configs detected locally yet.</p>'
-    }</section>`;
+      }</section>`;
   }
 
   function _analysisKindGlyph(kind = '') {
@@ -2747,10 +2743,10 @@ Return a short summary, then fenced JSON:
     const results = scanner.query.trim()
       ? scanner.results
       : [...scanner.results].sort((a, b) =>
-          (a.name || a.className || '').localeCompare(b.name || b.className || '', undefined, {
-            sensitivity: 'base',
-          }),
-        );
+        (a.name || a.className || '').localeCompare(b.name || b.className || '', undefined, {
+          sensitivity: 'base',
+        }),
+      );
     const rows = results
       .map((hit) => {
         const icon = _iconMarkup(_classIcon(hit.className), 'dt-render-icon');
@@ -2778,7 +2774,7 @@ Return a short summary, then fenced JSON:
 
   function _scheduleModuleScanner(delay = 120) {
     clearTimeout(_moduleScanTimer);
-    _moduleScanTimer = setTimeout(() => _refreshModuleScanner().catch(() => {}), delay);
+    _moduleScanTimer = setTimeout(() => _refreshModuleScanner().catch(() => { }), delay);
   }
 
   async function _refreshModuleScanner() {
@@ -3180,10 +3176,10 @@ end`;
     _releaseHeavyRenderState({ unloadSnapshots: false });
     state_.snapshots = state_.snapshots.filter((item) => item.id !== snapshot.id);
     if (snapshot.storagePath) {
-      window.__TAURI__.core.invoke('remove_path', { path: snapshot.storagePath }).catch(() => {});
+      window.__TAURI__.core.invoke('remove_path', { path: snapshot.storagePath }).catch(() => { });
       window.__TAURI__.core
         .invoke('remove_path', { path: _explorerSnapshotStoragePath(snapshot.storagePath) })
-        .catch(() => {});
+        .catch(() => { });
     }
     await _activateSnapshot(state_.snapshots[0]?.id ?? null);
     _saveSoon();
@@ -3250,11 +3246,8 @@ end`;
     }
     _dtRebuildFlatRows(snapshot);
     if (!_dtFlatRows.length) {
-      list.innerHTML =
-        '<div class="dt-empty">' +
-        (state_.query
-          ? 'No matching instances.'
-          : 'Import a saved place file to inspect its hierarchy.') +
+      list.innerHTML = '<div class="dt-empty">' +
+        (state_.query ? 'No matching instances.' : 'Import a saved place file to inspect its hierarchy.') +
         '</div>';
       return;
     }
@@ -3447,7 +3440,7 @@ end`;
     try {
       await window.__TAURI__.core.invoke('write_clipboard', { text: String(text || '') });
       toast.show(label, 'ok', 1400);
-    } catch {}
+    } catch { }
   }
 
   function _showNodeMenu(event, snapshot, node, depth, row, hasChildren) {
@@ -3467,14 +3460,14 @@ end`;
       },
       hasChildren
         ? {
-            separator: true,
-          }
+          separator: true,
+        }
         : null,
       hasChildren
         ? {
-            label: expanded ? 'Collapse Children' : 'Expand Children',
-            action: () => _toggleNodeInPlace(snapshot, node, depth, row),
-          }
+          label: expanded ? 'Collapse Children' : 'Expand Children',
+          action: () => _toggleNodeInPlace(snapshot, node, depth, row),
+        }
         : null,
     ]);
   }
@@ -3540,7 +3533,7 @@ end`;
         render();
         if (!state_.memoryUnloaded) requestAnimationFrame(_loadActiveSnapshotForView);
       }
-      _ensureNodeDetailsLoaded(snapshot, node).catch(() => {});
+      _ensureNodeDetailsLoaded(snapshot, node).catch(() => { });
       _flashTreeNode(id);
       toast.show(`Jumped to ${remote?.displayName || node.name}`, 'ok', 1200);
     } catch (err) {
@@ -3563,13 +3556,12 @@ end`;
     } else {
       const idx = _dtFlatRows.findIndex((r) => r.node.id === id);
       if (idx !== -1 && _dtVlist) _dtVlist.scrollToIndex(idx);
-      _activeRowEl =
-        _container()?.querySelector(`.dt-tree-row[data-node-id="${String(id)}"]`) || null;
+      _activeRowEl = _container()?.querySelector(`.dt-tree-row[data-node-id="${String(id)}"]`) || null;
     }
     _activeRowEl?.classList.add('active');
     if (state_.previewReady) _replace('.dt-preview-pane', _previewPane());
     _replace('.dt-details', _detailsPane());
-    if (snapshot && node) _ensureNodeDetailsLoaded(snapshot, node).catch(() => {});
+    if (snapshot && node) _ensureNodeDetailsLoaded(snapshot, node).catch(() => { });
     if (!state_.previewReady) _schedulePreviewWarmup();
     _saveSoon();
   }
@@ -3831,7 +3823,7 @@ end`;
         _viewportCameraKey(snapshot, node),
       );
       _loadViewportAssets(scene.assets, node.id, buildKey, state_.viewportBuild.token);
-
+      // Release CPU mesh only AFTER _mountViewport has uploaded it to the GPU.
       _releaseSceneCpuMesh(scene);
       state_.sceneCache.delete(buildKey);
       state_.viewportBuild.activeAssetKeys = _sceneAssetKeys(scene);
@@ -4478,13 +4470,13 @@ end`;
     if (!lights.length) return { indirect: [0, 0, 0], energy: 0 };
     const diagonal = bounds
       ? Math.max(
-          1,
-          Math.hypot(
-            bounds.max[0] - bounds.min[0],
-            bounds.max[1] - bounds.min[1],
-            bounds.max[2] - bounds.min[2],
-          ),
-        )
+        1,
+        Math.hypot(
+          bounds.max[0] - bounds.min[0],
+          bounds.max[1] - bounds.min[1],
+          bounds.max[2] - bounds.min[2],
+        ),
+      )
       : 48;
     let total = 0;
     const weighted = [0, 0, 0];
@@ -4897,7 +4889,7 @@ end`;
     const meshId = embedded ? '' : _assetId(rawMesh);
     const textureId = _assetId(
       _firstProp(props, ['TextureID', 'TextureId', 'TextureContent']) ||
-        _firstProp(meshProps, ['TextureID', 'TextureId', 'TextureContent']),
+      _firstProp(meshProps, ['TextureID', 'TextureId', 'TextureContent']),
     );
     const scale =
       meshNode && !/meshpart/i.test(node.className) ? _parseOptionalVector3(meshProps.Scale) : null;
@@ -5099,10 +5091,10 @@ end`;
       nums.length >= 12
         ? [nums.slice(3, 6), nums.slice(6, 9), nums.slice(9, 12)]
         : [
-            [1, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1],
-          ];
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1],
+        ];
     return { center, matrix };
   }
 
@@ -5339,50 +5331,33 @@ end`;
     let _cap = Math.max(CHUNK, 4096);
     let _len = 0;
     let positions = new Float32Array(_cap);
-    let normals = new Float32Array(_cap);
-    let colors = new Float32Array((_cap * 4) / 3);
-    let flags = new Float32Array(_cap / 3);
-    let matIds = new Float32Array(_cap / 3);
+    let normals   = new Float32Array(_cap);
+    let colors    = new Float32Array(_cap * 4 / 3);
+    let flags     = new Float32Array(_cap / 3);
+    let matIds    = new Float32Array(_cap / 3);
     const textured = new Map();
     let _currentFlag = 0;
     let _currentMatId = 0;
 
     const _grow = () => {
       _cap *= 2;
-      const p2 = new Float32Array(_cap);
-      p2.set(positions);
-      positions = p2;
-      const n2 = new Float32Array(_cap);
-      n2.set(normals);
-      normals = n2;
-      const c2 = new Float32Array((_cap * 4) / 3);
-      c2.set(colors);
-      colors = c2;
-      const f2 = new Float32Array(_cap / 3);
-      f2.set(flags);
-      flags = f2;
-      const m2 = new Float32Array(_cap / 3);
-      m2.set(matIds);
-      matIds = m2;
+      const p2 = new Float32Array(_cap);       p2.set(positions); positions = p2;
+      const n2 = new Float32Array(_cap);       n2.set(normals);   normals   = n2;
+      const c2 = new Float32Array(_cap * 4/3); c2.set(colors);    colors    = c2;
+      const f2 = new Float32Array(_cap / 3);   f2.set(flags);     flags     = f2;
+      const m2 = new Float32Array(_cap / 3);   m2.set(matIds);    matIds    = m2;
     };
 
     const _pushVertex = (point, normal, color, alpha) => {
       if (_len * 3 + 3 > _cap) _grow();
       const n = _norm(normal);
-      const p3 = _len * 3,
-        c4 = _len * 4;
-      positions[p3] = point[0];
-      positions[p3 + 1] = point[1];
-      positions[p3 + 2] = point[2];
-      normals[p3] = n[0];
-      normals[p3 + 1] = n[1];
-      normals[p3 + 2] = n[2];
-      colors[c4] = color[0] / 255;
-      colors[c4 + 1] = color[1] / 255;
-      colors[c4 + 2] = color[2] / 255;
-      colors[c4 + 3] = alpha;
-      flags[_len] = _currentFlag;
-      matIds[_len] = _currentMatId;
+      const p3 = _len * 3, c4 = _len * 4;
+      positions[p3]   = point[0];  positions[p3+1] = point[1]; positions[p3+2] = point[2];
+      normals[p3]     = n[0];      normals[p3+1]   = n[1];     normals[p3+2]   = n[2];
+      colors[c4]      = color[0]/255; colors[c4+1]  = color[1]/255;
+      colors[c4+2]    = color[2]/255; colors[c4+3]  = alpha;
+      flags[_len]     = _currentFlag;
+      matIds[_len]    = _currentMatId;
       _len++;
     };
 
@@ -5392,14 +5367,12 @@ end`;
       if (!textured.has(key)) {
         const cap = 4096;
         textured.set(key, {
-          texture,
-          cap,
-          len: 0,
+          texture, cap, len: 0,
           positions: new Float32Array(cap * 3),
-          normals: new Float32Array(cap * 3),
-          colors: new Float32Array(cap * 4),
-          uvs: new Float32Array(cap * 2),
-          flags: new Float32Array(cap),
+          normals:   new Float32Array(cap * 3),
+          colors:    new Float32Array(cap * 4),
+          uvs:       new Float32Array(cap * 2),
+          flags:     new Float32Array(cap),
         });
       }
       return textured.get(key);
@@ -5407,52 +5380,29 @@ end`;
 
     const _growGroup = (g) => {
       g.cap *= 2;
-      const p2 = new Float32Array(g.cap * 3);
-      p2.set(g.positions);
-      g.positions = p2;
-      const n2 = new Float32Array(g.cap * 3);
-      n2.set(g.normals);
-      g.normals = n2;
-      const c2 = new Float32Array(g.cap * 4);
-      c2.set(g.colors);
-      g.colors = c2;
-      const u2 = new Float32Array(g.cap * 2);
-      u2.set(g.uvs);
-      g.uvs = u2;
-      const f2 = new Float32Array(g.cap);
-      f2.set(g.flags);
-      g.flags = f2;
+      const p2 = new Float32Array(g.cap*3); p2.set(g.positions); g.positions = p2;
+      const n2 = new Float32Array(g.cap*3); n2.set(g.normals);   g.normals   = n2;
+      const c2 = new Float32Array(g.cap*4); c2.set(g.colors);    g.colors    = c2;
+      const u2 = new Float32Array(g.cap*2); u2.set(g.uvs);       g.uvs       = u2;
+      const f2 = new Float32Array(g.cap);   f2.set(g.flags);     g.flags     = f2;
     };
 
     const pushTexturedVertex = (group, point, normal, uv, color, alpha) => {
       if (group.len >= group.cap) _growGroup(group);
       const n = _norm(normal);
-      const p3 = group.len * 3,
-        c4 = group.len * 4,
-        u2 = group.len * 2;
-      group.positions[p3] = point[0];
-      group.positions[p3 + 1] = point[1];
-      group.positions[p3 + 2] = point[2];
-      group.normals[p3] = n[0];
-      group.normals[p3 + 1] = n[1];
-      group.normals[p3 + 2] = n[2];
-      group.colors[c4] = color[0] / 255;
-      group.colors[c4 + 1] = color[1] / 255;
-      group.colors[c4 + 2] = color[2] / 255;
-      group.colors[c4 + 3] = alpha;
-      group.uvs[u2] = uv?.[0] || 0;
-      group.uvs[u2 + 1] = uv?.[1] || 0;
-      group.flags[group.len] = _currentFlag;
+      const p3 = group.len*3, c4 = group.len*4, u2 = group.len*2;
+      group.positions[p3]   = point[0]; group.positions[p3+1] = point[1]; group.positions[p3+2] = point[2];
+      group.normals[p3]     = n[0];     group.normals[p3+1]   = n[1];     group.normals[p3+2]   = n[2];
+      group.colors[c4]      = color[0]/255; group.colors[c4+1] = color[1]/255;
+      group.colors[c4+2]    = color[2]/255; group.colors[c4+3] = alpha;
+      group.uvs[u2]         = uv?.[0] || 0; group.uvs[u2+1]   = uv?.[1] || 0;
+      group.flags[group.len]= _currentFlag;
       group.len++;
     };
 
     return {
-      setFlag(f) {
-        _currentFlag = f || 0;
-      },
-      setMatId(id) {
-        _currentMatId = id || 0;
-      },
+      setFlag(f)  { _currentFlag  = f || 0; },
+      setMatId(id){ _currentMatId = id || 0; },
       texturedTriNormal(texture, a, b, c, na, nb, nc, uva, uvb, uvc, color, alpha = 1) {
         const group = textureGroup(texture);
         if (!group) return false;
@@ -5482,9 +5432,7 @@ end`;
         _pushVertex(c, n1, color, alpha);
         _pushVertex(d, n1, color, alpha);
       },
-      vertexCount() {
-        return _len;
-      },
+      vertexCount()      { return _len; },
       visualVertexCount() {
         let tv = 0;
         for (const g of textured.values()) tv += g.len;
@@ -5492,30 +5440,30 @@ end`;
       },
       finish() {
         const texturedGroups = [...textured.values()].map((g) => ({
-          texture: g.texture,
-          positions: g.positions.subarray(0, g.len * 3),
-          normals: g.normals.subarray(0, g.len * 3),
-          colors: g.colors.subarray(0, g.len * 4),
-          uvs: g.uvs.subarray(0, g.len * 2),
-          flags: g.flags.subarray(0, g.len),
-          vertexCount: g.len,
+          texture:       g.texture,
+          positions:     g.positions.subarray(0, g.len * 3),
+          normals:       g.normals.subarray(0, g.len * 3),
+          colors:        g.colors.subarray(0, g.len * 4),
+          uvs:           g.uvs.subarray(0, g.len * 2),
+          flags:         g.flags.subarray(0, g.len),
+          vertexCount:   g.len,
           triangleCount: Math.floor(g.len / 3),
         }));
         const tvc = texturedGroups.reduce((s, g) => s + g.vertexCount, 0);
         const ttc = texturedGroups.reduce((s, g) => s + g.triangleCount, 0);
         return {
-          positions: positions.subarray(0, _len * 3),
-          normals: normals.subarray(0, _len * 3),
-          colors: colors.subarray(0, _len * 4),
-          flags: flags.subarray(0, _len),
-          matIds: matIds.subarray(0, _len),
-          vertexCount: _len,
-          triangleCount: Math.floor(_len / 3),
-          texturedVertexCount: tvc,
-          texturedTriangleCount: ttc,
-          visualVertexCount: _len + tvc,
-          visualTriangleCount: Math.floor(_len / 3) + ttc,
-          textured: texturedGroups,
+          positions:            positions.subarray(0, _len * 3),
+          normals:              normals.subarray(0,   _len * 3),
+          colors:               colors.subarray(0,    _len * 4),
+          flags:                flags.subarray(0,     _len),
+          matIds:               matIds.subarray(0,    _len),
+          vertexCount:          _len,
+          triangleCount:        Math.floor(_len / 3),
+          texturedVertexCount:  tvc,
+          texturedTriangleCount:ttc,
+          visualVertexCount:    _len + tvc,
+          visualTriangleCount:  Math.floor(_len / 3) + ttc,
+          textured:             texturedGroups,
         };
       },
     };
@@ -7020,12 +6968,8 @@ end`;
         };
       }
       const { positions, colors, ranges, directions, kinds, coneCos } = program._lightBufs;
-      positions.fill(0);
-      colors.fill(0);
-      ranges.fill(0);
-      directions.fill(0);
-      kinds.fill(0);
-      coneCos.fill(0);
+      positions.fill(0); colors.fill(0); ranges.fill(0);
+      directions.fill(0); kinds.fill(0); coneCos.fill(0);
       lights.forEach((light, index) => {
         positions.set(light.position || [0, 0, 0], index * 3);
         colors.set(light.color || [0, 0, 0], index * 3);
@@ -7081,7 +7025,7 @@ end`;
   function _mountViewport2dFallback(canvas, scene) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    canvas.__dtDispose = () => {};
+    canvas.__dtDispose = () => { };
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
@@ -7737,7 +7681,7 @@ end`;
       );
       if (!validate(bytes)) {
         _log.warn(`  disk cache rejected id=${id}: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
-        invoke('remove_path', { path: _assetCachePath(id) }).catch(() => {});
+        invoke('remove_path', { path: _assetCachePath(id) }).catch(() => { });
         return null;
       }
       _log.fetch(`  ✓ disk cache id=${id} (${bytes.length}B)`);
@@ -9050,11 +8994,11 @@ end`;
       texture: _createGlTexture(gl, group.texture, onTextureReady),
       heightTexture: group.texture?.heightUrl
         ? _createGlTexture(
-            gl,
-            { key: `${group.texture.key}:height`, localUrl: group.texture.heightUrl },
-            onTextureReady,
-            [128, 128, 128, 255],
-          )
+          gl,
+          { key: `${group.texture.key}:height`, localUrl: group.texture.heightUrl },
+          onTextureReady,
+          [128, 128, 128, 255],
+        )
         : null,
       textureInfo: group.texture,
     };
@@ -9986,7 +9930,7 @@ end`;
     const body = payload?.body || {};
     if (body.kind === 'saveinstance:done') _offerSavedGameImport(body);
   }
-  function handleBridgeError() {}
+  function handleBridgeError() { }
 
   return {
     init,

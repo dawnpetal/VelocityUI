@@ -358,7 +358,9 @@ const editor = (() => {
       EditorModels.fileIdForModel(_editorInstance?.getModel?.()),
       _editorInstance,
     );
-    const model = EditorModels.getOrCreate(_monaco, file);
+    const targetLang = LangMap.monacoLang(file.name, file.languageOverride);
+    const isNewModel = !EditorModels.has(file.id);
+    const model = EditorModels.getOrCreate(_monaco, file, isNewModel ? 'plaintext' : targetLang);
     if (model.getValue() !== file.content) {
       _suspendContentChange = true;
       try {
@@ -367,7 +369,6 @@ const editor = (() => {
         _suspendContentChange = false;
       }
     }
-    _monaco.editor.setModelLanguage(model, LangMap.monacoLang(file.name, file.languageOverride));
     model.updateOptions({
       tabSize: file.indentSize ?? 2,
       insertSpaces: file.insertSpaces !== false,
@@ -375,6 +376,15 @@ const editor = (() => {
     _editorInstance.setModel(model);
     EditorModels.restoreViewState(file.id, _editorInstance);
     _editorInstance.focus();
+    if (isNewModel) {
+      requestAnimationFrame(() => {
+        if (_editorInstance.getModel() === model) {
+          _monaco.editor.setModelLanguage(model, targetLang);
+        }
+      });
+    } else if (_monaco.editor.getModel(model.uri)?.getLanguageId() !== targetLang) {
+      _monaco.editor.setModelLanguage(model, targetLang);
+    }
     timeline.refreshSize();
     _applyFileProfile(file);
     _syncStatusDetails(file);
@@ -757,10 +767,18 @@ const editor = (() => {
     };
   }
 
+  function prewarm() {
+    if (_ready) return;
+    requestIdleCallback
+      ? requestIdleCallback(() => _ensureReady().catch(() => {}), { timeout: 3000 })
+      : setTimeout(() => _ensureReady().catch(() => {}), 800);
+  }
+
   return {
     render,
     focus,
     relayout,
+    prewarm,
     destroyTab,
     destroyAllTabs,
     applyTheme,

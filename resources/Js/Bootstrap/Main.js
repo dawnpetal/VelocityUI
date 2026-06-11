@@ -195,4 +195,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   console_.initNativeMonitor();
   eventBus.on('script:executing', () => console_.startErrorWatch());
   eventBus.on('script:executed', () => console_.startErrorWatch());
+  editor.prewarm();
 });

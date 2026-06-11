@@ -7,15 +7,15 @@ const EditorModels = (() => {
   function _touch(fileId) {
     _lastUsed.set(fileId, ++_tick);
   }
-  function getOrCreate(monaco, file) {
+  function has(fileId) {
+    return _models.has(fileId);
+  }
+  function getOrCreate(monaco, file, initialLang) {
     _touch(file.id);
     if (_models.has(file.id)) return _models.get(file.id);
     const uri = monaco.Uri.parse(`file:///${file.id}/${file.name}`);
-    const model = monaco.editor.createModel(
-      file.content,
-      LangMap.monacoLang(file.name, file.languageOverride),
-      uri,
-    );
+    const lang = initialLang ?? LangMap.monacoLang(file.name, file.languageOverride);
+    const model = monaco.editor.createModel(file.content, lang, uri);
     model.__velocityuiFileId = file.id;
     model.onWillDispose(() => _models.delete(file.id));
     _models.set(file.id, model);
@@ -84,6 +84,7 @@ const EditorModels = (() => {
     _viewStates.clear();
   }
   return {
+    has,
     getOrCreate,
     saveViewState,
     restoreViewState,
