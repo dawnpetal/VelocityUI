@@ -649,7 +649,7 @@ const docsPanel = (() => {
       _contentMatchIdx = (_contentMatchIdx + dir + marks.length) % marks.length;
       const active = marks[_contentMatchIdx];
       active.classList.add('docs-find-match--active');
-      active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      active.scrollIntoView({ block: 'center' });
       countEl.textContent = `${_contentMatchIdx + 1}/${marks.length}`;
     };
 
@@ -747,7 +747,7 @@ const docsPanel = (() => {
     if (countEl) countEl.textContent = matchCount ? `1/${matchCount}` : 'No results';
     if (matchCount) {
       const first = contentEl.querySelector('.docs-find-match--active');
-      first?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      first?.scrollIntoView({ block: 'center' });
     }
   }
 

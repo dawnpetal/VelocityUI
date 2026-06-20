@@ -8,6 +8,7 @@ const uiState = (() => {
   let _sbBottomHeight = 100;
   let _activeView = 'explorer';
   let _dataTreeViewMode = 'explorer';
+  let _analysisMode = 'remote';
   let _fileTreeCollapsed = false;
   let _aiChatsCollapsed = true;
   let _autoexecCollapsed = true;
@@ -26,6 +27,7 @@ const uiState = (() => {
   const VALID_ACTIVITY_VIEWS = new Set([
     'search',
     'datatree',
+    'analysis',
     'accounts',
     'pinboard',
     'cloud',
@@ -42,6 +44,7 @@ const uiState = (() => {
       sbBottomHeight: _sbBottomHeight,
       activeView: _activeView === 'datatree' ? 'explorer' : _activeView,
       dataTreeViewMode: _dataTreeViewMode,
+      analysisMode: _analysisMode,
       fileTreeCollapsed: _fileTreeCollapsed,
       aiChatsCollapsed: _aiChatsCollapsed,
       autoexecCollapsed: _autoexecCollapsed,
@@ -74,6 +77,8 @@ const uiState = (() => {
       _activeView = loaded.activeView === 'datatree' ? 'explorer' : loaded.activeView;
     if (loaded.dataTreeViewMode && ['explorer'].includes(loaded.dataTreeViewMode))
       _dataTreeViewMode = loaded.dataTreeViewMode;
+    if (loaded.analysisMode && ['remote', 'scanner'].includes(loaded.analysisMode))
+      _analysisMode = loaded.analysisMode;
     if (loaded.fileTreeCollapsed != null) _fileTreeCollapsed = !!loaded.fileTreeCollapsed;
     if (loaded.aiChatsCollapsed != null) _aiChatsCollapsed = !!loaded.aiChatsCollapsed;
     if (loaded.autoexecCollapsed != null) _autoexecCollapsed = !!loaded.autoexecCollapsed;
@@ -138,6 +143,11 @@ const uiState = (() => {
   function setDataTreeViewMode(v) {
     if (!['explorer'].includes(v)) return;
     _dataTreeViewMode = v;
+    save();
+  }
+  function setAnalysisMode(v) {
+    if (!['remote', 'scanner'].includes(v)) return;
+    _analysisMode = v;
     save();
   }
   function setFileTreeCollapsed(v) {
@@ -242,6 +252,9 @@ const uiState = (() => {
     get dataTreeViewMode() {
       return _dataTreeViewMode;
     },
+    get analysisMode() {
+      return _analysisMode;
+    },
     get fileTreeCollapsed() {
       return _fileTreeCollapsed;
     },
@@ -292,6 +305,7 @@ const uiState = (() => {
     setSbBottomHeight,
     setActiveView,
     setDataTreeViewMode,
+    setAnalysisMode,
     setFileTreeCollapsed,
     setAiChatsCollapsed,
     setAutoexecCollapsed,

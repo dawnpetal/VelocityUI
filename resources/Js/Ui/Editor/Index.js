@@ -769,9 +769,7 @@ const editor = (() => {
 
   function prewarm() {
     if (_ready) return;
-    requestIdleCallback
-      ? requestIdleCallback(() => _ensureReady().catch(() => {}), { timeout: 3000 })
-      : setTimeout(() => _ensureReady().catch(() => {}), 800);
+    window.requestIdleCallback(() => _ensureReady().catch(() => {}), { timeout: 3000 });
   }
 
   return {

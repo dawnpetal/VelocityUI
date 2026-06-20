@@ -393,7 +393,37 @@ fn main() {
                 eprintln!("first-run seed warning: {e}");
             }
 
+            if let Ok(internals) = paths::internals_dir() {
+                for name in &["key-cache.json", "menu-scripts.json"] {
+                    let legacy = internals.join(name);
+                    if legacy.exists() {
+                        if let Ok(cache_dir) = paths::cache_dir() {
+                            let new_path = cache_dir.join(name);
+                            if !new_path.exists() {
+                                let _ = std::fs::copy(&legacy, &new_path);
+                            }
+                            let _ = std::fs::remove_file(&legacy);
+                        }
+                    }
+                }
+                let updates_dir = internals.join("updates");
+                if updates_dir.is_dir() {
+                    if let Ok(entries) = std::fs::read_dir(&updates_dir) {
+                        for entry in entries.flatten() {
+                            let _ = std::fs::remove_dir_all(entry.path());
+                        }
+                    }
+                }
+            }
+
             setup_tray(app)?;
+
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                let api_path = resource_dir.join("Json/RobloxAPI.json");
+                if api_path.exists() {
+                    let _ = commands::datatree::logic::roblox_api::load_api(&api_path);
+                }
+            }
 
             let ctx = app.state::<AppContext>();
             if let Ok(scripts) = ctx.Script.get() {
@@ -496,6 +526,7 @@ fn main() {
             commands::datatree::datatree_import_dialog,
             commands::datatree::datatree_import_file,
             commands::datatree::datatree_find_saved_game_file,
+            commands::datatree::datatree_clear_logic_cache,
             commands::viewport::viewport_summary,
             commands::network::http_fetch,
             commands::network::http_fetch_binary,

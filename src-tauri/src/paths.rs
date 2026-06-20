@@ -16,12 +16,18 @@ pub fn default_workspace_dir() -> anyhow::Result<PathBuf> {
     Ok(velocityui_dir()?.join("Default"))
 }
 
+pub fn cache_dir() -> anyhow::Result<PathBuf> {
+    let dir = internals_dir()?.join("cache");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 pub fn cache_path() -> anyhow::Result<PathBuf> {
-    Ok(internals_dir()?.join("key-cache.json"))
+    Ok(cache_dir()?.join("key-cache.json"))
 }
 
 pub fn scripts_path() -> anyhow::Result<PathBuf> {
-    Ok(internals_dir()?.join("menu-scripts.json"))
+    Ok(cache_dir()?.join("menu-scripts.json"))
 }
 
 pub fn key_file_path() -> anyhow::Result<PathBuf> {

@@ -290,7 +290,13 @@ impl WatcherManager {
             }
         });
 
-        self.map.insert(id, WatchEntry { _watcher: watcher, shutdown });
+        self.map.insert(
+            id,
+            WatchEntry {
+                _watcher: watcher,
+                shutdown,
+            },
+        );
 
         Ok(id)
     }

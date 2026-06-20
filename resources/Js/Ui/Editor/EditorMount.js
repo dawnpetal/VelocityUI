@@ -1,5 +1,5 @@
 const EditorMount = (() => {
-  const MONACO_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs';
+  const MONACO_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.43.0/min/vs';
   const EDITOR_OPTIONS = (settings) => ({
     value: '',
     language: 'lua',

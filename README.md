@@ -1,4 +1,4 @@
-# VelocityUI ⚡
+# VelocityUI
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dawnpetal/VelocityUI/main/install.sh | bash

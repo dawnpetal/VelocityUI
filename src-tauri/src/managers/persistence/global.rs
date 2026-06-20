@@ -20,7 +20,19 @@ impl GlobalStateManager {
     }
 
     pub fn load_session(&self) -> Option<SessionData> {
-        read_json(&Self::session_path().ok()?).ok()
+        let new = Self::session_path().ok()?;
+        if new.exists() {
+            return read_json(&new).ok();
+        }
+        let legacy = Self::legacy_path("session.json").ok()?;
+        if !legacy.exists() {
+            return None;
+        }
+        let data: SessionData = read_json(&legacy).ok()?;
+        if write_json(&new, &data).is_ok() {
+            let _ = std::fs::remove_file(&legacy);
+        }
+        Some(data)
     }
 
     pub fn save_ui_state(&self, state: &UiState) -> VelocityUIResult<()> {
@@ -61,42 +73,73 @@ impl GlobalStateManager {
     }
 
     pub fn get_exec_history(&self) -> Vec<ExecHistoryEntry> {
-        Self::history_path()
-            .ok()
-            .and_then(|p| read_json(&p).ok())
-            .unwrap_or_default()
+        let new = Self::history_path().ok();
+        let legacy = Self::legacy_path("exec_history.json").ok();
+        if let Some(ref p) = new {
+            if p.exists() {
+                if let Ok(v) = read_json(p) {
+                    return v;
+                }
+            }
+        }
+        if let Some(ref p) = legacy {
+            if p.exists() {
+                if let Ok(v) = read_json::<Vec<ExecHistoryEntry>>(p) {
+                    if let Some(ref np) = new {
+                        if write_json(np, &v).is_ok() {
+                            let _ = std::fs::remove_file(p);
+                        }
+                    }
+                    return v;
+                }
+            }
+        }
+        vec![]
     }
 
     pub fn load_ui_state_from_disk() -> Option<UiState> {
-        let primary = Self::ui_path().ok()?;
-        if primary.exists() {
-            if let Ok(v) = read_json::<UiState>(&primary) {
+        let new = Self::ui_path().ok()?;
+        if new.exists() {
+            if let Ok(v) = read_json::<UiState>(&new) {
                 return Some(v);
             }
         }
-        let legacy = Self::legacy_ui_path().ok()?;
-        read_json(&legacy).ok()
+        for name in &["settings.json", "ui.json"] {
+            let legacy = Self::legacy_path(name).ok()?;
+            if legacy.exists() {
+                if let Ok(v) = read_json::<UiState>(&legacy) {
+                    if write_json(&new, &v).is_ok() {
+                        let _ = std::fs::remove_file(&legacy);
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
     }
 
-    fn internals() -> VelocityUIResult<PathBuf> {
-        let dir = paths::internals_dir().map_err(|e| VelocityUIError::Other(e.to_string()))?;
+    fn state_dir() -> VelocityUIResult<PathBuf> {
+        let dir = paths::internals_dir()
+            .map_err(|e| VelocityUIError::Other(e.to_string()))?
+            .join("state");
         std::fs::create_dir_all(&dir).map_err(VelocityUIError::Io)?;
         Ok(dir)
     }
 
+    fn legacy_path(name: &str) -> VelocityUIResult<PathBuf> {
+        let dir = paths::internals_dir().map_err(|e| VelocityUIError::Other(e.to_string()))?;
+        Ok(dir.join(name))
+    }
+
     fn session_path() -> VelocityUIResult<PathBuf> {
-        Ok(Self::internals()?.join("session.json"))
+        Ok(Self::state_dir()?.join("session.json"))
     }
 
     fn ui_path() -> VelocityUIResult<PathBuf> {
-        Ok(Self::internals()?.join("settings.json"))
-    }
-
-    fn legacy_ui_path() -> VelocityUIResult<PathBuf> {
-        Ok(Self::internals()?.join("ui.json"))
+        Ok(Self::state_dir()?.join("settings.json"))
     }
 
     fn history_path() -> VelocityUIResult<PathBuf> {
-        Ok(Self::internals()?.join("exec_history.json"))
+        Ok(Self::state_dir()?.join("exec_history.json"))
     }
 }

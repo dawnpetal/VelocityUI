@@ -20,7 +20,24 @@ const dataTree = (() => {
   const MAX_ASSET_BLOB_CACHE_ENTRIES = 64;
   const MAX_TERRAIN_CELL_CACHE_ENTRIES = 4;
   const MAX_READY_MESH_CACHE_ENTRIES = 96;
-  const LOGIC_WEB_INDEX_VERSION = 2;
+  const LOGIC_WEB_INDEX_VERSION = 3;
+
+  let _remoteItemsCache = null;
+  let _remoteItemsCacheGraphRef = null;
+
+  function _remoteLocalItemsMemo(graph, learning) {
+    if (_remoteItemsCacheGraphRef === graph && _remoteItemsCache !== null) {
+      return _remoteItemsCache;
+    }
+    _remoteItemsCache = _remoteLocalItems(graph, learning);
+    _remoteItemsCacheGraphRef = graph;
+    return _remoteItemsCache;
+  }
+
+  function _remoteInvalidateCache() {
+    _remoteItemsCache = null;
+    _remoteItemsCacheGraphRef = null;
+  }
   const PLACE_ANALYSIS_STEPS = [
     {
       id: 'configs',
@@ -97,6 +114,16 @@ const dataTree = (() => {
       indexVersion: null,
       aiScanBusy: false,
       aiPlan: null,
+      progress: 0,
+      progressMessage: '',
+      progressCurrent: 0,
+      progressTotal: 0,
+      startedAt: 0,
+      etaMs: null,
+      etaSamples: [],
+      etaPhase: null,
+      etaPhaseStartedAt: 0,
+      etaPhaseStartProgress: 0,
     },
     remoteScan: {
       query: '',
@@ -105,6 +132,7 @@ const dataTree = (() => {
       snapshotId: null,
       result: null,
       lastRunAt: 0,
+      selectedIndex: null,
     },
     placeAnalysis: {
       busy: false,
@@ -308,12 +336,12 @@ const dataTree = (() => {
     if (!snapshot.storagePath) return snapshot;
     const full = light
       ? await window.__TAURI__.core.invoke('datatree_load_explorer_snapshot', {
-        path: snapshot.storagePath,
-      })
+          path: snapshot.storagePath,
+        })
       : await window.__TAURI__.core.invoke('datatree_load_snapshot', {
-        path: snapshot.storagePath,
-        light,
-      });
+          path: snapshot.storagePath,
+          light,
+        });
     snapshot.nodes = full.nodes || [];
     snapshot.materialVariantNodes =
       full.materialVariantNodes || snapshot.materialVariantNodes || [];
@@ -392,7 +420,7 @@ const dataTree = (() => {
         };
         _restoreSnapshotState(snapshot);
         state_.previewTab = 'raw';
-        _ensureActiveNodeDetailLoaded(snapshot).catch(() => { });
+        _ensureActiveNodeDetailLoaded(snapshot).catch(() => {});
       })
       .catch((err) => {
         if (_isActiveSnapshotLoad(token, snapshotId))
@@ -472,7 +500,7 @@ const dataTree = (() => {
 
   function _saveSoon() {
     clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(() => _save().catch(() => { }), 220);
+    _saveTimer = setTimeout(() => _save().catch(() => {}), 220);
   }
 
   async function flushSave() {
@@ -512,8 +540,12 @@ const dataTree = (() => {
   function showAnalysis(mode = null) {
     _activeContainerId = 'analysisView';
     state_.viewMode = 'analysis-workspace';
-    if (mode) state_.analysisMode = mode;
-    else if (!state_.analysisMode) state_.analysisMode = 'remote';
+    if (mode) {
+      state_.analysisMode = mode;
+      uiState.setAnalysisMode?.(mode);
+    } else {
+      state_.analysisMode = uiState.analysisMode || state_.analysisMode || 'remote';
+    }
     state_.visible = true;
     if (!_inited) {
       const root = _container();
@@ -900,6 +932,7 @@ const dataTree = (() => {
         const tab = btn.dataset.tab;
         if (state_.analysisMode === tab) return;
         state_.analysisMode = tab;
+        uiState.setAnalysisMode?.(tab);
         header
           .querySelectorAll('.analysis-tab')
           .forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
@@ -1069,13 +1102,41 @@ const dataTree = (() => {
     return side;
   }
 
+  function _logicWebProgressMarkup() {
+    const logic = state_.logicWeb;
+    const pct = Math.round(Math.max(0, Math.min(1, logic.progress || 0)) * 100);
+    const elapsedSecs = (Date.now() - (logic.startedAt || Date.now())) / 1000;
+    const etaSecs = Number.isFinite(logic.etaMs) && logic.etaMs > 0 ? logic.etaMs / 1000 : null;
+    const etaLabel =
+      logic.progress > 0.97
+        ? 'Finishing up'
+        : etaSecs != null
+          ? `~${FormatHelpers.fmtDuration(etaSecs)} remaining`
+          : 'Estimating time remaining';
+    return `<div class="dt-progress-track dt-logic-progress"><span style="width:${pct}%"></span></div><small class="dt-logic-progress-meta"><span class="dt-logic-progress-pct">${pct}%</span> · <span class="dt-logic-progress-elapsed">${FormatHelpers.fmtDuration(elapsedSecs)} elapsed</span> · <span class="dt-logic-progress-eta">${etaLabel}</span></small>`;
+  }
+
+  function _paintLogicWebProgress() {
+    const containers = document.querySelectorAll('.dt-logic-progress-host');
+    if (!containers.length) return;
+    const logic = state_.logicWeb;
+    const message = document.querySelectorAll('.dt-logic-progress-host .dt-logic-progress-message');
+    message.forEach((el) => {
+      el.textContent = logic.progressMessage || 'Building local logic web';
+    });
+    const markup = _logicWebProgressMarkup();
+    containers.forEach((container) => {
+      container.innerHTML = markup;
+    });
+  }
+
   function _logicWebPane() {
     const logic = state_.logicWeb;
     const graph = logic.graph;
     const pane = document.createElement('main');
     pane.className = 'dt-logic-web';
     if (logic.busy) {
-      pane.innerHTML = `<div class="dt-logic-empty"><span class="dt-busy-spinner"></span><strong>Building local logic web</strong><p>Reading scripts, resolving requires, remotes, services, and config tables.</p></div>`;
+      pane.innerHTML = `<div class="dt-logic-empty"><span class="dt-busy-spinner"></span><strong>Building local logic web</strong><p class="dt-logic-progress-message">${_escape(logic.progressMessage || 'Reading scripts, resolving requires, remotes, services, and config tables.')}</p><div class="dt-logic-progress-host">${_logicWebProgressMarkup()}</div></div>`;
       return pane;
     }
     if (logic.error) {
@@ -1197,15 +1258,15 @@ const dataTree = (() => {
       scores.set(
         node.id,
         d * 0.38 +
-        pr * 0.3 +
-        bridgeWeight * 0.14 +
-        sourceWeight * 0.07 +
-        relationBoost +
-        kindBoost +
-        kindPenalty +
-        gameplayHint +
-        utilityPenalty +
-        uiPenalty,
+          pr * 0.3 +
+          bridgeWeight * 0.14 +
+          sourceWeight * 0.07 +
+          relationBoost +
+          kindBoost +
+          kindPenalty +
+          gameplayHint +
+          utilityPenalty +
+          uiPenalty,
       );
     }
     const ranked = [...nodes].sort((a, b) => (scores.get(b.id) || 0) - (scores.get(a.id) || 0));
@@ -1531,7 +1592,7 @@ const dataTree = (() => {
       try {
         const parsed = JSON.parse(fencedJson[1]);
         if (Array.isArray(parsed?.systems)) return parsed;
-      } catch { }
+      } catch {}
     }
     const sections = [];
     const lines = clean.split('\n');
@@ -1565,14 +1626,14 @@ const dataTree = (() => {
   function _logicAiTreeMarkup(plan) {
     const sections = Array.isArray(plan?.systems)
       ? plan.systems.map((system) => ({
-        title: system.label || system.id || 'System',
-        items: [
-          system.kind,
-          system.confidence,
-          ...(system.entrypoints || []),
-          ...(system.remotes || []),
-        ].filter(Boolean),
-      }))
+          title: system.label || system.id || 'System',
+          items: [
+            system.kind,
+            system.confidence,
+            ...(system.entrypoints || []),
+            ...(system.remotes || []),
+          ].filter(Boolean),
+        }))
       : plan?.sections || [];
     return `<section class="dt-logic-system"><div class="dt-logic-system-head"><span>AI Structure</span><small>${sections.length} sections</small></div>${sections
       .slice(0, 18)
@@ -1586,21 +1647,21 @@ const dataTree = (() => {
   function _logicAiPlanMarkup(plan) {
     const sections = Array.isArray(plan?.systems)
       ? plan.systems.map((system) => ({
-        title: system.label || system.id || 'System',
-        body: [
-          system.kind ? `Kind: ${system.kind}` : '',
-          system.confidence ? `Confidence: ${system.confidence}` : '',
-          system.repeatPattern ? `Pattern: ${system.repeatPattern}` : '',
-        ].filter(Boolean),
-        items: [
-          ...(system.entrypoints || []).map((item) => `Entrypoint: ${item}`),
-          ...(system.clientControllers || []).map((item) => `Client: ${item}`),
-          ...(system.serverAuthority || []).map((item) => `Server: ${item}`),
-          ...(system.modules || []).map((item) => `Module: ${item}`),
-          ...(system.remotes || []).map((item) => `Remote: ${item}`),
-          ...(system.configs || []).map((item) => `Config: ${item}`),
-        ],
-      }))
+          title: system.label || system.id || 'System',
+          body: [
+            system.kind ? `Kind: ${system.kind}` : '',
+            system.confidence ? `Confidence: ${system.confidence}` : '',
+            system.repeatPattern ? `Pattern: ${system.repeatPattern}` : '',
+          ].filter(Boolean),
+          items: [
+            ...(system.entrypoints || []).map((item) => `Entrypoint: ${item}`),
+            ...(system.clientControllers || []).map((item) => `Client: ${item}`),
+            ...(system.serverAuthority || []).map((item) => `Server: ${item}`),
+            ...(system.modules || []).map((item) => `Module: ${item}`),
+            ...(system.remotes || []).map((item) => `Remote: ${item}`),
+            ...(system.configs || []).map((item) => `Config: ${item}`),
+          ],
+        }))
       : plan?.sections || [];
     return `<div class="dt-logic-card dt-logic-card--overview"><span>AI analysis</span><h3>Discovered game systems</h3><p>The chat answer is now captured here as a modular structure. Use this view as the readable Logic Web; the bubble map stays a lightweight local index.</p></div>${sections
       .slice(0, 10)
@@ -1611,12 +1672,13 @@ const dataTree = (() => {
           )
             .slice(0, 2)
             .map((line) => `<p>${_escape(line)}</p>`)
-            .join('')}${(section.items || []).length
-            ? `<div>${section.items
-              .slice(0, 10)
-              .map((item) => `<span>${_escape(item)}</span>`)
-              .join('')}</div>`
-            : ''
+            .join('')}${
+            (section.items || []).length
+              ? `<div>${section.items
+                  .slice(0, 10)
+                  .map((item) => `<span>${_escape(item)}</span>`)
+                  .join('')}</div>`
+              : ''
           }</div>`,
       )
       .join('')}`;
@@ -1716,9 +1778,9 @@ ${JSON.stringify(packet, null, 2)}
   function _logicPills(items = []) {
     return items?.length
       ? `<div>${items
-        .slice(0, 28)
-        .map((item) => `<span>${_escape(item)}</span>`)
-        .join('')}</div>`
+          .slice(0, 28)
+          .map((item) => `<span>${_escape(item)}</span>`)
+          .join('')}</div>`
       : '<small class="dt-logic-muted">None detected</small>';
   }
 
@@ -1729,6 +1791,27 @@ ${JSON.stringify(packet, null, 2)}
     if (/module/i.test(kind)) return 'M';
     if (/local/i.test(kind)) return 'L';
     return 'S';
+  }
+
+  function _logicWebEtaKey(scriptCount) {
+    const bucket = Math.max(1, Math.round(scriptCount / 25) * 25);
+    return `vui:logicWebDurationMs:${bucket}`;
+  }
+
+  function _recallLogicWebDuration(scriptCount) {
+    try {
+      const raw = localStorage.getItem(_logicWebEtaKey(scriptCount));
+      const ms = Number(raw);
+      return Number.isFinite(ms) && ms > 0 ? ms : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function _rememberLogicWebDuration(scriptCount, ms) {
+    try {
+      localStorage.setItem(_logicWebEtaKey(scriptCount), String(Math.round(ms)));
+    } catch {}
   }
 
   async function _ensureLogicWeb({ force = false } = {}) {
@@ -1746,23 +1829,54 @@ ${JSON.stringify(packet, null, 2)}
     logic.error = '';
     logic.snapshotId = snapshot.id;
     logic.indexVersion = null;
+    logic.progress = 0;
+    logic.progressMessage = 'Preparing logic index';
+    logic.progressCurrent = 0;
+    logic.progressTotal = snapshot.nodeCount || 0;
+    logic.startedAt = Date.now();
+    logic.etaMs = _recallLogicWebDuration(snapshot.nodeCount || 0);
     if (
       state_.visible &&
       state_.viewMode === 'analysis-workspace' &&
       state_.analysisMode === 'logic'
     )
       _replace('.dt-logic-web', _logicWebPane());
+    const progressId = helpers.uid();
+    const tickHandle = setInterval(() => {
+      if (logic.busy) _paintLogicWebProgress();
+    }, 1000);
+    const unlisten = await window.__TAURI__?.event
+      ?.listen?.('datatree-logic-progress', (event) => {
+        const payload = event?.payload || {};
+        if (payload.progressId !== progressId) return;
+        logic.progress = Math.max(0, Math.min(1, Number(payload.progress) || 0));
+        logic.progressMessage = payload.message || logic.progressMessage;
+        logic.progressCurrent = Number(payload.current) || 0;
+        logic.progressTotal = Number(payload.total) || logic.progressTotal;
+        const elapsed = Date.now() - logic.startedAt;
+        if (logic.progress > 0.03) logic.etaMs = elapsed / logic.progress - elapsed;
+        _paintLogicWebProgress();
+      })
+      .catch?.(() => null);
     try {
       const graph = await window.__TAURI__.core.invoke('datatree_build_logic_web', {
         path: snapshot.storagePath,
+        progressId,
       });
       if (activeSnapshot()?.id !== snapshot.id) return;
       logic.graph = graph;
       logic.indexVersion = LOGIC_WEB_INDEX_VERSION;
+      _rememberLogicWebDuration(
+        graph.summary?.scriptCount || snapshot.nodeCount || 0,
+        Date.now() - logic.startedAt,
+      );
+      _remoteInvalidateCache();
     } catch (err) {
       logic.error = err?.message || String(err) || 'Could not build logic web';
       logic.graph = null;
     } finally {
+      clearInterval(tickHandle);
+      if (typeof unlisten === 'function') unlisten();
       logic.busy = false;
       if (
         state_.visible &&
@@ -1782,6 +1896,8 @@ ${JSON.stringify(packet, null, 2)}
       scan.snapshotId = snapshot?.id || null;
       scan.result = null;
       scan.lastRunAt = 0;
+      scan.selectedIndex = null;
+      _remoteInvalidateCache();
     }
     return scan;
   }
@@ -1886,6 +2002,29 @@ ${JSON.stringify(packet, null, 2)}
       .map((item, index) => _remoteAliasItem(item, index));
   }
 
+  function _isOpaqueEvidence(ev) {
+    if (!ev) return true;
+
+    const inner = ev.replace(/^[^(]*\(/, '').replace(/\)$/, '');
+    if (!inner.trim()) return false;
+    return inner.split(',').every((part) => {
+      const t = part.trim();
+      return /^(?:v_[a-z]_\d+|v\d+|p\d+|a\d+|l_\d+|_\d+|unknown)$/i.test(t);
+    });
+  }
+
+  function _mostSpecificType(types) {
+    const order = (t) => {
+      if (!t || t === 'unknown') return 0;
+      if (t === '?') return 1;
+      if (t === 'table') return 2;
+      if (t.startsWith('table<') || t.startsWith('{')) return 3;
+      if (t === 'string' || t === 'number' || t === 'boolean' || t === 'nil') return 4;
+      return 5;
+    };
+    return types.reduce((best, t) => (order(t) > order(best) ? t : best), types[0] || 'unknown');
+  }
+
   function _remoteItemsFromCalls(calls = [], graph = null) {
     const map = new Map();
     const remoteNodesByPath = new Map();
@@ -1914,18 +2053,24 @@ ${JSON.stringify(packet, null, 2)}
         methods: new Set(),
         calls: [],
         confidenceTotal: 0,
+        argPositions: [],
       };
       current.name = call.remoteName || current.name;
       current.path = call.remotePath || current.path;
       current.nodeId = current.nodeId || remoteNode?.nodeId || null;
       current.kind = call.remoteClassName || current.kind;
       current.className = call.remoteClassName || current.className;
-      current.direction =
-        current.direction === 'unknown' ? call.direction || 'unknown' : current.direction;
+      if (current.direction === 'unknown' && call.direction !== 'unknown')
+        current.direction = call.direction || 'unknown';
       if (call.callerPath) current.callers.add(call.callerPath);
       if (/listener/i.test(call.direction || '')) current.listeners.add(call.callerPath);
-      if (call.evidence) current.evidence.add(call.evidence);
+      if (call.evidence && !_isOpaqueEvidence(call.evidence)) current.evidence.add(call.evidence);
       if (call.method) current.methods.add(call.method);
+      const argTypes = Array.isArray(call.args) ? call.args : [];
+      argTypes.forEach((type, i) => {
+        if (!current.argPositions[i]) current.argPositions[i] = [];
+        if (type && type !== 'unknown') current.argPositions[i].push(type);
+      });
       const signature = call.argSignature || `{${(call.args || []).join(', ')}}`;
       current.signatures.set(signature, (current.signatures.get(signature) || 0) + 1);
       current.calls.push(call);
@@ -1937,18 +2082,22 @@ ${JSON.stringify(packet, null, 2)}
         const signatures = [...item.signatures.entries()]
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
           .map(([signature, count]) => ({ signature, count }));
-        const topSignature = signatures[0]?.signature || '{}';
+
+        const bestArgs = item.argPositions.map((votes) => _mostSpecificType(votes));
+        const bestSig = bestArgs.length
+          ? `{${bestArgs.join(', ')}}`
+          : signatures[0]?.signature || '{}';
         const count = item.calls.length || 1;
         return {
           ...item,
           callers: [...item.callers],
           listeners: [...item.listeners],
-          evidence: [...item.evidence],
+          evidence: [...item.evidence].filter((e) => !_isOpaqueEvidence(e)).slice(0, 8),
           linkedSystems: [...item.linkedSystems],
           methods: [...item.methods],
           signatures,
-          args: topSignature,
-          argSignature: topSignature,
+          args: bestSig,
+          argSignature: bestSig,
           confidence: Math.round((item.confidenceTotal / count) * 100),
           score: count * 3 + item.callers.size * 2 + signatures.length,
         };
@@ -1980,7 +2129,7 @@ ${JSON.stringify(packet, null, 2)}
     const q = String(query || '')
       .trim()
       .toLowerCase();
-    return _remoteLocalItems(graph, learning).filter((item) => {
+    return _remoteLocalItemsMemo(graph, learning).filter((item) => {
       if (!q) return true;
       return `${item.name} ${item.displayAlias} ${item.aiAlias} ${item.path} ${item.kind} ${item.evidence.join(' ')} ${item.callers.join(' ')}`
         .toLowerCase()
@@ -2002,13 +2151,44 @@ ${JSON.stringify(packet, null, 2)}
       return pane;
     }
     if (logic.busy || !graph) {
-      pane.innerHTML = `<div class="dt-logic-empty"><span class="dt-busy-spinner"></span><strong>Preparing remote scan</strong><p>Building the local script, config, and remote index first.</p></div>`;
+      pane.innerHTML = `<div class="dt-logic-empty"><span class="dt-busy-spinner"></span><strong>Preparing remote scan</strong><p class="dt-logic-progress-message">${_escape(logic.progressMessage || 'Building the local script, config, and remote index first.')}</p><div class="dt-logic-progress-host">${_logicWebProgressMarkup()}</div></div>`;
       return pane;
     }
-    pane.innerHTML = `<section class="dt-remote-head"><div><span>Remote Scan</span><strong>${items.length.toLocaleString()} remote entr${items.length === 1 ? 'y' : 'ies'}</strong><small>Local call tracing from scripts, requires, and ModuleScript returns</small></div><label class="dt-remote-search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input placeholder="Search remotes, callers, evidence" value="${_escape(scan.query)}" spellcheck="false"></label><button class="dt-btn dt-btn-primary dt-remote-ai-btn" data-action="remote-ai"${scan.busy ? ' disabled' : ''}>${scan.busy ? 'Scanning...' : 'AI refine'}</button></section><section class="dt-remote-body"><aside class="dt-remote-list">${_remoteListMarkup(items)}</aside><section class="dt-remote-mini">${_remoteMiniMarkup(items, aiRemotes, scan)}</section></section>`;
+
+    const clientToServer = items.filter((i) => i.direction === 'client_to_server').length;
+    const serverToClient = items.filter((i) => i.direction === 'server_to_client').length;
+    const unknown = Math.max(0, items.length - clientToServer - serverToClient);
+    const selIdx = scan.selectedIndex;
+    const selItem =
+      selIdx != null ? items.find((i) => String(i.remoteIndex) === String(selIdx)) : null;
+    const aiItem = selItem
+      ? aiRemotes.find((r) => String(r.remoteIndex) === String(selItem.remoteIndex))
+      : null;
+
+    pane.innerHTML = `
+      <header class="dt-remote-head">
+        <label class="dt-remote-search">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+          <input placeholder="Search remotes, callers, evidence" value="${_escape(scan.query)}" spellcheck="false">
+        </label>
+        <button class="dt-btn dt-btn-danger dt-remote-clear-btn" data-action="remote-clear">Clear cache</button>
+        <button class="dt-btn dt-btn-primary dt-remote-ai-btn" data-action="remote-ai"${scan.busy ? ' disabled' : ''}>${scan.busy ? '<span class="dt-busy-spinner dt-busy-spinner--inline"></span>Scanning…' : 'AI refine'}</button>
+      </header>
+      <div class="dt-remote-statbar">
+        <span><em>${items.length.toLocaleString()}</em> remotes</span>
+        <span><em>${clientToServer}</em> client→server</span>
+        <span><em>${serverToClient}</em> server→client</span>
+        <span><em>${unknown}</em> unknown</span>
+      </div>
+      <div class="dt-remote-body">
+        <aside class="dt-remote-list">${_remoteListMarkup(items, selIdx)}</aside>
+        <section class="dt-remote-detail">${_remoteDetailPane(selItem, aiItem, scan)}</section>
+      </div>`;
+
     const input = pane.querySelector('.dt-remote-search input');
     input?.addEventListener('input', () => {
       scan.query = input.value;
+      scan.selectedIndex = null;
       _replace('.dt-remote-scan', _remoteScanPane());
       requestAnimationFrame(() => {
         const next = _container()?.querySelector('.dt-remote-search input');
@@ -2016,14 +2196,73 @@ ${JSON.stringify(packet, null, 2)}
         next?.setSelectionRange(next.value.length, next.value.length);
       });
     });
+    pane.querySelector('[data-action="remote-clear"]')?.addEventListener('click', async () => {
+      const snapshot = activeSnapshot();
+      if (!snapshot?.storagePath) return;
+      const choice = await modal.ask(
+        'Clear Remote Scan Cache',
+        'Delete the cached logic index and explorer sidecar for this snapshot, then rebuild fresh?',
+        ['Rebuild now', 'Later'],
+      );
+      try {
+        await window.__TAURI__.core.invoke('datatree_clear_logic_cache', {
+          path: snapshot.storagePath,
+        });
+      } catch (err) {
+        toast.show(`Cache clear failed: ${err}`, 'fail', 3200);
+        return;
+      }
+      const logic = state_.logicWeb;
+      logic.graph = null;
+      logic.snapshotId = null;
+      logic.indexVersion = null;
+      logic.error = '';
+      logic.progress = 0;
+      logic.progressMessage = '';
+      logic.aiPlan = null;
+      const scan = state_.remoteScan;
+      scan.result = null;
+      scan.error = '';
+      scan.lastRunAt = 0;
+      scan.selectedIndex = null;
+      scan.query = '';
+      scan.snapshotId = null;
+      _remoteInvalidateCache();
+      _remoteRenderIfVisible();
+      toast.show('Cache cleared.', 'ok', 1800);
+      if (choice === 'Rebuild now') requestAnimationFrame(() => _ensureLogicWeb({ force: true }));
+    });
     pane
       .querySelector('[data-action="remote-ai"]')
       ?.addEventListener('click', () => _runRemoteAiScan(graph, items));
+
+    pane.querySelectorAll('.dt-remote-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        scan.selectedIndex = row.dataset.remoteIndex ?? null;
+        const detail = pane.querySelector('.dt-remote-detail');
+        const newSelIdx = scan.selectedIndex;
+        const newSelItem =
+          newSelIdx != null ? items.find((i) => String(i.remoteIndex) === String(newSelIdx)) : null;
+        const newAiItem = newSelItem
+          ? aiRemotes.find((r) => String(r.remoteIndex) === String(newSelItem.remoteIndex))
+          : null;
+        if (detail) {
+          detail.innerHTML = _remoteDetailPane(newSelItem, newAiItem, scan);
+          _bindCallerOpenButtons(detail);
+        }
+        pane
+          .querySelectorAll('.dt-remote-row')
+          .forEach((r) => r.classList.toggle('is-selected', r.dataset.remoteIndex === newSelIdx));
+      });
+    });
+
     _bindRemoteContextMenus(pane, items);
+    const detail = pane.querySelector('.dt-remote-detail');
+    if (detail) _bindCallerOpenButtons(detail);
     return pane;
   }
 
-  function _remoteListMarkup(items) {
+  function _remoteListMarkup(items, selIdx = null) {
     if (!items.length) return '<div class="dt-module-empty">No remotes matched this filter.</div>';
     return items
       .slice(0, 220)
@@ -2032,9 +2271,26 @@ ${JSON.stringify(packet, null, 2)}
           _classIcon(item.className || item.kind || 'RemoteEvent'),
           'dt-render-icon',
         );
-        return `<div class="dt-remote-row" data-remote-index="${Number(item.remoteIndex || 0)}"><span class="dt-remote-row-icon">${icon}</span><div><strong>${_escape(item.displayName || item.name || 'Remote')}</strong><small>${_escape(item.path || item.aiAlias || item.kind || 'Remote usage')}</small></div><em>${Number(item.confidence || 0) ? `${Number(item.confidence).toLocaleString()}%` : `R${Number(item.remoteIndex || 0).toLocaleString()}`}</em></div>`;
+        const isSelected = String(item.remoteIndex) === String(selIdx);
+        const dirTag =
+          item.direction === 'client_to_server'
+            ? 'C→S'
+            : item.direction === 'server_to_client'
+              ? 'S→C'
+              : '?';
+        const conf = Number(item.confidence || 0);
+        return `<div class="dt-remote-row${isSelected ? ' is-selected' : ''}" data-remote-index="${Number(item.remoteIndex || 0)}"><span class="dt-remote-row-icon">${icon}</span><div><strong>${_escape(item.displayName || item.name || 'Remote')}</strong><small>${_escape(item.path || item.aiAlias || item.kind || 'Remote usage')}</small></div><div class="dt-remote-row-meta"><em class="dt-remote-conf">${conf ? `${conf}%` : `R${Number(item.remoteIndex || 0)}`}</em><em class="dt-remote-dir">${dirTag}</em></div></div>`;
       })
       .join('');
+  }
+
+  function _bindCallerOpenButtons(container) {
+    container.querySelectorAll('.dt-rdetail-caller-row--openable[data-file-id]').forEach((row) => {
+      row.addEventListener('click', () => {
+        const id = row.dataset.fileId;
+        if (id) eventBus.emit('ui:open-file', { id });
+      });
+    });
   }
 
   function _bindRemoteContextMenus(pane, items) {
@@ -2060,6 +2316,308 @@ ${JSON.stringify(packet, null, 2)}
         ]);
       });
     });
+  }
+
+  function _formatArgSignature(raw) {
+    if (!raw) return null;
+    let s = String(raw).trim();
+
+    const inner = s
+      .replace(/^\{|\}$/g, '')
+      .replace(/^\(|\)$/g, '')
+      .trim();
+    if (!inner) return null;
+
+    const parts = [];
+    let depth = 0;
+    let cur = '';
+    for (const ch of inner) {
+      if ('([{'.includes(ch)) depth++;
+      else if (')]}'.includes(ch)) depth--;
+      if (ch === ',' && depth === 0) {
+        if (cur.trim()) parts.push(cur.trim());
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    if (cur.trim()) parts.push(cur.trim());
+    return parts.length ? parts : null;
+  }
+
+  function _highlightLua(code) {
+    const KW =
+      /\b(local|function|if|then|else|elseif|end|return|for|while|do|repeat|until|not|and|or|in|true|false|nil|break|continue)\b/g;
+    const BUILTIN =
+      /\b(game|workspace|script|print|warn|error|pairs|ipairs|next|type|tostring|tonumber|table|string|math|os|task|wait|tick|time|require|setmetatable|getmetatable|rawget|rawset|select|unpack|pcall|xpcall|coroutine)\b/g;
+    const SERVICE =
+      /\b(ReplicatedStorage|ServerScriptService|ServerStorage|Players|RunService|UserInputService|TweenService|Workspace|SoundService|MarketplaceService|DataStoreService|HttpService)\b/g;
+    const CTOR =
+      /\b(Vector3|Vector2|CFrame|UDim2|UDim|Color3|BrickColor|TweenInfo|NumberSequence|ColorSequence|Ray|Instance|Enum)\b/g;
+    const METHOD = /:([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+    const STRING = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
+    const COMMENT = /(--[^\n]*)/g;
+    const NUMBER = /\b(\d+(?:\.\d+)?)\b/g;
+    const PROP = /\.([A-Za-z_][A-Za-z0-9_]*)/g;
+
+    let s = _escape(code);
+
+    s = s.replace(STRING, '<span class="lh-str">$1</span>');
+    s = s.replace(COMMENT, '<span class="lh-cmt">$1</span>');
+    s = s.replace(NUMBER, '<span class="lh-num">$1</span>');
+    s = s.replace(KW, '<span class="lh-kw">$1</span>');
+    s = s.replace(BUILTIN, '<span class="lh-bi">$1</span>');
+    s = s.replace(SERVICE, '<span class="lh-svc">$1</span>');
+    s = s.replace(CTOR, '<span class="lh-ctor">$1</span>');
+    s = s.replace(PROP, '.<span class="lh-prop">$1</span>');
+    s = s.replace(METHOD, ':<span class="lh-method">$1</span>(');
+    return s;
+  }
+
+  function _buildExampleCall(item, aiItem) {
+    const name = item.displayName || item.name || 'Remote';
+    const alias = item.aiAlias || `Remote_${item.remoteIndex || 0}`;
+    const rawArgs = aiItem?.args || aiItem?.arguments || item.argSignature || item.args || '{}';
+    const parts = _formatArgSignature(rawArgs) || [];
+    const isC2S = item.direction === 'client_to_server';
+    const isS2C = item.direction === 'server_to_client';
+
+    const _remoteRef = () => {
+      const path = item.path || '';
+      if (!path || path === name) {
+        return `game:GetService("ReplicatedStorage"):FindFirstChild("${name}", true)`;
+      }
+
+      const segments = path.replace(/^game\./, '').split(/\.(?![^\[]*\])/);
+      if (!segments.length)
+        return `game:GetService("ReplicatedStorage"):FindFirstChild("${name}", true)`;
+      const svc = segments[0];
+      const rest = segments.slice(1);
+      let ref = `game:GetService("${svc}")`;
+      for (const seg of rest) {
+        const bracketMatch = seg.match(/^([^[]+)(\[.+\])$/);
+        if (bracketMatch) {
+          ref += `:FindFirstChild(${JSON.stringify(bracketMatch[1])})${bracketMatch[2]}`;
+        } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(seg)) {
+          ref += `.${seg}`;
+        } else {
+          ref += `[${JSON.stringify(seg)}]`;
+        }
+      }
+      return ref;
+    };
+
+    const _exampleVal = (t) => {
+      const tl = String(t).toLowerCase().trim();
+      if (/bool/.test(tl)) return 'true';
+      if (/string/.test(tl)) return `"${name.toLowerCase().replace(/[^a-z0-9]/g, '')}"`;
+      if (/cframe/.test(tl)) return 'CFrame.new(0, 0, 0)';
+      if (/vector3/.test(tl)) return 'Vector3.new(0, 0, 0)';
+      if (/vector2/.test(tl)) return 'Vector2.new(0, 0)';
+      if (/udim2/.test(tl)) return 'UDim2.new(0, 0, 0, 0)';
+      if (/number|int|float/.test(tl)) return '1';
+      if (/player/.test(tl)) return 'game.Players.LocalPlayer';
+      if (/instance|basepart|part|model|tool/.test(tl)) return 'workspace:FindFirstChild("Part")';
+      if (/table\[\]|array/.test(tl)) return '{}';
+      if (/table/.test(tl)) return '{}';
+      if (/nil/.test(tl)) return 'nil';
+      if (/enum/.test(tl)) return `Enum.${t.replace(/^Enum\./i, '')}`;
+      if (/^"/.test(tl) || /^[0-9]/.test(tl) || /^true|^false|^nil/.test(tl)) return t;
+      return t;
+    };
+
+    const remoteRef = _remoteRef();
+    const argStr = parts.map(_exampleVal).join(', ');
+    const paramList = parts.map((_, i) => `arg${i + 1}`).join(', ');
+
+    if (isC2S) {
+      return `-- Fire remote from LocalScript\nlocal remote = ${remoteRef}\nif remote then\n    remote:FireServer(${argStr})\nend`;
+    }
+    if (isS2C) {
+      return `-- Listen to remote in LocalScript\nlocal remote = ${remoteRef}\nif remote then\n    remote.OnClientEvent:Connect(function(${paramList})\n        -- handle event\n    end)\nend`;
+    }
+    return `-- Remote usage (${alias})\nlocal remote = ${remoteRef}\nif remote then\n    remote:FireServer(${argStr})\nend`;
+  }
+
+  function _remoteDetailPane(item, aiItem, scan) {
+    if (!item) {
+      return `<div class="dt-remote-empty-detail">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <p>Select a remote from the list to inspect its call signature, direction, and evidence.</p>
+      </div>`;
+    }
+    const conf = Number(item.confidence || 0);
+    const calls = item.signatures?.[0]?.count || item.calls?.length || 0;
+    const dirLabel =
+      item.direction === 'client_to_server'
+        ? 'Client → Server'
+        : item.direction === 'server_to_client'
+          ? 'Server → Client'
+          : 'Unknown';
+    const rawArgs = item.argSignature || item.args || '{}';
+    const argParts = _formatArgSignature(rawArgs);
+
+    const positionVotes = [];
+    for (const { signature, count } of item.signatures || []) {
+      const posParts = _formatArgSignature(signature) || [];
+      posParts.forEach((type, i) => {
+        if (!positionVotes[i]) positionVotes[i] = new Map();
+        positionVotes[i].set(type, (positionVotes[i].get(type) || 0) + count);
+      });
+    }
+
+    const formattedSig = argParts?.length
+      ? argParts
+          .map((bestType, i) => {
+            const votes = positionVotes[i];
+            const totalVotes = votes ? [...votes.values()].reduce((a, b) => a + b, 0) : 0;
+            const totalCalls =
+              item.calls?.length || item.signatures?.reduce((s, { count }) => s + count, 0) || 1;
+            const isOptional = totalVotes < totalCalls * 0.5;
+            const alternatives =
+              votes && votes.size > 1
+                ? [...votes.entries()]
+                    .sort((a, b) => b[1] - a[1])
+                    .filter(([t]) => t !== bestType && t !== 'unknown' && t !== '?')
+                    .slice(0, 2)
+                    .map(
+                      ([t, c]) =>
+                        `<span class="dt-rdetail-arg-alt" title="${c}/${totalCalls} calls">${_escape(t)}</span>`,
+                    )
+                    .join('')
+                : '';
+            return `<span class="dt-rdetail-arg${isOptional ? ' dt-rdetail-arg--optional' : ''}">
+            <em>arg${i + 1}${isOptional ? '?' : ''}</em>
+            <span>${_escape(bestType)}</span>
+            ${alternatives ? `<span class="dt-rdetail-arg-alts">${alternatives}</span>` : ''}
+            ${isOptional && totalVotes ? `<span class="dt-rdetail-arg-coverage" title="${totalVotes}/${totalCalls} calls pass this argument">${Math.round((totalVotes / totalCalls) * 100)}%</span>` : ''}
+          </span>`;
+          })
+          .join('')
+      : `<span class="dt-rdetail-arg dt-rdetail-arg--empty"><span>no arguments detected</span></span>`;
+
+    const exampleCode = _buildExampleCall(item, aiItem);
+    const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+    const callers = Array.isArray(item.callers) ? item.callers : [];
+
+    const aiSection = aiItem
+      ? (() => {
+          const aiRaw = aiItem.args || aiItem.arguments || aiItem.predictedArgs || '';
+          const aiParts = _formatArgSignature(aiRaw);
+          const aiFormatted = aiParts
+            ? aiParts
+                .map(
+                  (p, i) =>
+                    `<span class="dt-rdetail-arg dt-rdetail-arg--ai"><em>arg${i + 1}</em><span>${_escape(p)}</span></span>`,
+                )
+                .join('')
+            : `<span class="dt-rdetail-arg dt-rdetail-arg--empty"><span>${_escape(aiRaw || 'No AI args')}</span></span>`;
+          return `<div class="dt-rdetail-section">
+            <span class="dt-rdetail-label">AI refinement</span>
+            <div class="dt-rdetail-sig dt-rdetail-sig--ai">${aiFormatted}</div>
+            ${aiItem.confidence ? `<div class="dt-rdetail-chip dt-rdetail-chip--inline">${_escape(String(aiItem.confidence))}</div>` : ''}
+          </div>`;
+        })()
+      : `<div class="dt-rdetail-section dt-rdetail-section--muted">
+          <span class="dt-rdetail-label">AI refinement</span>
+          <p>Run "AI refine" to get deeper argument analysis for this remote.</p>
+        </div>`;
+
+    const _isOpaque = (s) =>
+      /^(?:v_[a-z]_\d+|v\d+|p\d+|a\d+|l_\d+|_\d+|unknown)$/i.test(String(s).trim());
+    const _cleanArg = (s) => {
+      const t = String(s).trim();
+      return _isOpaque(t) ? null : t;
+    };
+
+    const evidenceRows = evidence
+      .filter((e) => {
+        if (!e) return false;
+        const m = String(e).match(/\(([\s\S]*?)\)/);
+        if (!m || m[1] == null) return true;
+        const args = m[1].split(',');
+        return !args.every((a) => _isOpaque(a));
+      })
+      .slice(0, 8)
+      .map((e) => {
+        const m = String(e).match(/^([^:]+):([A-Za-z]+)\(?([\s\S]*?)\)?$/);
+        if (m) {
+          const [, remote, method, rawArgs] = m;
+          const cleanedArgs = (rawArgs || '').trim()
+            ? rawArgs
+                .split(',')
+                .map((a) => _cleanArg(a))
+                .filter(Boolean)
+            : [];
+          const argPills = cleanedArgs
+            .map((a) => `<span class="dt-ev-arg">${_escape(a)}</span>`)
+            .join('');
+          return `<div class="dt-rdetail-evidence-row">
+            <span class="dt-ev-name">${_escape(remote.trim())}</span>
+            <span class="dt-ev-method">${_escape(method)}</span>
+            ${argPills ? `<span class="dt-ev-args">${argPills}</span>` : ''}
+          </div>`;
+        }
+        return `<div class="dt-rdetail-evidence-row"><span class="dt-ev-name">${_escape(String(e))}</span></div>`;
+      })
+      .join('');
+
+    const callerRows = callers
+      .slice(0, 10)
+      .map((c) => {
+        const fullPath = typeof c === 'string' ? c : c.script || c.path || '';
+        const parts = fullPath.split('.');
+        const name = parts[parts.length - 1] || fullPath;
+        const breadcrumb =
+          parts.length > 2
+            ? `${parts[parts.length - 3] || ''}.${parts[parts.length - 2] || ''}`
+            : parts.length > 1
+              ? parts[parts.length - 2]
+              : '';
+        const file = state.findByPath(fullPath);
+        const clickable = file
+          ? ` dt-rdetail-caller-row--openable" data-file-id="${_escape(file.id)}"`
+          : '"';
+        return `<div class="dt-rdetail-caller-row${clickable} title="${_escape(fullPath)}">
+        <div class="dt-caller-text">
+          ${breadcrumb ? `<span class="dt-caller-parent">${_escape(breadcrumb)}</span><span class="dt-caller-sep">›</span>` : ''}
+          <span class="dt-caller-name">${_escape(name)}</span>
+        </div>
+        ${file ? `<span class="dt-caller-open" title="Open in editor">↗</span>` : ''}
+      </div>`;
+      })
+      .join('');
+
+    return `
+      <div class="dt-rdetail-hero">
+        <div class="dt-rdetail-hero-icon">${_iconMarkup(_classIcon(item.className || item.kind || 'RemoteEvent'), 'dt-render-icon')}</div>
+        <div class="dt-rdetail-hero-body">
+          <div class="dt-rdetail-hero-text">
+            <strong>${_escape(item.displayName || item.name || 'Remote')}</strong>
+            <small>${_escape(item.path || item.aiAlias || '')}</small>
+          </div>
+          <div class="dt-rdetail-chips">
+            <span class="dt-rdetail-chip dt-rdetail-chip--dir">${dirLabel}</span>
+            ${conf ? `<span class="dt-rdetail-chip dt-rdetail-chip--conf">${conf}% confidence</span>` : ''}
+            ${calls ? `<span class="dt-rdetail-chip">${calls} call${calls === 1 ? '' : 's'}</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="dt-rdetail-body">
+        <div class="dt-rdetail-section">
+          <span class="dt-rdetail-label">Signature</span>
+          <div class="dt-rdetail-sig">${formattedSig}</div>
+          <div class="dt-rdetail-alias">${_escape(item.aiAlias || `Remote_${item.remoteIndex || '?'}`)}</div>
+        </div>
+        <div class="dt-rdetail-section">
+          <span class="dt-rdetail-label">Example</span>
+          <pre class="dt-rdetail-example"><code>${_highlightLua(exampleCode)}</code></pre>
+        </div>
+        ${evidenceRows ? `<div class="dt-rdetail-section"><span class="dt-rdetail-label">Evidence</span><div class="dt-rdetail-evidence">${evidenceRows}</div></div>` : ''}
+        ${callerRows ? `<div class="dt-rdetail-section"><span class="dt-rdetail-label">Callers</span><div class="dt-rdetail-callers">${callerRows}</div></div>` : ''}
+        ${aiSection}
+        ${scan?.error ? `<div class="dt-remote-panel--error"><span>AI refine failed</span><p>${_escape(scan.error)}</p></div>` : ''}
+      </div>`;
   }
 
   function _remoteMiniMarkup(items, aiRemotes, scan = null) {
@@ -2336,19 +2894,19 @@ ${JSON.stringify(packet, null, 2)}
     const systems = Array.isArray(plan?.systems)
       ? plan.systems.slice(0, 14)
       : (humanGraph?.groups || [])
-        .filter((group) => !group.uiNoise)
-        .slice(0, 10)
-        .map((group) => ({
-          id: group.id,
-          label: group.name,
-          kind: group.kind,
-          confidence: 'local',
-          description: `${group.count.toLocaleString()} grouped member${group.count === 1 ? '' : 's'} in ${group.systemName}`,
-          children: [
-            ...group.configKeys.slice(0, 4).map((label) => ({ label, kind: 'config' })),
-            ...group.exports.slice(0, 4).map((label) => ({ label, kind: 'export' })),
-          ],
-        }));
+          .filter((group) => !group.uiNoise)
+          .slice(0, 10)
+          .map((group) => ({
+            id: group.id,
+            label: group.name,
+            kind: group.kind,
+            confidence: 'local',
+            description: `${group.count.toLocaleString()} grouped member${group.count === 1 ? '' : 's'} in ${group.systemName}`,
+            children: [
+              ...group.configKeys.slice(0, 4).map((label) => ({ label, kind: 'config' })),
+              ...group.exports.slice(0, 4).map((label) => ({ label, kind: 'export' })),
+            ],
+          }));
     if (!graph) {
       return `<div class="dt-analysis-map-empty"><span class="dt-busy-spinner"></span><strong>Preparing local index</strong><p>Scripts, modules, configs, and remotes are being grouped before AI analysis starts.</p></div>`;
     }
@@ -2381,7 +2939,7 @@ ${JSON.stringify(packet, null, 2)}
             ((system.children || []).length +
               (system.remotes || []).length +
               (system.configs || []).length) *
-            3,
+              3,
           );
         return `<line class="dt-analysis-link" x1="${cx}" y1="${cy}" x2="${x}" y2="${y}"></line><g class="dt-analysis-node dt-analysis-node--system" transform="translate(${x} ${y})"><circle r="${size}"></circle><text>${_escape(_analysisKindGlyph(system.kind))}</text><text class="dt-analysis-node-label" y="${size + 20}">${_escape(system.label || system.id || 'System')}</text><title>${_escape(system.hover || system.description || system.summary || system.label || 'System')}</title></g>${children}`;
       })
@@ -2401,21 +2959,24 @@ ${JSON.stringify(packet, null, 2)}
     const localConfigs = (graph?.nodes || [])
       .filter((node) => /config/i.test(node.kind) || node.configKeys?.length)
       .slice(0, 7);
-    return `<div class="dt-analysis-card"><span>Deep-dive target</span><h3>RBXLX + AI workflow</h3><p>The AI is asked to inspect configs, modules, remotes, templates, runtime clones, and repeated prefabs before it writes the final map.</p></div><section class="dt-analysis-section"><strong>Mechanism branches</strong>${systems
+    return `<div class="dt-analysis-card"><span>Deep-dive target</span><h3>RBXLX + AI workflow</h3><p>The AI is asked to inspect configs, modules, remotes, templates, runtime clones, and repeated prefabs before it writes the final map.</p></div><section class="dt-analysis-section"><strong>Mechanism branches</strong>${
+      systems
         .slice(0, 8)
         .map(
           (system) =>
             `<div class="dt-analysis-mini-row"><b>${_escape(system.label || system.id || 'System')}</b><small>${_escape(system.kind || 'gameplay')} · ${_escape(system.confidence || 'inferred')}</small></div>`,
         )
         .join('') || '<p>No AI map yet.</p>'
-      }</section><section class="dt-analysis-section"><strong>Remote arg predictions</strong>${remotes
+    }</section><section class="dt-analysis-section"><strong>Remote arg predictions</strong>${
+      remotes
         .slice(0, 8)
         .map(
           (remote) =>
             `<div class="dt-analysis-mini-row"><b>${_escape(remote.name || remote.remote || 'Remote')}</b><small>${_escape(remote.args || remote.arguments || remote.predictedArgs || 'args unknown')} · ${_escape(remote.confidence || 'unverified')}</small></div>`,
         )
         .join('') || '<p>Run the remotes stage to predict payloads.</p>'
-      }</section><section class="dt-analysis-section"><strong>Configs to inspect</strong>${configs
+    }</section><section class="dt-analysis-section"><strong>Configs to inspect</strong>${
+      configs
         .slice(0, 6)
         .map(
           (config) =>
@@ -2429,7 +2990,7 @@ ${JSON.stringify(packet, null, 2)}
         )
         .join('') ||
       '<p>No configs detected locally yet.</p>'
-      }</section>`;
+    }</section>`;
   }
 
   function _analysisKindGlyph(kind = '') {
@@ -2743,10 +3304,10 @@ Return a short summary, then fenced JSON:
     const results = scanner.query.trim()
       ? scanner.results
       : [...scanner.results].sort((a, b) =>
-        (a.name || a.className || '').localeCompare(b.name || b.className || '', undefined, {
-          sensitivity: 'base',
-        }),
-      );
+          (a.name || a.className || '').localeCompare(b.name || b.className || '', undefined, {
+            sensitivity: 'base',
+          }),
+        );
     const rows = results
       .map((hit) => {
         const icon = _iconMarkup(_classIcon(hit.className), 'dt-render-icon');
@@ -2774,7 +3335,7 @@ Return a short summary, then fenced JSON:
 
   function _scheduleModuleScanner(delay = 120) {
     clearTimeout(_moduleScanTimer);
-    _moduleScanTimer = setTimeout(() => _refreshModuleScanner().catch(() => { }), delay);
+    _moduleScanTimer = setTimeout(() => _refreshModuleScanner().catch(() => {}), delay);
   }
 
   async function _refreshModuleScanner() {
@@ -2848,15 +3409,13 @@ Return a short summary, then fenced JSON:
         source = await window.__TAURI__.core.invoke('datatree_node_value', {
           path: snapshot.storagePath,
           nodeId,
-          section: 'properties',
-          key: 'Source',
+          property: 'Source',
         });
       } catch {
         source = await window.__TAURI__.core.invoke('datatree_node_value', {
           path: snapshot.storagePath,
           nodeId,
-          section: 'properties',
-          key: 'source',
+          property: 'source',
         });
       }
       const id = `datatree-module:${snapshot.id}:${nodeId}`;
@@ -2960,7 +3519,7 @@ report("saveinstance:start", {
     extra_instances = 0,
 })
 
-local repo = "https://raw.githubusercontent.com/luau/UniversalSynSaveInstance/main/"
+local repo = "https:
 local loader, loadErr = loadstring(game:HttpGet(repo .. "saveinstance.luau", true), "saveinstance")
 if type(loader) ~= "function" then
     error("Could not load UniversalSynSaveInstance: " .. tostring(loadErr))
@@ -3176,10 +3735,10 @@ end`;
     _releaseHeavyRenderState({ unloadSnapshots: false });
     state_.snapshots = state_.snapshots.filter((item) => item.id !== snapshot.id);
     if (snapshot.storagePath) {
-      window.__TAURI__.core.invoke('remove_path', { path: snapshot.storagePath }).catch(() => { });
+      window.__TAURI__.core.invoke('remove_path', { path: snapshot.storagePath }).catch(() => {});
       window.__TAURI__.core
         .invoke('remove_path', { path: _explorerSnapshotStoragePath(snapshot.storagePath) })
-        .catch(() => { });
+        .catch(() => {});
     }
     await _activateSnapshot(state_.snapshots[0]?.id ?? null);
     _saveSoon();
@@ -3246,8 +3805,11 @@ end`;
     }
     _dtRebuildFlatRows(snapshot);
     if (!_dtFlatRows.length) {
-      list.innerHTML = '<div class="dt-empty">' +
-        (state_.query ? 'No matching instances.' : 'Import a saved place file to inspect its hierarchy.') +
+      list.innerHTML =
+        '<div class="dt-empty">' +
+        (state_.query
+          ? 'No matching instances.'
+          : 'Import a saved place file to inspect its hierarchy.') +
         '</div>';
       return;
     }
@@ -3440,7 +4002,7 @@ end`;
     try {
       await window.__TAURI__.core.invoke('write_clipboard', { text: String(text || '') });
       toast.show(label, 'ok', 1400);
-    } catch { }
+    } catch {}
   }
 
   function _showNodeMenu(event, snapshot, node, depth, row, hasChildren) {
@@ -3460,14 +4022,14 @@ end`;
       },
       hasChildren
         ? {
-          separator: true,
-        }
+            separator: true,
+          }
         : null,
       hasChildren
         ? {
-          label: expanded ? 'Collapse Children' : 'Expand Children',
-          action: () => _toggleNodeInPlace(snapshot, node, depth, row),
-        }
+            label: expanded ? 'Collapse Children' : 'Expand Children',
+            action: () => _toggleNodeInPlace(snapshot, node, depth, row),
+          }
         : null,
     ]);
   }
@@ -3533,7 +4095,7 @@ end`;
         render();
         if (!state_.memoryUnloaded) requestAnimationFrame(_loadActiveSnapshotForView);
       }
-      _ensureNodeDetailsLoaded(snapshot, node).catch(() => { });
+      _ensureNodeDetailsLoaded(snapshot, node).catch(() => {});
       _flashTreeNode(id);
       toast.show(`Jumped to ${remote?.displayName || node.name}`, 'ok', 1200);
     } catch (err) {
@@ -3556,12 +4118,13 @@ end`;
     } else {
       const idx = _dtFlatRows.findIndex((r) => r.node.id === id);
       if (idx !== -1 && _dtVlist) _dtVlist.scrollToIndex(idx);
-      _activeRowEl = _container()?.querySelector(`.dt-tree-row[data-node-id="${String(id)}"]`) || null;
+      _activeRowEl =
+        _container()?.querySelector(`.dt-tree-row[data-node-id="${String(id)}"]`) || null;
     }
     _activeRowEl?.classList.add('active');
     if (state_.previewReady) _replace('.dt-preview-pane', _previewPane());
     _replace('.dt-details', _detailsPane());
-    if (snapshot && node) _ensureNodeDetailsLoaded(snapshot, node).catch(() => { });
+    if (snapshot && node) _ensureNodeDetailsLoaded(snapshot, node).catch(() => {});
     if (!state_.previewReady) _schedulePreviewWarmup();
     _saveSoon();
   }
@@ -3823,7 +4386,7 @@ end`;
         _viewportCameraKey(snapshot, node),
       );
       _loadViewportAssets(scene.assets, node.id, buildKey, state_.viewportBuild.token);
-      // Release CPU mesh only AFTER _mountViewport has uploaded it to the GPU.
+
       _releaseSceneCpuMesh(scene);
       state_.sceneCache.delete(buildKey);
       state_.viewportBuild.activeAssetKeys = _sceneAssetKeys(scene);
@@ -4470,13 +5033,13 @@ end`;
     if (!lights.length) return { indirect: [0, 0, 0], energy: 0 };
     const diagonal = bounds
       ? Math.max(
-        1,
-        Math.hypot(
-          bounds.max[0] - bounds.min[0],
-          bounds.max[1] - bounds.min[1],
-          bounds.max[2] - bounds.min[2],
-        ),
-      )
+          1,
+          Math.hypot(
+            bounds.max[0] - bounds.min[0],
+            bounds.max[1] - bounds.min[1],
+            bounds.max[2] - bounds.min[2],
+          ),
+        )
       : 48;
     let total = 0;
     const weighted = [0, 0, 0];
@@ -4889,7 +5452,7 @@ end`;
     const meshId = embedded ? '' : _assetId(rawMesh);
     const textureId = _assetId(
       _firstProp(props, ['TextureID', 'TextureId', 'TextureContent']) ||
-      _firstProp(meshProps, ['TextureID', 'TextureId', 'TextureContent']),
+        _firstProp(meshProps, ['TextureID', 'TextureId', 'TextureContent']),
     );
     const scale =
       meshNode && !/meshpart/i.test(node.className) ? _parseOptionalVector3(meshProps.Scale) : null;
@@ -5091,10 +5654,10 @@ end`;
       nums.length >= 12
         ? [nums.slice(3, 6), nums.slice(6, 9), nums.slice(9, 12)]
         : [
-          [1, 0, 0],
-          [0, 1, 0],
-          [0, 0, 1],
-        ];
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+          ];
     return { center, matrix };
   }
 
@@ -5331,33 +5894,50 @@ end`;
     let _cap = Math.max(CHUNK, 4096);
     let _len = 0;
     let positions = new Float32Array(_cap);
-    let normals   = new Float32Array(_cap);
-    let colors    = new Float32Array(_cap * 4 / 3);
-    let flags     = new Float32Array(_cap / 3);
-    let matIds    = new Float32Array(_cap / 3);
+    let normals = new Float32Array(_cap);
+    let colors = new Float32Array((_cap * 4) / 3);
+    let flags = new Float32Array(_cap / 3);
+    let matIds = new Float32Array(_cap / 3);
     const textured = new Map();
     let _currentFlag = 0;
     let _currentMatId = 0;
 
     const _grow = () => {
       _cap *= 2;
-      const p2 = new Float32Array(_cap);       p2.set(positions); positions = p2;
-      const n2 = new Float32Array(_cap);       n2.set(normals);   normals   = n2;
-      const c2 = new Float32Array(_cap * 4/3); c2.set(colors);    colors    = c2;
-      const f2 = new Float32Array(_cap / 3);   f2.set(flags);     flags     = f2;
-      const m2 = new Float32Array(_cap / 3);   m2.set(matIds);    matIds    = m2;
+      const p2 = new Float32Array(_cap);
+      p2.set(positions);
+      positions = p2;
+      const n2 = new Float32Array(_cap);
+      n2.set(normals);
+      normals = n2;
+      const c2 = new Float32Array((_cap * 4) / 3);
+      c2.set(colors);
+      colors = c2;
+      const f2 = new Float32Array(_cap / 3);
+      f2.set(flags);
+      flags = f2;
+      const m2 = new Float32Array(_cap / 3);
+      m2.set(matIds);
+      matIds = m2;
     };
 
     const _pushVertex = (point, normal, color, alpha) => {
       if (_len * 3 + 3 > _cap) _grow();
       const n = _norm(normal);
-      const p3 = _len * 3, c4 = _len * 4;
-      positions[p3]   = point[0];  positions[p3+1] = point[1]; positions[p3+2] = point[2];
-      normals[p3]     = n[0];      normals[p3+1]   = n[1];     normals[p3+2]   = n[2];
-      colors[c4]      = color[0]/255; colors[c4+1]  = color[1]/255;
-      colors[c4+2]    = color[2]/255; colors[c4+3]  = alpha;
-      flags[_len]     = _currentFlag;
-      matIds[_len]    = _currentMatId;
+      const p3 = _len * 3,
+        c4 = _len * 4;
+      positions[p3] = point[0];
+      positions[p3 + 1] = point[1];
+      positions[p3 + 2] = point[2];
+      normals[p3] = n[0];
+      normals[p3 + 1] = n[1];
+      normals[p3 + 2] = n[2];
+      colors[c4] = color[0] / 255;
+      colors[c4 + 1] = color[1] / 255;
+      colors[c4 + 2] = color[2] / 255;
+      colors[c4 + 3] = alpha;
+      flags[_len] = _currentFlag;
+      matIds[_len] = _currentMatId;
       _len++;
     };
 
@@ -5367,12 +5947,14 @@ end`;
       if (!textured.has(key)) {
         const cap = 4096;
         textured.set(key, {
-          texture, cap, len: 0,
+          texture,
+          cap,
+          len: 0,
           positions: new Float32Array(cap * 3),
-          normals:   new Float32Array(cap * 3),
-          colors:    new Float32Array(cap * 4),
-          uvs:       new Float32Array(cap * 2),
-          flags:     new Float32Array(cap),
+          normals: new Float32Array(cap * 3),
+          colors: new Float32Array(cap * 4),
+          uvs: new Float32Array(cap * 2),
+          flags: new Float32Array(cap),
         });
       }
       return textured.get(key);
@@ -5380,29 +5962,52 @@ end`;
 
     const _growGroup = (g) => {
       g.cap *= 2;
-      const p2 = new Float32Array(g.cap*3); p2.set(g.positions); g.positions = p2;
-      const n2 = new Float32Array(g.cap*3); n2.set(g.normals);   g.normals   = n2;
-      const c2 = new Float32Array(g.cap*4); c2.set(g.colors);    g.colors    = c2;
-      const u2 = new Float32Array(g.cap*2); u2.set(g.uvs);       g.uvs       = u2;
-      const f2 = new Float32Array(g.cap);   f2.set(g.flags);     g.flags     = f2;
+      const p2 = new Float32Array(g.cap * 3);
+      p2.set(g.positions);
+      g.positions = p2;
+      const n2 = new Float32Array(g.cap * 3);
+      n2.set(g.normals);
+      g.normals = n2;
+      const c2 = new Float32Array(g.cap * 4);
+      c2.set(g.colors);
+      g.colors = c2;
+      const u2 = new Float32Array(g.cap * 2);
+      u2.set(g.uvs);
+      g.uvs = u2;
+      const f2 = new Float32Array(g.cap);
+      f2.set(g.flags);
+      g.flags = f2;
     };
 
     const pushTexturedVertex = (group, point, normal, uv, color, alpha) => {
       if (group.len >= group.cap) _growGroup(group);
       const n = _norm(normal);
-      const p3 = group.len*3, c4 = group.len*4, u2 = group.len*2;
-      group.positions[p3]   = point[0]; group.positions[p3+1] = point[1]; group.positions[p3+2] = point[2];
-      group.normals[p3]     = n[0];     group.normals[p3+1]   = n[1];     group.normals[p3+2]   = n[2];
-      group.colors[c4]      = color[0]/255; group.colors[c4+1] = color[1]/255;
-      group.colors[c4+2]    = color[2]/255; group.colors[c4+3] = alpha;
-      group.uvs[u2]         = uv?.[0] || 0; group.uvs[u2+1]   = uv?.[1] || 0;
-      group.flags[group.len]= _currentFlag;
+      const p3 = group.len * 3,
+        c4 = group.len * 4,
+        u2 = group.len * 2;
+      group.positions[p3] = point[0];
+      group.positions[p3 + 1] = point[1];
+      group.positions[p3 + 2] = point[2];
+      group.normals[p3] = n[0];
+      group.normals[p3 + 1] = n[1];
+      group.normals[p3 + 2] = n[2];
+      group.colors[c4] = color[0] / 255;
+      group.colors[c4 + 1] = color[1] / 255;
+      group.colors[c4 + 2] = color[2] / 255;
+      group.colors[c4 + 3] = alpha;
+      group.uvs[u2] = uv?.[0] || 0;
+      group.uvs[u2 + 1] = uv?.[1] || 0;
+      group.flags[group.len] = _currentFlag;
       group.len++;
     };
 
     return {
-      setFlag(f)  { _currentFlag  = f || 0; },
-      setMatId(id){ _currentMatId = id || 0; },
+      setFlag(f) {
+        _currentFlag = f || 0;
+      },
+      setMatId(id) {
+        _currentMatId = id || 0;
+      },
       texturedTriNormal(texture, a, b, c, na, nb, nc, uva, uvb, uvc, color, alpha = 1) {
         const group = textureGroup(texture);
         if (!group) return false;
@@ -5432,7 +6037,9 @@ end`;
         _pushVertex(c, n1, color, alpha);
         _pushVertex(d, n1, color, alpha);
       },
-      vertexCount()      { return _len; },
+      vertexCount() {
+        return _len;
+      },
       visualVertexCount() {
         let tv = 0;
         for (const g of textured.values()) tv += g.len;
@@ -5440,30 +6047,30 @@ end`;
       },
       finish() {
         const texturedGroups = [...textured.values()].map((g) => ({
-          texture:       g.texture,
-          positions:     g.positions.subarray(0, g.len * 3),
-          normals:       g.normals.subarray(0, g.len * 3),
-          colors:        g.colors.subarray(0, g.len * 4),
-          uvs:           g.uvs.subarray(0, g.len * 2),
-          flags:         g.flags.subarray(0, g.len),
-          vertexCount:   g.len,
+          texture: g.texture,
+          positions: g.positions.subarray(0, g.len * 3),
+          normals: g.normals.subarray(0, g.len * 3),
+          colors: g.colors.subarray(0, g.len * 4),
+          uvs: g.uvs.subarray(0, g.len * 2),
+          flags: g.flags.subarray(0, g.len),
+          vertexCount: g.len,
           triangleCount: Math.floor(g.len / 3),
         }));
         const tvc = texturedGroups.reduce((s, g) => s + g.vertexCount, 0);
         const ttc = texturedGroups.reduce((s, g) => s + g.triangleCount, 0);
         return {
-          positions:            positions.subarray(0, _len * 3),
-          normals:              normals.subarray(0,   _len * 3),
-          colors:               colors.subarray(0,    _len * 4),
-          flags:                flags.subarray(0,     _len),
-          matIds:               matIds.subarray(0,    _len),
-          vertexCount:          _len,
-          triangleCount:        Math.floor(_len / 3),
-          texturedVertexCount:  tvc,
-          texturedTriangleCount:ttc,
-          visualVertexCount:    _len + tvc,
-          visualTriangleCount:  Math.floor(_len / 3) + ttc,
-          textured:             texturedGroups,
+          positions: positions.subarray(0, _len * 3),
+          normals: normals.subarray(0, _len * 3),
+          colors: colors.subarray(0, _len * 4),
+          flags: flags.subarray(0, _len),
+          matIds: matIds.subarray(0, _len),
+          vertexCount: _len,
+          triangleCount: Math.floor(_len / 3),
+          texturedVertexCount: tvc,
+          texturedTriangleCount: ttc,
+          visualVertexCount: _len + tvc,
+          visualTriangleCount: Math.floor(_len / 3) + ttc,
+          textured: texturedGroups,
         };
       },
     };
@@ -6968,8 +7575,12 @@ end`;
         };
       }
       const { positions, colors, ranges, directions, kinds, coneCos } = program._lightBufs;
-      positions.fill(0); colors.fill(0); ranges.fill(0);
-      directions.fill(0); kinds.fill(0); coneCos.fill(0);
+      positions.fill(0);
+      colors.fill(0);
+      ranges.fill(0);
+      directions.fill(0);
+      kinds.fill(0);
+      coneCos.fill(0);
       lights.forEach((light, index) => {
         positions.set(light.position || [0, 0, 0], index * 3);
         colors.set(light.color || [0, 0, 0], index * 3);
@@ -7025,7 +7636,7 @@ end`;
   function _mountViewport2dFallback(canvas, scene) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    canvas.__dtDispose = () => { };
+    canvas.__dtDispose = () => {};
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
@@ -7681,7 +8292,7 @@ end`;
       );
       if (!validate(bytes)) {
         _log.warn(`  disk cache rejected id=${id}: ${_sniffPayloadType(bytes)} ${bytes.length}B`);
-        invoke('remove_path', { path: _assetCachePath(id) }).catch(() => { });
+        invoke('remove_path', { path: _assetCachePath(id) }).catch(() => {});
         return null;
       }
       _log.fetch(`  ✓ disk cache id=${id} (${bytes.length}B)`);
@@ -8106,7 +8717,6 @@ end`;
 
       const float PI = 3.14159265359;
 
-      // ── Hash / noise ────────────────────────────────────────────────────────
       float hash21(vec2 p) {
         p = fract(p * vec2(127.1, 311.7));
         p += dot(p, p + 17.5);
@@ -8123,13 +8733,11 @@ end`;
         return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),
                    mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);
       }
-      // 4-octave FBM
       float fbm(vec2 p) {
         float v=0.0, a=0.5;
         for(int i=0;i<4;i++){v+=a*valueNoise2(p);p*=2.1;a*=0.5;}
         return v;
       }
-      // 3-D value noise for volume texturing
       float valueNoise3(vec3 p) {
         vec3 i = floor(p); vec3 f = fract(p);
         f = f*f*(3.0-2.0*f);
@@ -8139,17 +8747,13 @@ end`;
           mix(mix(hash31(i+vec3(0,0,1)),hash31(i+vec3(1,0,1)),f.x),
               mix(hash31(i+vec3(0,1,1)),hash31(i+vec3(1,1,1)),f.x),f.y),f.z);
       }
-
-      // ── Tangent frame ────────────────────────────────────────────────────────
+              
       void tangentFrame(vec3 n, out vec3 t, out vec3 b) {
         t = abs(n.y) < 0.85 ? vec3(0,1,0) : vec3(1,0,0);
         t = normalize(cross(t, n));
         b = cross(n, t);
       }
 
-      // ── Per-material PBR params: rough, metallic, f0, sssStrength ───────────
-      // matId: 0=plastic 1=wood 2=metal 3=concrete 4=brick 5=cobble
-      //        6=rock   7=fabric 8=diamondplate 9=limestone 10=asphalt 11=tiles
       vec4 matParams(int id) {
         // rough, metallic, f0, sss
         if (id ==  1) return vec4(0.78, 0.00, 0.04, 0.06); // wood
@@ -8166,7 +8770,6 @@ end`;
         return vec4(0.68, 0.00, 0.05, 0.04);               // plastic
       }
 
-      // ── Cook-Torrance BRDF helpers ───────────────────────────────────────────
       // GGX NDF
       float D_GGX(float ndh, float a2) {
         float d = ndh*ndh*(a2-1.0)+1.0;
@@ -8994,11 +9597,11 @@ end`;
       texture: _createGlTexture(gl, group.texture, onTextureReady),
       heightTexture: group.texture?.heightUrl
         ? _createGlTexture(
-          gl,
-          { key: `${group.texture.key}:height`, localUrl: group.texture.heightUrl },
-          onTextureReady,
-          [128, 128, 128, 255],
-        )
+            gl,
+            { key: `${group.texture.key}:height`, localUrl: group.texture.heightUrl },
+            onTextureReady,
+            [128, 128, 128, 255],
+          )
         : null,
       textureInfo: group.texture,
     };
@@ -9864,8 +10467,7 @@ end`;
         const value = await window.__TAURI__.core.invoke('datatree_node_value', {
           path: snapshot.storagePath,
           nodeId: node.id,
-          section: _nodeValueSection(section),
-          key,
+          property: key,
         });
         input.value = _formatFullValue(value);
         input.dataset.fullLoaded = 'true';
@@ -9930,7 +10532,7 @@ end`;
     const body = payload?.body || {};
     if (body.kind === 'saveinstance:done') _offerSavedGameImport(body);
   }
-  function handleBridgeError() { }
+  function handleBridgeError() {}
 
   return {
     init,

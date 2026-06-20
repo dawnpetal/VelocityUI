@@ -20,7 +20,19 @@ impl WorkspaceStateManager {
     }
 
     pub fn load_tree_state(&self, work_dir: &str) -> Option<TreeState> {
-        read_json(&Self::tree_path(work_dir).ok()?).ok()
+        let new_path = Self::tree_path(work_dir).ok()?;
+        if new_path.exists() {
+            return read_json(&new_path).ok();
+        }
+        let legacy = Self::legacy_tree_path(work_dir).ok()?;
+        if !legacy.exists() {
+            return None;
+        }
+        let data: TreeState = read_json(&legacy).ok()?;
+        if write_json(&new_path, &data).is_ok() {
+            let _ = std::fs::remove_file(&legacy);
+        }
+        Some(data)
     }
 
     pub fn save_timeline(
@@ -102,9 +114,17 @@ impl WorkspaceStateManager {
 
     fn tree_path(work_dir: &str) -> VelocityUIResult<PathBuf> {
         let key = Self::sanitize_key(work_dir);
+        let dir = paths::internals_dir()
+            .map_err(|e| VelocityUIError::Other(e.to_string()))?
+            .join("workspace");
+        std::fs::create_dir_all(&dir).map_err(VelocityUIError::Io)?;
+        Ok(dir.join(format!("{}.json", key)))
+    }
+
+    fn legacy_tree_path(work_dir: &str) -> VelocityUIResult<PathBuf> {
+        let key = Self::sanitize_key(work_dir);
         let internals =
             paths::internals_dir().map_err(|e| VelocityUIError::Other(e.to_string()))?;
-        std::fs::create_dir_all(&internals).map_err(VelocityUIError::Io)?;
         Ok(internals.join(format!("tree_{}.json", key)))
     }
 

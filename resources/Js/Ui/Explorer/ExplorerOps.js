@@ -118,10 +118,15 @@ const ExplorerOps = (() => {
           if (type === 'file') {
             const result = await fileManager.createFile(parentNode.path, name);
             workspaceHistory.recordCreate?.(result.path, false, '');
-            state.setActive(result.id, { permanent: true, keepTabs: true });
+            if (autoexec.isInsideProtectedArea(parentNode.path)) {
+              autoexec.invalidateRoot?.();
+            } else {
+              state.setActive(result.id, { permanent: true, keepTabs: true });
+            }
           } else {
             const path = await fileManager.createFolder(parentNode.path, name);
             workspaceHistory.recordCreate?.(path, true, '');
+            if (autoexec.isInsideProtectedArea(parentNode.path)) autoexec.invalidateRoot?.();
           }
           eventBus.emit('ui:refresh-tree');
         } catch (err) {
@@ -195,10 +200,20 @@ const ExplorerOps = (() => {
   async function _deleteNode(node) {
     try {
       const wasAutoexecScript = autoexec.containsScript?.(node.path);
+      const isAutoexecNode = autoexec.isInsideProtectedArea?.(node.path);
       const result = await fileManager.moveToTrash(node.path);
       workspaceHistory.recordTrash?.(node.path, result?.trashPath, node.type === 'folder');
       if (wasAutoexecScript) autoexec.sync?.({ createSource: false }).catch(() => {});
-      if (node.type === 'file') {
+      if (isAutoexecNode) {
+        autoexec.invalidateRoot?.();
+        if (node.type === 'file') {
+          if (state.openTabIds.includes(node.id)) {
+            editor.destroyTab(node.id);
+            state.closeTab(node.id);
+          }
+          state.removeFile(node.id);
+        }
+      } else if (node.type === 'file') {
         if (state.openTabIds.includes(node.id)) {
           editor.destroyTab(node.id);
           state.closeTab(node.id);

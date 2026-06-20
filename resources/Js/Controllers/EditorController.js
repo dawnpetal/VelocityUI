@@ -17,6 +17,10 @@ const editorController = (() => {
       const match = state.findByPath(id);
       if (match) fileId = match.id;
     }
+    if (!state.getFile(fileId)) {
+      console_.log(`openFile: unresolved id ${id}, ignoring stale reference`, 'warn');
+      return;
+    }
     const file = state.getFile(fileId);
     const wasOpen = state.openTabIds.includes(fileId);
     state.setActive(fileId);

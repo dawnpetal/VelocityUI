@@ -12,7 +12,7 @@ use crate::paths;
 
 use super::extension::ExecutorExtension;
 
-const PORTS: &[u16] = &[8392, 8393, 8394, 8395, 8396, 8397];
+const PORTS: &[u16] = &[8390, 8391, 8392, 8393, 8394, 8395, 8396, 8397, 8398, 8399, 8400, 8401, 8402, 8403, 8404, 8405, 8406, 8407, 8408, 8409, 8410, 8411, 8412, 8413, 8414, 8415, 8416, 8417, 8418, 8419, 8420];
 const SCRIPT_PREFIX: &str = "OpiumwareScript ";
 const NULL_SIGNAL: &str = "NULL";
 
@@ -52,7 +52,7 @@ impl OpiumwareExtension {
         }
 
         Err(VelocityUIError::NotFound(format!(
-            "Opiumware not found on ports {:?}",
+            "Opiumware not found on ports {:?}. Make sure roblox is open!",
             PORTS
         )))
     }

@@ -47,7 +47,6 @@ const tabs = (() => {
         requestAnimationFrame(() =>
           tab.scrollIntoView({
             inline: 'nearest',
-            behavior: 'smooth',
           }),
         );
     });

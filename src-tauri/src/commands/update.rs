@@ -115,6 +115,7 @@ if cp -R "$SRC" "$DEST" >>"$LOG" 2>&1; then
   xattr -cr "$DEST" >>"$LOG" 2>&1 || true
   open "$DEST" >>"$LOG" 2>&1 || true
   rm -rf "$BACKUP" >>"$LOG" 2>&1 || true
+  rm -rf "$(dirname "$(dirname "$(dirname "$SRC")")")" >>"$LOG" 2>&1 || true
 else
   rm -rf "$DEST" >>"$LOG" 2>&1 || true
   if [ -d "$BACKUP" ]; then

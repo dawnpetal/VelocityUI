@@ -36,23 +36,31 @@ const pinboard = (() => {
 
   async function _save() {
     try {
-      const dir = paths.internals;
+      const path = `${paths.internals}/state/pinboard.json`;
       await window.__TAURI__.core.invoke('write_text_file', {
-        path: `${dir}/pinboard.json`,
+        path,
         content: JSON.stringify({ snippets: _snippets, sortMode: _sortMode }),
       });
     } catch {}
   }
 
   async function _load() {
+    const newPath = `${paths.internals}/state/pinboard.json`;
+    const legacyPath = `${paths.internals}/pinboard.json`;
     try {
-      const dir = paths.internals;
-      const raw = await window.__TAURI__.core.invoke('read_text_file', {
-        path: `${dir}/pinboard.json`,
-      });
+      const raw = await window.__TAURI__.core.invoke('read_text_file', { path: newPath });
       const data = JSON.parse(raw);
       _snippets = Array.isArray(data) ? data : (data.snippets ?? []);
       _sortMode = data.sortMode ?? 'manual';
+      return;
+    } catch {}
+    try {
+      const raw = await window.__TAURI__.core.invoke('read_text_file', { path: legacyPath });
+      const data = JSON.parse(raw);
+      _snippets = Array.isArray(data) ? data : (data.snippets ?? []);
+      _sortMode = data.sortMode ?? 'manual';
+      await _save();
+      await window.__TAURI__.core.invoke('remove_path', { path: legacyPath }).catch(() => {});
     } catch {
       _snippets = [];
     }

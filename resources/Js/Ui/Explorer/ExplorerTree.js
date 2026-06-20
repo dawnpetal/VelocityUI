@@ -564,6 +564,7 @@ const ExplorerTree = (() => {
     row.appendChild(indent);
     row.addEventListener('click', async (e) => {
       e.stopPropagation();
+      if (ExplorerDnd.consumeClickSuppression()) return;
       if (e.ctrlKey || e.metaKey) {
         if (_selection.has(node.id)) {
           _selection.delete(node.id);

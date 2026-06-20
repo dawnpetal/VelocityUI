@@ -96,13 +96,17 @@ impl IconThemeManager {
     }
 
     fn save(&self) -> VelocityUIResult<()> {
-        std::fs::create_dir_all(&self.internals_dir).map_err(VelocityUIError::Io)?;
+        let cache_dir = self.internals_dir.join("cache");
+        std::fs::create_dir_all(&cache_dir).map_err(VelocityUIError::Io)?;
         let state = StateFile {
             active: BUILTIN_ID.to_string(),
             installed: vec![BUILTIN_ID.to_string()],
         };
         let content = serde_json::to_string(&state).map_err(VelocityUIError::Json)?;
-        std::fs::write(self.internals_dir.join("icon_themes.json"), content)
-            .map_err(VelocityUIError::Io)
+        let legacy = self.internals_dir.join("icon_themes.json");
+        if legacy.exists() {
+            let _ = std::fs::remove_file(&legacy);
+        }
+        std::fs::write(cache_dir.join("icon_themes.json"), content).map_err(VelocityUIError::Io)
     }
 }

@@ -1663,7 +1663,10 @@ const AiHelper = (() => {
     const panel = document.getElementById('aiSidePanel');
     const toggle = document.getElementById('btnToggleAiPanel');
     toggle?.classList.toggle('unavailable', !available);
-    toggle?.toggleAttribute('disabled', !available);
+    if (toggle) {
+      if (!available) toggle.setAttribute('disabled', '');
+      else toggle.removeAttribute('disabled');
+    }
     if (!available && panel) {
       panel.classList.add('hidden');
       panel.classList.add('unavailable');

@@ -102,7 +102,9 @@ pub fn show_explorer_menu(
         let _ = win.emit("explorer-menu-event", event.id().0.clone());
     });
 
-    window.popup_menu(&menu).map_err(|e: tauri::Error| e.to_string())?;
+    window
+        .popup_menu(&menu)
+        .map_err(|e: tauri::Error| e.to_string())?;
 
     Ok(())
 }

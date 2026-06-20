@@ -175,13 +175,23 @@ const appController = (() => {
 
   function _initBridge() {
     eventBus.on('ui:render-editor', () => editorController.renderEditor());
-    eventBus.on('ui:refresh-tree', () => workspaceController.refreshTree());
+    eventBus.on('ui:refresh-tree', () => {
+      workspaceController.refreshTree();
+      autoexec.renderSection?.();
+    });
 
     outline.init();
 
     eventBus.on('workspace:loaded', ({ folderPath }) => {
       const el = document.getElementById('titlebarWorkspace');
       if (el) el.textContent = folderPath ? helpers.basename(folderPath) : 'No folder open';
+      autoexec.invalidateRoot?.();
+      autoexec.scanForLegacyFolders?.();
+    });
+
+    eventBus.on('tree:refreshed', async () => {
+      await autoexec.refreshRoot?.();
+      autoexec.scanForLegacyFolders?.();
     });
 
     eventBus.on('ui:panel-toggled', () => _scheduleEditorRelayout());
@@ -474,10 +484,49 @@ const appController = (() => {
     ];
   }
 
+  function _fuzzyScore(query, target) {
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+    let qi = 0,
+      score = 0,
+      consecutive = 0,
+      lastMatch = -1;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+      if (t[ti] === q[qi]) {
+        consecutive = lastMatch === ti - 1 ? consecutive + 1 : 1;
+        score += consecutive * 2 + (ti === 0 ? 4 : 0);
+        lastMatch = ti;
+        qi++;
+      } else {
+        consecutive = 0;
+      }
+    }
+    return qi === q.length ? score : -1;
+  }
+
+  function _fuzzyHighlight(query, text) {
+    const q = query.toLowerCase();
+    const t = text.toLowerCase();
+    const indices = new Set();
+    let qi = 0;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+      if (t[ti] === q[qi]) {
+        indices.add(ti);
+        qi++;
+      }
+    }
+    if (qi < q.length) return helpers.escapeHtml(text);
+    return [...text]
+      .map((ch, i) =>
+        indices.has(i) ? `<mark>${helpers.escapeHtml(ch)}</mark>` : helpers.escapeHtml(ch),
+      )
+      .join('');
+  }
+
   function _commandSymbolItems(query) {
     const model = editor.getInstance?.()?.getModel?.();
     if (!model || typeof LuaIntelligence === 'undefined') return [];
-    const q = query.replace(/^[@#]/, '').trim().toLowerCase();
+    const q = query.replace(/^[@#]/, '').trim();
     if (!q || (!query.startsWith('@') && q.length < 2)) return [];
     const version = model.getAlternativeVersionId?.() ?? model.getVersionId?.() ?? 0;
     const cacheKey = `${model.uri?.toString?.() ?? 'model'}:${version}`;
@@ -486,10 +535,13 @@ const appController = (() => {
       _commandSymbolCache = LuaIntelligence.analyze(model, true).symbols || [];
     }
     return _commandSymbolCache
-      .filter((sym) => `${sym.name} ${sym.kind} ${sym.detail || ''}`.toLowerCase().includes(q))
+      .map((sym) => ({ sym, score: _fuzzyScore(q, `${sym.name} ${sym.kind} ${sym.detail || ''}`) }))
+      .filter(({ score }) => score >= 0)
+      .sort((a, b) => b.score - a.score)
       .slice(0, 10)
-      .map((sym) => ({
+      .map(({ sym }) => ({
         label: sym.name,
+        labelHtml: _fuzzyHighlight(q, sym.name),
         hint: `${sym.kind} · line ${sym.line}`,
         key: '@',
         run: () => editor.goToLineColumn?.(sym.line, sym.column || 1),
@@ -497,15 +549,20 @@ const appController = (() => {
   }
 
   function _commandFileItems(query) {
-    const q = query.toLowerCase();
+    const q = query;
     return state.files
-      .filter(
-        (file) =>
-          file.name.toLowerCase().includes(q) || (file.path ?? '').toLowerCase().includes(q),
-      )
+      .map((file) => {
+        const nameScore = _fuzzyScore(q, file.name);
+        const pathScore = _fuzzyScore(q, file.path ?? '');
+        const score = Math.max(nameScore, pathScore);
+        return { file, score, useNameHighlight: nameScore >= pathScore };
+      })
+      .filter(({ score }) => score >= 0)
+      .sort((a, b) => b.score - a.score)
       .slice(0, 20)
-      .map((file) => ({
+      .map(({ file, useNameHighlight }) => ({
         label: file.name,
+        labelHtml: useNameHighlight ? _fuzzyHighlight(q, file.name) : helpers.escapeHtml(file.name),
         hint: file.path
           ? file.path.replace(state.workDir ?? '', '').replace(/^\/+/, '')
           : 'Open file',
@@ -514,13 +571,21 @@ const appController = (() => {
   }
 
   function _rankCommandItems(query) {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     const actions = _commandActions();
     const commandMatches = !q
       ? actions
-      : actions.filter((item) =>
-          `${item.label} ${item.hint} ${item.key ?? ''}`.toLowerCase().includes(q),
-        );
+      : actions
+          .map((item) => ({
+            item,
+            score: _fuzzyScore(q, `${item.label} ${item.hint ?? ''} ${item.key ?? ''}`),
+          }))
+          .filter(({ score }) => score >= 0)
+          .sort((a, b) => b.score - a.score)
+          .map(({ item }) => ({
+            ...item,
+            labelHtml: _fuzzyHighlight(q, item.label),
+          }));
     const symbolMatches = q ? _commandSymbolItems(q) : [];
     const fileMatches = q
       ? _commandFileItems(q)
@@ -567,7 +632,7 @@ const appController = (() => {
       .map(
         (item, i) => `
       <button class="command-item${i === _commandIndex ? ' active' : ''}" data-index="${i}" type="button">
-        <span class="command-title">${helpers.escapeHtml(item.label)}</span>
+        <span class="command-title">${item.labelHtml ?? helpers.escapeHtml(item.label)}</span>
         <span class="command-hint">${helpers.escapeHtml(item.hint ?? '')}</span>
         ${item.key ? `<span class="command-key">${helpers.escapeHtml(item.key)}</span>` : ''}
       </button>
@@ -716,10 +781,8 @@ const appController = (() => {
         }
 
         if (view === currentView) {
-          // Clicking the active tab: VS Code collapses the sidebar
           _setSidebarHidden(!_isSidebarHidden());
         } else {
-          // Switching to a different tab: ensure sidebar is visible
           if (_isSidebarHidden() && !_isSidebarLocked()) _setSidebarHidden(false);
           _switchView(view);
         }

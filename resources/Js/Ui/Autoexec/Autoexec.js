@@ -1,30 +1,23 @@
 const autoexec = (() => {
-  const FOLDER_NAME = 'Autoexecute';
   const META_FILE = 'autoexec_meta.json';
   const MULTIEXEC_FILE = 'VelocityUI_multiexec.lua';
+  const LEGACY_FOLDER_NAME = 'Autoexecute';
 
   let _enabled = false;
   let _inited = false;
   let _loadingTree = false;
   let _syncedFiles = new Set();
-  let _workspaceMigrated = false;
+  let _migratedRoots = new Set();
   let _selection = new Set();
   let _lastClickedId = null;
+  let _root = null;
 
-  function _legacyDir() {
+  function _storeDir() {
     return `${paths.internals}/autoexec_scripts`;
   }
 
   function _metaPath() {
     return `${paths.internals}/${META_FILE}`;
-  }
-
-  function _workspaceDir(baseDir = state.workDir) {
-    return baseDir ? `${baseDir}/${FOLDER_NAME}` : null;
-  }
-
-  function _managedDir(baseDir = state.workDir) {
-    return _workspaceDir(baseDir) ?? _legacyDir();
   }
 
   async function _executorDir() {
@@ -76,50 +69,42 @@ const autoexec = (() => {
     } catch {}
   }
 
-  async function _copyMissingLuaFiles(srcDir, destDir) {
+  async function _moveMissingLuaFiles(srcDir, destDir) {
     const files = await _listLuaFiles(srcDir);
+    let moved = 0;
     for (const file of files) {
       const dest = `${destDir}/${file.entry}`;
       try {
-        const stat = await window.__TAURI__.core.invoke('stat_path', { path: dest });
-        if (stat.exists) continue;
-        await _write(dest, await _read(`${srcDir}/${file.entry}`));
+        const stat = await _stat(dest);
+        if (!stat.exists) await _write(dest, await _read(`${srcDir}/${file.entry}`));
+        await _remove(`${srcDir}/${file.entry}`);
+        moved++;
       } catch {}
     }
+    return moved;
   }
 
-  async function ensureWorkspaceFolder(baseDir = state.workDir, options = {}) {
-    await init();
-    const dir = _workspaceDir(baseDir);
-    if (!dir) return null;
-    const before = await _stat(dir);
-    await _ensureDir(dir);
-    const shouldMigrate = options.migrate !== false && !_workspaceMigrated && !before.exists;
-    if (shouldMigrate) {
-      await _copyMissingLuaFiles(_legacyDir(), dir);
-      try {
-        await _copyMissingLuaFiles(await _executorDir(), dir);
-      } catch {}
-      _workspaceMigrated = true;
+  async function _migrateLegacyRootFolders() {
+    const dest = _storeDir();
+    await _ensureDir(dest);
+    let totalMoved = 0;
+    for (const root of state.roots ?? []) {
+      if (!root?.path || _migratedRoots.has(root.path)) continue;
+      const legacy = `${root.path}/${LEGACY_FOLDER_NAME}`;
+      const stat = await _stat(legacy);
+      if (stat.exists) totalMoved += await _moveMissingLuaFiles(legacy, dest);
+      _migratedRoots.add(root.path);
+    }
+    if (totalMoved > 0) {
       await _saveMeta();
+      _root = null;
+      eventBus.emit('ui:refresh-tree');
+      toast.show(
+        `Moved ${totalMoved} autoexec script${totalMoved === 1 ? '' : 's'} to internal storage`,
+        'info',
+        2400,
+      );
     }
-    return dir;
-  }
-
-  async function _sourceDir(baseDir = state.workDir, options = {}) {
-    const workspaceDir = _workspaceDir(baseDir);
-    if (!workspaceDir) {
-      const legacy = _legacyDir();
-      await _ensureDir(legacy);
-      return legacy;
-    }
-    const stat = await _stat(workspaceDir);
-    if (!stat.exists) {
-      if (options.create === false) return null;
-      return ensureWorkspaceFolder(baseDir, options);
-    }
-    const dir = _managedDir(baseDir);
-    return dir;
   }
 
   async function _loadMeta() {
@@ -127,11 +112,11 @@ const autoexec = (() => {
       const meta = JSON.parse(await _read(_metaPath()));
       _enabled = !!meta.enabled;
       _syncedFiles = new Set(Array.isArray(meta.files) ? meta.files : []);
-      _workspaceMigrated = !!meta.workspaceMigrated;
+      _migratedRoots = new Set(Array.isArray(meta.migratedRoots) ? meta.migratedRoots : []);
     } catch {
       _enabled = false;
       _syncedFiles = new Set();
-      _workspaceMigrated = false;
+      _migratedRoots = new Set();
     }
   }
 
@@ -142,7 +127,7 @@ const autoexec = (() => {
         JSON.stringify({
           enabled: _enabled,
           files: [..._syncedFiles].sort(),
-          workspaceMigrated: _workspaceMigrated,
+          migratedRoots: [..._migratedRoots],
         }),
       );
     } catch {}
@@ -151,14 +136,13 @@ const autoexec = (() => {
 
   async function sync(options = {}) {
     await init();
-    const sourceDir = await _sourceDir(state.workDir, { create: options.createSource !== false });
-    const executorDir = await _executorDir();
-    if (!sourceDir) {
-      for (const name of _syncedFiles) await _remove(`${executorDir}/${name}`);
-      _syncedFiles = new Set();
-      await _saveMeta();
-      return;
+    if (options.createSource === false) {
+      const stat = await _stat(_storeDir());
+      if (!stat.exists) return;
     }
+    const sourceDir = _storeDir();
+    await _ensureDir(sourceDir);
+    const executorDir = await _executorDir();
     const files = await _listLuaFiles(sourceDir);
     const currentNames = new Set(files.map((file) => file.entry));
 
@@ -187,6 +171,7 @@ const autoexec = (() => {
     if (_inited) return;
     await _loadMeta();
     _inited = true;
+    await _migrateLegacyRootFolders();
   }
 
   function _logStatus(message, type = 'info') {
@@ -224,29 +209,47 @@ const autoexec = (() => {
   }
 
   function isProtectedPath(path) {
-    const dir = _workspaceDir();
-    return !!dir && path === dir;
+    return path === _storeDir();
   }
 
   function isInsideProtectedArea(path) {
-    const dir = _workspaceDir();
-    return !!dir && (path === dir || path.startsWith(dir + '/'));
+    const dir = _storeDir();
+    return path === dir || path.startsWith(dir + '/');
   }
 
   function containsScript(path) {
     return isInsideProtectedArea(path) && path.endsWith('.lua');
   }
 
-  function isProtectedRootNode(node) {
-    return !!node && node.type === 'folder' && isProtectedPath(node.path);
+  function isProtectedRootNode() {
+    return false;
+  }
+
+  function _registerSyntheticTree(node) {
+    if (node.type === 'file') {
+      state.addFile(node.id, node.name, node.path, null, {
+        size: node.size ?? null,
+        ...(LangMap.inferOverride?.(node.name, node.path) || {}),
+      });
+    } else {
+      for (const child of node.children ?? []) _registerSyntheticTree(child);
+    }
+  }
+
+  async function _loadRoot() {
+    await init();
+    const dir = _storeDir();
+    await _ensureDir(dir);
+    const tree = await window.__TAURI__.core.invoke('build_file_tree', { dirPath: dir });
+    _registerSyntheticTree(tree);
+    tree.open = true;
+    tree.name = 'Autoexecute';
+    _root = tree;
+    return _root;
   }
 
   function rootNode() {
-    for (const root of state.roots ?? []) {
-      const match = (root.children ?? []).find((child) => isProtectedRootNode(child));
-      if (match) return match;
-    }
-    return null;
+    return _root;
   }
 
   function _scriptCount(node) {
@@ -329,6 +332,7 @@ const autoexec = (() => {
     row.appendChild(indent);
     row.addEventListener('click', async (event) => {
       event.stopPropagation();
+      if (ExplorerDnd.consumeClickSuppression()) return;
       const visible = _visibleNodes(rootNode());
       if (event.ctrlKey || event.metaKey) {
         if (_selection.has(node.id)) _selection.delete(node.id);
@@ -439,11 +443,22 @@ const autoexec = (() => {
     const count = document.getElementById('autoexecCount');
     const toggle = document.getElementById('btnAutoexecToggle');
     if (!section || !tree) return;
+    section.hidden = false;
     const node = rootNode();
-    section.hidden = !state.workDir || !node;
-    if (!state.workDir || !node) return;
+    if (!node) {
+      if (!_loadingTree) {
+        _loadingTree = true;
+        _loadRoot().finally(() => {
+          _loadingTree = false;
+          renderSection();
+        });
+      }
+      return;
+    }
     const visibleIds = new Set(_visibleNodes(node).map((item) => item.id));
     _selection = new Set([..._selection].filter((id) => visibleIds.has(id)));
+    const activeId = state.activeFileId;
+    if (activeId && !visibleIds.has(activeId)) _selection.clear();
     if (node.childrenLoaded === false && !_loadingTree) {
       _loadingTree = true;
       fileManager.ensureChildren?.(node).finally(() => {
@@ -481,12 +496,7 @@ const autoexec = (() => {
     });
     document.getElementById('btnAutoexecNew')?.addEventListener('click', async (event) => {
       event.stopPropagation();
-      let node = rootNode();
-      if (!node) {
-        await ensureWorkspaceFolder();
-        await workspaceController.refreshTree?.();
-        node = rootNode();
-      }
+      const node = rootNode();
       if (node) ExplorerOps.startCreate(node, 'file');
     });
     document.getElementById('btnAutoexecToggle')?.addEventListener('click', (event) => {
@@ -512,6 +522,28 @@ const autoexec = (() => {
     eventBus.on('file:changed', renderSection);
     eventBus.on('file:closed', renderSection);
     syncChrome();
+    renderSection();
+  }
+
+  async function scanForLegacyFolders() {
+    await init();
+    await _migrateLegacyRootFolders();
+  }
+
+  function invalidateRoot() {
+    _root = null;
+  }
+
+  async function refreshRoot() {
+    _root = null;
+    _selection.clear();
+    _loadingTree = true;
+    try {
+      await _loadRoot();
+    } finally {
+      _loadingTree = false;
+    }
+    renderSection();
   }
 
   return {
@@ -524,10 +556,12 @@ const autoexec = (() => {
     isInsideProtectedArea,
     containsScript,
     isProtectedRootNode,
-    ensureWorkspaceFolder,
     rootNode,
     renderSection,
     syncChrome,
     initSection,
+    scanForLegacyFolders,
+    invalidateRoot,
+    refreshRoot,
   };
 })();

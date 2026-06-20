@@ -260,7 +260,9 @@ const workspaceController = (() => {
     }
     const choice = await modal.ask(
       'Open Folder',
-      `Open <strong>${helpers.escapeHtml(name)}</strong>`,
+      `What do you want to do with <strong>${helpers.escapeHtml(name)}</strong>?<br><br>
+      <div class="modal-option-hint"><strong>Open</strong> — closes the current workspace and opens this folder on its own.</div>
+      <div class="modal-option-hint"><strong>Add to workspace</strong> — adds it alongside your current folders. Nothing is copied or moved — files are read directly from where they are, on demand.</div>`,
       ['Open', 'Add to workspace', 'Cancel'],
     );
     if (!choice || choice === 'Cancel') return;

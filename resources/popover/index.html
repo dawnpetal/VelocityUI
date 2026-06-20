@@ -337,40 +337,9 @@
       color: var(--text-4);
     }
 
-    #recents {
-      display: flex;
-      gap: 6px;
-      padding: 7px 10px;
-      overflow-x: auto;
-      flex-shrink: 0;
-    }
-
-    #recents::-webkit-scrollbar,
     #list::-webkit-scrollbar,
     #command-list::-webkit-scrollbar {
       display: none;
-    }
-
-    .chip {
-      max-width: 130px;
-      padding: 5px 10px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.018);
-      color: var(--text-3);
-      font-size: 10px;
-      font-weight: 650;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      cursor: pointer;
-      transition: color 140ms var(--ease), background 140ms var(--ease), border-color 140ms var(--ease);
-    }
-
-    .chip:hover {
-      color: var(--text-2);
-      background: var(--card);
-      border-color: var(--line-hi);
     }
 
     #list {
@@ -659,7 +628,7 @@
         <div id="search-container">
           <input type="text" id="search-input" placeholder="Search scripts" spellcheck="false" autocomplete="off">
         </div>
-        <div id="recents"></div>
+        
         <div id="list">
           <div class="loader-overlay" id="list-loader">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"

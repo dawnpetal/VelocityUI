@@ -1,3 +1,55 @@
+if (!Promise.allSettled) {
+  Promise.allSettled = (promises) =>
+    Promise.all(
+      promises.map((p) =>
+        Promise.resolve(p).then(
+          (value) => ({ status: 'fulfilled', value }),
+          (reason) => ({ status: 'rejected', reason }),
+        ),
+      ),
+    );
+}
+
+if (!Object.fromEntries) {
+  Object.fromEntries = (iterable) => {
+    const obj = {};
+    for (const [key, value] of iterable) obj[key] = value;
+    return obj;
+  };
+}
+
+if (!Array.prototype.flat) {
+  Array.prototype.flat = function (depth) {
+    const d = depth === undefined ? 1 : Math.floor(depth);
+    if (d < 1) return this.slice();
+    return (function flatten(arr, currentDepth) {
+      const result = [];
+      for (let i = 0; i < arr.length; i++) {
+        if (Array.isArray(arr[i]) && currentDepth > 0)
+          flatten(arr[i], currentDepth - 1).forEach((v) => result.push(v));
+        else result.push(arr[i]);
+      }
+      return result;
+    })(this, d);
+  };
+}
+
+if (!window.requestIdleCallback) {
+  window.requestIdleCallback = (cb, options) => {
+    const start = Date.now();
+    const timeout = options?.timeout ?? 1;
+    return setTimeout(() => {
+      cb({
+        didTimeout: Date.now() - start >= timeout,
+        timeRemaining() {
+          return Math.max(0, 50 - (Date.now() - start));
+        },
+      });
+    }, 1);
+  };
+  window.cancelIdleCallback = clearTimeout;
+}
+
 const scheduler = (() => {
   function frame(fn) {
     let raf = 0;

@@ -9,7 +9,6 @@ let _validCache = null;
 let _tickTimer = null;
 let _allScripts = [];
 let _pinned = _readStoredList('v_p');
-let _recents = _readStoredList('v_r');
 let _isRefreshing = false;
 
 const COMMANDS = [
@@ -249,7 +248,6 @@ const el = {
   tabScripts: document.getElementById('tab-scripts'),
   tabCommands: document.getElementById('tab-commands'),
   commandList: document.getElementById('command-list'),
-  recents: document.getElementById('recents'),
   empty: document.getElementById('empty'),
   count: document.getElementById('count'),
   search: document.getElementById('search-input'),
@@ -302,22 +300,6 @@ function _updateRingsFromCache(cache) {
   setRing(el.ringD, el.ringDN, _countFrom(cache?.daily_counts, dayKey()), DAILY_LIMIT);
 }
 
-function renderRecents() {
-  el.recents.innerHTML = '';
-  if (!_recents.length) return (el.recents.style.display = 'none');
-  el.recents.style.display = 'flex';
-  _recents.forEach((name) => {
-    const chip = document.createElement('div');
-    chip.className = 'chip';
-    chip.textContent = name;
-    chip.onclick = () => {
-      const s = _allScripts.find((x) => x.name === name);
-      if (s) runScript(s);
-    };
-    el.recents.appendChild(chip);
-  });
-}
-
 async function _recordInject() {
   const [h, d] = await invoke('record_inject_cmd', {
     hourKey: hourKey(),
@@ -334,9 +316,6 @@ async function runScript(s) {
   try {
     await invoke('inject_script', { code: s.content });
     await _recordInject();
-    _recents = [s.name, ..._recents.filter((x) => x !== s.name)].slice(0, 6);
-    localStorage.setItem('v_r', JSON.stringify(_recents));
-    renderRecents();
     el.status.textContent = 'Success';
   } catch (e) {
     console.error('Script injection failed:', e);
@@ -534,7 +513,6 @@ async function refresh(force = false) {
 
     _allScripts = await invoke('get_scripts').catch(() => []);
     renderScripts(el.search.value);
-    renderRecents();
   } finally {
     _isRefreshing = false;
     el.listLoader.classList.remove('active');

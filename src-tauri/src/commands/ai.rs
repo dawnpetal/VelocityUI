@@ -145,18 +145,37 @@ impl Default for AiConfig {
 }
 
 fn config_path() -> Result<std::path::PathBuf, String> {
+    let state_dir = crate::paths::internals_dir()
+        .map_err(|e| e.to_string())?
+        .join("state");
+    std::fs::create_dir_all(&state_dir).map_err(|e| e.to_string())?;
+    Ok(state_dir.join(AI_CONFIG_FILE))
+}
+
+fn legacy_config_path() -> Option<std::path::PathBuf> {
     crate::paths::internals_dir()
-        .map(|dir| dir.join(AI_CONFIG_FILE))
-        .map_err(|e| e.to_string())
+        .ok()
+        .map(|d| d.join(AI_CONFIG_FILE))
 }
 
 fn load_config() -> AiConfig {
-    let Ok(path) = config_path() else {
+    let Ok(new_path) = config_path() else {
         return AiConfig::default();
     };
-    let mut config = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<AiConfig>(&raw).ok())
+    let raw = if new_path.exists() {
+        std::fs::read_to_string(&new_path).ok()
+    } else {
+        legacy_config_path()
+            .filter(|p| p.exists())
+            .and_then(|legacy| {
+                let content = std::fs::read_to_string(&legacy).ok()?;
+                let _ = std::fs::copy(&legacy, &new_path);
+                let _ = std::fs::remove_file(&legacy);
+                Some(content)
+            })
+    };
+    let mut config = raw
+        .and_then(|r| serde_json::from_str::<AiConfig>(&r).ok())
         .unwrap_or_default();
     normalize_config(&mut config);
     config
@@ -174,7 +193,10 @@ fn save_config_file(config: &AiConfig) -> Result<(), String> {
 }
 
 fn normalize_config(config: &mut AiConfig) {
-    if !matches!(config.codex_sandbox.as_str(), "read-only" | "workspace-write") {
+    if !matches!(
+        config.codex_sandbox.as_str(),
+        "read-only" | "workspace-write"
+    ) {
         config.codex_sandbox = default_codex_sandbox();
     }
     if config.model.trim().is_empty() {
@@ -1015,7 +1037,11 @@ Cursor suffix:
 #[tauri::command]
 pub fn ai_get_config() -> Result<AiConfigState, String> {
     let config = load_config();
-    let has_claude_key = config.claude_api_key.as_deref().map(str::trim).is_some_and(|k| !k.is_empty());
+    let has_claude_key = config
+        .claude_api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|k| !k.is_empty());
     Ok(AiConfigState {
         resolved_codex_path: resolve_codex_path(&config)
             .map(|path| path.to_string_lossy().into_owned()),
@@ -1029,7 +1055,11 @@ pub fn ai_get_config() -> Result<AiConfigState, String> {
 pub fn ai_save_config(mut config: AiConfig) -> Result<AiConfigState, String> {
     normalize_config(&mut config);
     save_config_file(&config)?;
-    let has_claude_key = config.claude_api_key.as_deref().map(str::trim).is_some_and(|k| !k.is_empty());
+    let has_claude_key = config
+        .claude_api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|k| !k.is_empty());
     Ok(AiConfigState {
         resolved_codex_path: resolve_codex_path(&config)
             .map(|path| path.to_string_lossy().into_owned()),
@@ -1695,7 +1725,12 @@ For Lua/Luau code: prefer Lua 5.1-compatible syntax unless the existing code use
             .and_then(|blocks| {
                 blocks.iter().find_map(|block| {
                     (block.get("type").and_then(Value::as_str) == Some("text"))
-                        .then(|| block.get("text").and_then(Value::as_str).map(str::to_string))
+                        .then(|| {
+                            block
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
                         .flatten()
                 })
             })
@@ -1704,7 +1739,14 @@ For Lua/Luau code: prefer Lua 5.1-compatible syntax unless the existing code use
         let usage = data.get("usage").cloned();
 
         emit_stream(app, &request_id, "message", None, Some(text.clone()), None);
-        emit_stream(app, &request_id, "completed", None, Some(text.clone()), None);
+        emit_stream(
+            app,
+            &request_id,
+            "completed",
+            None,
+            Some(text.clone()),
+            None,
+        );
 
         Ok((text, usage))
     };

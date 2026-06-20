@@ -1,37 +1,56 @@
 const ExplorerDnd = (() => {
+  const DRAG_THRESHOLD = 4;
+
   let _handlingDrop = false;
   let _autoExpandTimer = null;
   let _autoExpandTargetId = null;
   let _ghostEl = null;
   let _currentDragOverEl = null;
   let _nativeDropReady = false;
+  let _rafPending = false;
+  let _pendingFeedback = null;
+  let _cachedInd = null;
+  let _cachedTree = null;
+  let _lastZoneKey = '';
+  let _suppressClick = false;
+
+  let _activePointerId = null;
+  let _activeRow = null;
+  let _dragNodes = [];
+  let _dragStartX = 0;
+  let _dragStartY = 0;
+  let _dragging = false;
+  let _lastHit = null;
+
   function _getIndicator() {
-    const tree = document.getElementById('fileTree');
-    if (!tree) return null;
-    let ind = tree.querySelector('.tree-drop-line');
+    if (_cachedInd && _cachedTree?.contains(_cachedInd)) return _cachedInd;
+    _cachedTree = document.getElementById('fileTree');
+    if (!_cachedTree) return null;
+    let ind = _cachedTree.querySelector('.tree-drop-line');
     if (!ind) {
       ind = document.createElement('div');
       ind.className = 'tree-drop-line';
-      ind.style.display = 'none';
-      tree.appendChild(ind);
+      ind.style.cssText = 'display:none;';
+      _cachedTree.appendChild(ind);
     }
+    _cachedInd = ind;
     return ind;
   }
   function _showDropLine(row, edge) {
     const ind = _getIndicator();
-    const tree = document.getElementById('fileTree');
+    const tree = _cachedTree;
     if (!ind || !tree || !row) return;
     const treeRect = tree.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
     const indentPx = parseInt(row.querySelector('.tree-indent')?.style.paddingLeft || '6', 10) || 6;
+    const top = (edge === 'before' ? rowRect.top : rowRect.bottom) - treeRect.top + tree.scrollTop;
     ind.style.left = indentPx + 'px';
     ind.style.right = '4px';
-    ind.style.top =
-      (edge === 'before' ? rowRect.top : rowRect.bottom) - treeRect.top + tree.scrollTop + 'px';
+    ind.style.top = top + 'px';
     ind.style.display = 'block';
   }
   function _hideDropLine() {
-    const ind = document.getElementById('fileTree')?.querySelector('.tree-drop-line');
+    const ind = _cachedInd ?? document.getElementById('fileTree')?.querySelector('.tree-drop-line');
     if (ind) ind.style.display = 'none';
   }
   function _clearDragOver() {
@@ -50,6 +69,10 @@ const ExplorerDnd = (() => {
   function _clearAll() {
     _hideDropLine();
     _clearDragOver();
+    _rafPending = false;
+    _pendingFeedback = null;
+    _lastZoneKey = '';
+    document.getElementById('fileTree')?.classList.remove('tree-drop-target');
   }
   function _clearAutoExpand() {
     clearTimeout(_autoExpandTimer);
@@ -75,6 +98,11 @@ const ExplorerDnd = (() => {
     el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;pointer-events:none;z-index:9999;';
     document.body.appendChild(el);
     return el;
+  }
+  function _moveGhost(x, y) {
+    if (!_ghostEl) return;
+    _ghostEl.style.left = x + 14 + 'px';
+    _ghostEl.style.top = y + 14 + 'px';
   }
   function _findParent(targetId, node, candidate) {
     if (node.id === targetId) return candidate;
@@ -110,9 +138,9 @@ const ExplorerDnd = (() => {
     const parent = _getParent(node);
     return parent ? parent.path : (_getContainingRoot(node)?.path ?? null);
   }
-  function _resolveZone(e, row, node) {
+  function _resolveZone(clientY, row, node) {
     const rect = row.getBoundingClientRect();
-    const ratio = (e.clientY - rect.top) / rect.height;
+    const ratio = (clientY - rect.top) / rect.height;
     if (node.type === 'folder') {
       if (ratio < 0.25) return 'before';
       if (ratio > 0.75) return 'after';
@@ -131,68 +159,186 @@ const ExplorerDnd = (() => {
       _showDropLine(row, zone);
     }
   }
-  function _attachNodeDrag(row, node) {
-    if (autoexec.isProtectedRootNode(node)) {
-      row.draggable = false;
-      return;
-    }
-    let _dragStartTimer = null;
-    let _pendingDragStart = null;
-    row.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      _pendingDragStart = { x: e.clientX, y: e.clientY };
-      _dragStartTimer = setTimeout(() => {
-        _pendingDragStart = null;
-      }, 300);
-    });
-    row.addEventListener('mousemove', (e) => {
-      if (!_pendingDragStart) return;
-      const dx = e.clientX - _pendingDragStart.x;
-      const dy = e.clientY - _pendingDragStart.y;
-      if (Math.hypot(dx, dy) > 6) {
-        clearTimeout(_dragStartTimer);
-        _pendingDragStart = null;
-        row.draggable = true;
+  function _scheduleFeedback(zone, row, node) {
+    const key = zone + (row?.dataset?.id ?? '');
+    if (key === _lastZoneKey) return;
+    _lastZoneKey = key;
+    _pendingFeedback = { zone, row, node };
+    if (_rafPending) return;
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      if (_pendingFeedback) {
+        const { zone: z, row: r, node: n } = _pendingFeedback;
+        _pendingFeedback = null;
+        _applyFeedback(z, r, n);
       }
     });
-    row.addEventListener('mouseup', () => {
-      clearTimeout(_dragStartTimer);
-      _pendingDragStart = null;
-      requestAnimationFrame(() => {
-        row.draggable = false;
-      });
-    });
-    row.draggable = false;
-    row.addEventListener('dragstart', (e) => {
-      if (!row.draggable) {
-        e.preventDefault();
+  }
+
+  function _hitTest(x, y) {
+    const tree = document.getElementById('fileTree');
+    if (!tree) return null;
+    const treeRect = tree.getBoundingClientRect();
+    if (x < treeRect.left || x > treeRect.right || y < treeRect.top || y > treeRect.bottom) {
+      return null;
+    }
+    const prevPointerEvents = _ghostEl?.style.pointerEvents;
+    if (_ghostEl) _ghostEl.style.pointerEvents = 'none';
+    const el = document.elementFromPoint(x, y);
+    if (_ghostEl && prevPointerEvents !== undefined)
+      _ghostEl.style.pointerEvents = prevPointerEvents;
+    if (!el) return null;
+    const row = el.closest('.tree-row');
+    if (row) {
+      const node = ExplorerTree.findNode(row.dataset.id);
+      if (node) return { kind: 'row', row, node };
+    }
+    const header = el.closest('.tree-root-header');
+    if (header) {
+      const node = ExplorerTree.findNode(header.dataset.id);
+      if (node) return { kind: 'header', row: header, node };
+    }
+    if (el.closest('#fileTree')) return { kind: 'tree' };
+    return null;
+  }
+
+  function _onPointerMove(e) {
+    if (_activePointerId === null) return;
+    if (!_dragging) {
+      if (
+        Math.abs(e.clientX - _dragStartX) < DRAG_THRESHOLD &&
+        Math.abs(e.clientY - _dragStartY) < DRAG_THRESHOLD
+      ) {
         return;
       }
-      const sel = ExplorerTree.getSelection();
-      const dragNodes = sel.length > 0 && sel.some((n) => n.id === node.id) ? sel : [node];
-      ExplorerTree.setDragSrc(node.id);
-      ExplorerTree.setDragNodes(dragNodes);
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', dragNodes.map((n) => n.id).join(','));
-      _ghostEl = _createGhost(dragNodes);
-      e.dataTransfer.setDragImage(_ghostEl, 14, 14);
-      setTimeout(() => {
-        dragNodes.forEach((n) => {
-          document.querySelector(`.tree-row[data-id="${n.id}"]`)?.classList.add('dragging');
-        });
-      }, 0);
-    });
-    row.addEventListener('dragend', () => {
-      row.draggable = false;
+      _dragging = true;
+      _suppressClick = true;
+      try {
+        document.documentElement.setPointerCapture(_activePointerId);
+      } catch {}
+      document.body.classList.add('tree-internal-drag');
+      _ghostEl = _createGhost(_dragNodes);
+      _dragNodes.forEach((n) => {
+        document.querySelector(`.tree-row[data-id="${n.id}"]`)?.classList.add('dragging');
+      });
+    }
+    _moveGhost(e.clientX, e.clientY);
+
+    const hit = _hitTest(e.clientX, e.clientY);
+    _lastHit = hit;
+
+    if (!hit || hit.kind === 'tree') {
       _clearAll();
+      document.getElementById('fileTree')?.classList.add('tree-drop-target');
+      return;
+    }
+    document.getElementById('fileTree')?.classList.remove('tree-drop-target');
+
+    if (hit.kind === 'header') {
       _clearAutoExpand();
-      if (_ghostEl) {
-        _ghostEl.remove();
-        _ghostEl = null;
-      }
-      ExplorerTree.setDragSrc(null);
-      ExplorerTree.setDragNodes([]);
-      document.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+      _hideDropLine();
+      _setDragOver(hit.row);
+      _lastZoneKey = 'header' + hit.node.id;
+      return;
+    }
+
+    const node = hit.node;
+    const isSelf = _dragNodes.length === 1 && _dragNodes[0].id === node.id;
+    const isAncestor = _dragNodes.some((dn) => _isAncestorOf(dn, node.id) && dn.id !== node.id);
+    if (isSelf || isAncestor) {
+      _clearAll();
+      return;
+    }
+    const zone = _resolveZone(e.clientY, hit.row, node);
+    _scheduleFeedback(zone, hit.row, node);
+  }
+
+  async function _onPointerUp(e) {
+    if (_activePointerId === null) return;
+    const pointerId = _activePointerId;
+    const row = _activeRow;
+    const dragNodes = _dragNodes;
+    const wasDragging = _dragging;
+    const hit = _lastHit;
+
+    _activePointerId = null;
+    _activeRow = null;
+    _dragNodes = [];
+    _dragging = false;
+    _lastHit = null;
+
+    try {
+      document.documentElement.releasePointerCapture?.(pointerId);
+    } catch {}
+
+    _clearAll();
+    document.getElementById('fileTree')?.classList.remove('tree-drop-target');
+    document.body.classList.remove('tree-internal-drag');
+    if (_ghostEl) {
+      _ghostEl.remove();
+      _ghostEl = null;
+    }
+    document.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+
+    if (!wasDragging || !hit) return;
+
+    if (hit.kind === 'header') {
+      await _internalDrop(dragNodes, hit.node, 'into');
+      return;
+    }
+    if (hit.kind === 'tree') {
+      const lastRoot = state.roots[state.roots.length - 1];
+      if (lastRoot) await _internalDrop(dragNodes, lastRoot, 'into');
+      return;
+    }
+    if (hit.kind === 'row') {
+      const isSelf = dragNodes.length === 1 && dragNodes[0].id === hit.node.id;
+      const isAncestor = dragNodes.some(
+        (dn) => _isAncestorOf(dn, hit.node.id) && dn.id !== hit.node.id,
+      );
+      if (isSelf || isAncestor) return;
+      const zone = _resolveZone(e.clientY, hit.row, hit.node);
+      await _internalDrop(dragNodes, hit.node, zone);
+    }
+  }
+
+  function consumeClickSuppression() {
+    if (_suppressClick) {
+      _suppressClick = false;
+      return true;
+    }
+    return false;
+  }
+  let _globalListenersBound = false;
+  function _ensureGlobalListeners() {
+    if (_globalListenersBound) return;
+    _globalListenersBound = true;
+    document.addEventListener('pointermove', _onPointerMove);
+    document.addEventListener('pointerup', _onPointerUp);
+    document.addEventListener('pointercancel', _onPointerUp);
+  }
+
+  function _attachNodeDrag(row, node) {
+    if (autoexec.isProtectedRootNode(node)) return;
+    row.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('input, textarea, button, [contenteditable]')) return;
+      _ensureGlobalListeners();
+      const sel = ExplorerTree.getSelection();
+      const sourceRoot = _getContainingRoot(node);
+      const coherentSel =
+        sel.length > 0 && sel.some((n) => n.id === node.id)
+          ? sel.filter((n) => _getContainingRoot(n)?.id === sourceRoot?.id)
+          : [];
+      _dragNodes = coherentSel.length > 0 ? coherentSel : [node];
+      _activePointerId = e.pointerId;
+      _activeRow = row;
+      _dragStartX = e.clientX;
+      _dragStartY = e.clientY;
+      _dragging = false;
+      ExplorerTree.setDragSrc(node.id);
+      ExplorerTree.setDragNodes(_dragNodes);
     });
   }
   function attachFileDrag(row, node) {
@@ -202,93 +348,24 @@ const ExplorerDnd = (() => {
     _attachNodeDrag(row, node);
   }
   function attachRowDrop(row, node) {
-    row.addEventListener('dragenter', (e) => {
-      e.preventDefault();
-    });
-    row.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      const isExternal = e.dataTransfer.types.includes('Files');
-      e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move';
-      const dragNodes = ExplorerTree.getDragNodes();
-      const isSelf = dragNodes.length === 1 && dragNodes[0].id === node.id;
-      const isAncestor = dragNodes.some((dn) => _isAncestorOf(dn, node.id) && dn.id !== node.id);
-      if (isSelf || isAncestor) {
-        e.dataTransfer.dropEffect = 'none';
-        _clearAll();
-        return;
-      }
-      const zone = _resolveZone(e, row, node);
-      _applyFeedback(zone, row, node);
-    });
-    row.addEventListener('dragleave', (e) => {
-      if (!row.contains(e.relatedTarget)) {
-        row.classList.remove('drag-over');
-        if (_currentDragOverEl === row) _currentDragOverEl = null;
-      }
-    });
-    row.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      _clearAll();
-      _clearAutoExpand();
-      if (e.dataTransfer.files.length > 0) {
-        if (_handlingDrop) return;
-        _handlingDrop = true;
-        try {
-          const zone = _resolveZone(e, row, node);
-          const destDir = _destinationForNode(node, zone === 'into');
-          await _externalDrop(e.dataTransfer, destDir);
-        } finally {
-          _handlingDrop = false;
-        }
-        return;
-      }
-      const dragNodes = ExplorerTree.getDragNodes();
-      if (!dragNodes.length) return;
-      const zone = _resolveZone(e, row, node);
-      await _internalDrop(dragNodes, node, zone);
-    });
+    void row;
+    void node;
   }
   function attachRootHeaderDrop(headerEl, rootNode) {
-    headerEl.addEventListener('dragenter', (e) => {
-      e.preventDefault();
-      _setDragOver(headerEl);
-      _hideDropLine();
-    });
-    headerEl.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
-      _setDragOver(headerEl);
-      _hideDropLine();
-      _clearAutoExpand();
-    });
-    headerEl.addEventListener('dragleave', (e) => {
-      if (!headerEl.contains(e.relatedTarget)) {
-        headerEl.classList.remove('drag-over');
-        if (_currentDragOverEl === headerEl) _currentDragOverEl = null;
-      }
-    });
-    headerEl.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      _clearAll();
-      _clearAutoExpand();
-      if (e.dataTransfer.files.length > 0) {
-        if (_handlingDrop) return;
-        _handlingDrop = true;
-        try {
-          await _externalDrop(e.dataTransfer, rootNode.path);
-        } finally {
-          _handlingDrop = false;
-        }
-        return;
-      }
-      const dragNodes = ExplorerTree.getDragNodes();
-      if (!dragNodes.length) return;
-      await _internalDrop(dragNodes, rootNode, 'into');
-    });
+    void headerEl;
+    void rootNode;
+  }
+  function _patchNodePaths(node, oldPrefix, newPrefix) {
+    node.path = newPrefix + node.path.slice(oldPrefix.length);
+    if (node.type === 'file') {
+      const f = state.getFile(node.id);
+      if (f) f.path = node.path;
+    }
+    for (const child of node.children ?? []) _patchNodePaths(child, oldPrefix, newPrefix);
   }
   async function _internalDrop(dragNodes, targetNode, zone) {
+    const suppressMs = dragNodes.length * 400 + 3000;
+    workspaceController.suppressWatcher?.(suppressMs);
     let moved = 0;
     for (const dragNode of dragNodes) {
       if (autoexec.isProtectedRootNode(dragNode)) continue;
@@ -321,9 +398,7 @@ const ExplorerDnd = (() => {
       if (newPath === dragNode.path) continue;
       let destExists = false;
       try {
-        const stat = await window.__TAURI__.core.invoke('stat_path', {
-          path: newPath,
-        });
+        const stat = await window.__TAURI__.core.invoke('stat_path', { path: newPath });
         destExists = !!stat.exists;
       } catch {}
       if (destExists) {
@@ -335,20 +410,23 @@ const ExplorerDnd = (() => {
       }
       try {
         const oldPath = dragNode.path;
-        await fileManager.rename(dragNode.path, newPath);
+        await fileManager.rename(oldPath, newPath);
         workspaceHistory.recordMove?.(oldPath, newPath, dragNode.type === 'folder');
-        dragNode.path = newPath;
-        if (dragNode.type === 'file') {
-          const f = state.getFile(dragNode.id);
-          if (f) f.path = newPath;
-        }
+        _patchNodePaths(dragNode, oldPath, newPath);
         moved++;
       } catch (err) {
         toast.show(`Could not move ${dragNode.name}`, 'warn', 3000);
         console.error(err);
       }
     }
-    if (moved > 0) eventBus.emit('ui:refresh-tree');
+    if (moved > 0) {
+      toast.show(
+        moved === 1 ? `Moved ${dragNodes[0]?.name ?? 'item'}` : `Moved ${moved} items`,
+        'ok',
+        1800,
+      );
+      eventBus.emit('ui:refresh-tree');
+    }
   }
   function _dedupeSources(sources) {
     const sourcePaths = new Set();
@@ -444,7 +522,7 @@ const ExplorerDnd = (() => {
     if (row) return _destinationForNode(ExplorerTree.findNode(row.dataset.id), true);
     const rootHeader = el.closest('.tree-root-header');
     if (rootHeader) return ExplorerTree.findNode(rootHeader.dataset.id)?.path ?? null;
-    return state.roots[roots.length - 1]?.path ?? null;
+    return state.roots[state.roots.length - 1]?.path ?? null;
   }
   async function _nativeExternalDrop(paths, destDir) {
     if (_handlingDrop) return;
@@ -493,6 +571,7 @@ const ExplorerDnd = (() => {
     try {
       await webview.onDragDropEvent((event) => {
         const payload = event.payload;
+        if (ExplorerTree.getDragNodes().length > 0) return;
         if (payload?.type === 'over') {
           rootEl.classList.toggle(
             'tree-drop-target',
@@ -502,6 +581,7 @@ const ExplorerDnd = (() => {
         }
         rootEl.classList.remove('tree-drop-target');
         if (payload?.type !== 'drop') return;
+        if (!payload.paths?.length) return;
         const destDir = _nativeDropDestination(payload.position);
         if (destDir === undefined) return;
         _nativeExternalDrop(payload.paths, destDir).catch((err) => {
@@ -516,38 +596,6 @@ const ExplorerDnd = (() => {
   }
   function attachRootDrop(rootEl) {
     _attachNativeDrop(rootEl);
-    rootEl.addEventListener('dragenter', (e) => {
-      e.preventDefault();
-    });
-    rootEl.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      const isExternal = e.dataTransfer.types.includes('Files');
-      e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move';
-      if (!e.target.closest('.tree-row') && !e.target.closest('.tree-root-header')) {
-        if (isExternal) rootEl.classList.add('tree-drop-target');
-      }
-    });
-    rootEl.addEventListener('dragleave', (e) => {
-      if (!rootEl.contains(e.relatedTarget)) {
-        rootEl.classList.remove('tree-drop-target');
-        _clearAll();
-      }
-    });
-    rootEl.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      rootEl.classList.remove('tree-drop-target');
-      _clearAll();
-      _clearAutoExpand();
-      if (e.target.closest('.tree-row') || e.target.closest('.tree-root-header')) return;
-      if (!e.dataTransfer.files.length || _handlingDrop) return;
-      _handlingDrop = true;
-      try {
-        const last = state.roots[state.roots.length - 1];
-        await _externalDrop(e.dataTransfer, last?.path ?? null);
-      } finally {
-        _handlingDrop = false;
-      }
-    });
   }
   return {
     attachFileDrag,
@@ -556,5 +604,6 @@ const ExplorerDnd = (() => {
     attachRootHeaderDrop,
     attachRootDrop,
     handleExternalDrop: _externalDrop,
+    consumeClickSuppression,
   };
 })();
